@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(slots=True)
@@ -9,3 +9,46 @@ class AppConfig:
     last_path: str = "/"
     main_window_geometry: bytes | None = None
     player_window_geometry: bytes | None = None
+
+
+@dataclass(slots=True)
+class PlayItem:
+    title: str
+    url: str
+    path: str = ""
+    index: int = 0
+    size: int = 0
+
+
+@dataclass(slots=True)
+class VodItem:
+    vod_id: str
+    vod_name: str
+    path: str = ""
+    vod_pic: str = ""
+    vod_tag: str = ""
+    vod_time: str = ""
+    vod_remarks: str = ""
+    vod_play_from: str = ""
+    vod_play_url: str = ""
+    type_name: str = ""
+    vod_content: str = ""
+    dbid: int = 0
+    type: int = 0
+    items: list[PlayItem] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class HistoryRecord:
+    id: int
+    key: str
+    vod_name: str
+    vod_pic: str
+    vod_remarks: str
+    episode: int
+    episode_url: str
+    position: int
+    opening: int
+    ending: int
+    speed: float
+    create_time: int
