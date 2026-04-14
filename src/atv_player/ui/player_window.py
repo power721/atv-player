@@ -81,6 +81,7 @@ class PlayerWindow(QWidget):
         self.current_speed = 1.0
         self.is_playing = True
         self._is_muted = False
+        self._was_maximized_before_fullscreen = False
         self._quit_requested = False
         self.setWindowTitle("alist-tvbox 播放器")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -460,9 +461,13 @@ class PlayerWindow(QWidget):
 
     def toggle_fullscreen(self) -> None:
         if self.isFullScreen():
-            self.showNormal()
+            if self._was_maximized_before_fullscreen:
+                self.showMaximized()
+            else:
+                self.showNormal()
             self._apply_visibility_state()
             return
+        self._was_maximized_before_fullscreen = self.isMaximized()
         self.showFullScreen()
         self._apply_visibility_state()
 

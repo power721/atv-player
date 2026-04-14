@@ -428,6 +428,21 @@ def test_player_window_adds_padding_around_bottom_controls(qtbot) -> None:
     assert window.bottom_area.maximumHeight() == 72
 
 
+def test_player_window_exit_fullscreen_restores_maximized_state(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.showMaximized()
+    qtbot.waitUntil(window.isMaximized)
+
+    window.toggle_fullscreen()
+    assert window.isFullScreen() is True
+
+    window.toggle_fullscreen()
+
+    assert window.isFullScreen() is False
+    assert window.isMaximized() is True
+
+
 def test_player_window_control_buttons_drive_video_actions(qtbot) -> None:
     class FakeVideo:
         def __init__(self) -> None:
