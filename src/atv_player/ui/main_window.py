@@ -59,7 +59,7 @@ class MainWindow(QMainWindow):
             return
         self.open_player(request)
 
-    def open_player(self, request) -> None:
+    def open_player(self, request, restore_paused_state: bool = False) -> None:
         session = self.player_controller.create_session(
             request.vod,
             request.playlist,
@@ -74,9 +74,12 @@ class MainWindow(QMainWindow):
         self.config.last_playback_path = request.source_path
         self.config.last_playback_vod_id = request.source_vod_id
         self.config.last_playback_clicked_vod_id = request.source_clicked_vod_id
+        start_paused = self.config.last_player_paused if restore_paused_state else False
+        if not restore_paused_state:
+            self.config.last_player_paused = False
         self.config.main_window_geometry = bytes(self.saveGeometry())
         self._save_config()
-        self.player_window.open_session(session)
+        self.player_window.open_session(session, start_paused=start_paused)
         self.player_window.show()
         self.player_window.raise_()
         self.player_window.activateWindow()
@@ -112,7 +115,7 @@ class MainWindow(QMainWindow):
             request = self.browse_controller.build_request_from_folder_item(clicked, items)
         else:
             return None
-        self.open_player(request)
+        self.open_player(request, restore_paused_state=True)
         return self.player_window
 
     def show_error(self, message: str) -> None:

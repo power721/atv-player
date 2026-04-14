@@ -158,10 +158,12 @@ def test_main_window_open_player_hides_main_and_updates_last_active_state(qtbot,
         def __init__(self, controller, config, save_config) -> None:
             created["config"] = config
             self.opened_session = None
+            self.start_paused = None
             self.shown = False
 
-        def open_session(self, session) -> None:
+        def open_session(self, session, start_paused: bool = False) -> None:
             self.opened_session = session
+            self.start_paused = start_paused
 
         def show(self) -> None:
             self.shown = True
@@ -198,6 +200,8 @@ def test_main_window_open_player_hides_main_and_updates_last_active_state(qtbot,
     assert config.last_active_window == "player"
     assert config.last_playback_mode == "detail"
     assert config.last_playback_vod_id == "vod-1"
+    assert config.last_player_paused is False
+    assert window.player_window.start_paused is False
 
 
 def test_main_window_ctrl_p_shows_existing_player_window(qtbot) -> None:
@@ -295,3 +299,52 @@ def test_main_window_ctrl_p_restores_last_player_when_missing(qtbot, monkeypatch
     window.show_or_restore_player()
 
     assert restored["called"] == 1
+
+
+def test_main_window_restore_last_player_opens_paused_from_config(qtbot, monkeypatch) -> None:
+    class RestoreBrowseController:
+        def build_request_from_detail(self, vod_id: str):
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="Movie"),
+                playlist=[PlayItem(title="Episode 1", url="1.m3u8")],
+                clicked_index=0,
+                source_mode="detail",
+                source_vod_id=vod_id,
+            )
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    config = AppConfig(
+        last_active_window="player",
+        last_playback_mode="detail",
+        last_playback_vod_id="vod-1",
+        last_player_paused=True,
+    )
+    window = MainWindow(
+        browse_controller=RestoreBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+
+    restored = window.restore_last_player()
+
+    assert restored is window.player_window
+    assert window.player_window.opened[0][1] is True
