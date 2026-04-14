@@ -1,5 +1,5 @@
 from PySide6.QtCore import QByteArray, QEvent, Qt
-from PySide6.QtGui import QCursor, QKeyEvent, QMouseEvent
+from PySide6.QtGui import QColor, QCursor, QKeyEvent, QMouseEvent, QPixmap
 from PySide6.QtWidgets import QApplication, QComboBox
 from PySide6.QtWidgets import QSplitter
 from atv_player.controllers.player_controller import PlayerSession
@@ -116,6 +116,92 @@ def test_player_window_uses_detail_container_with_metadata_and_log_views(qtbot) 
     assert window.log_view.isReadOnly() is True
     assert window.details.layout().indexOf(window.metadata_view) != -1
     assert window.details.layout().indexOf(window.log_view) != -1
+
+
+def test_player_window_places_poster_widget_above_metadata_and_log_views(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    details_layout = window.details.layout()
+
+    assert window.poster_label is not None
+    assert details_layout.indexOf(window.poster_label) != -1
+    assert details_layout.indexOf(window.poster_label) < details_layout.indexOf(window.metadata_view)
+    assert details_layout.indexOf(window.poster_label) < details_layout.indexOf(window.log_view)
+    assert window.poster_label.alignment() == Qt.AlignmentFlag.AlignCenter
+    assert window.poster_label.minimumHeight() > 0
+
+
+def test_player_window_renders_poster_when_session_has_vod_pic(qtbot, tmp_path) -> None:
+    poster_path = tmp_path / "poster.png"
+    pixmap = QPixmap(20, 30)
+    pixmap.fill(QColor("red"))
+    assert pixmap.save(str(poster_path)) is True
+
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="九寨沟", vod_pic=str(poster_path)),
+        playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    rendered = window.poster_label.pixmap()
+    assert rendered is not None
+    assert rendered.isNull() is False
+    assert rendered.size().width() <= window.poster_label.maximumWidth()
+    assert rendered.size().height() <= window.poster_label.maximumHeight()
+
+
+def test_player_window_keeps_empty_reserved_poster_area_without_placeholder_text(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="九寨沟", vod_pic=""),
+        playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    rendered = window.poster_label.pixmap()
+    assert rendered is None or rendered.isNull() is True
+    assert window.poster_label.text() == ""
+    assert window.poster_label.minimumHeight() > 0
 
 
 def test_player_window_uses_vertical_shell_with_bottom_controls(qtbot) -> None:

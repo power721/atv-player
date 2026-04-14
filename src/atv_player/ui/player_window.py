@@ -3,8 +3,8 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QEvent, QTimer, Qt, Signal
-from PySide6.QtGui import QCloseEvent, QCursor, QIcon, QKeyEvent, QKeySequence, QMouseEvent, QShortcut
+from PySide6.QtCore import QByteArray, QEvent, QSize, QTimer, Qt, Signal
+from PySide6.QtGui import QCloseEvent, QCursor, QIcon, QKeyEvent, QKeySequence, QMouseEvent, QPixmap, QShortcut
 from PySide6.QtWidgets import QApplication, QStyle, QStyleOptionSlider
 from PySide6.QtWidgets import (
     QComboBox,
@@ -72,6 +72,7 @@ class PlayerWindow(QWidget):
     _SEEK_SHORTCUT_SECONDS = 15
     _VOLUME_SHORTCUT_STEP = 5
     _CURSOR_HIDE_DELAY_MS = 3000
+    _POSTER_SIZE = QSize(180, 260)
 
     def __init__(self, controller, config=None, save_config=None) -> None:
         super().__init__()
@@ -133,6 +134,11 @@ class PlayerWindow(QWidget):
         self.volume_slider.setRange(0, 100)
         self.volume_slider.setValue(100)
         self.volume_slider.setMaximumWidth(180)
+        self.poster_label = QLabel()
+        self.poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.poster_label.setMinimumSize(self._POSTER_SIZE)
+        self.poster_label.setMaximumSize(self._POSTER_SIZE)
+        self.poster_label.setText("")
         self.metadata_view = QTextEdit()
         self.metadata_view.setReadOnly(True)
         self.log_view = QTextEdit()
@@ -141,6 +147,8 @@ class PlayerWindow(QWidget):
         details_layout = QVBoxLayout(self.details)
         details_layout.setContentsMargins(0, 0, 0, 0)
         details_layout.setSpacing(6)
+        details_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        details_layout.addWidget(self.poster_label, 0, Qt.AlignmentFlag.AlignHCenter)
         details_layout.addWidget(QLabel("影片详情"))
         details_layout.addWidget(self.metadata_view, 3)
         details_layout.addWidget(QLabel("播放日志"))
@@ -386,6 +394,7 @@ class PlayerWindow(QWidget):
 
     def open_session(self, session, start_paused: bool = False) -> None:
         self.session = session
+        self._render_poster()
         self._render_metadata()
         self._reset_log()
         self.current_index = session.start_index
@@ -443,6 +452,34 @@ class PlayerWindow(QWidget):
             self.metadata_view.clear()
             return
         self.metadata_view.setPlainText(self._format_metadata_text(self.session.vod))
+
+    def _clear_poster(self) -> None:
+        self.poster_label.clear()
+        self.poster_label.setText("")
+        self.poster_label.setPixmap(QPixmap())
+
+    def _load_poster_pixmap(self, source: str) -> QPixmap:
+        if not source:
+            return QPixmap()
+        pixmap = QPixmap(source)
+        if pixmap.isNull():
+            return QPixmap()
+        return pixmap.scaled(
+            self._POSTER_SIZE,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+
+    def _render_poster(self) -> None:
+        if self.session is None:
+            self._clear_poster()
+            return
+        pixmap = self._load_poster_pixmap(self.session.vod.vod_pic)
+        if pixmap.isNull():
+            self._clear_poster()
+            return
+        self.poster_label.setText("")
+        self.poster_label.setPixmap(pixmap)
 
     def _reset_log(self) -> None:
         self.log_view.clear()
