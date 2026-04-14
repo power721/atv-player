@@ -27,6 +27,8 @@ def test_player_window_has_reasonable_default_size_and_horizontal_progress(qtbot
     assert window.volume_layout.indexOf(window.mute_button) == 0
     assert window.volume_layout.indexOf(window.volume_slider) == 1
     assert window.volume_slider.maximumWidth() == 180
+    assert window.bottom_area.maximumHeight() == 60
+    assert window.bottom_layout.spacing() == 4
 
 
 def test_player_window_uses_splitters_for_resizable_panels(qtbot) -> None:
@@ -159,6 +161,23 @@ def test_player_window_toggle_fullscreen_changes_window_state(qtbot) -> None:
     assert window.sidebar_actions_widget.isHidden() is False
     assert window.playlist.isHidden() is False
     assert window.details.isHidden() is True
+
+
+def test_player_window_escape_shortcut_exits_fullscreen_instead_of_returning_to_main(qtbot) -> None:
+    emitted = {"count": 0}
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.closed_to_main.connect(lambda: emitted.__setitem__("count", emitted["count"] + 1))
+    window.show()
+
+    window.toggle_fullscreen()
+    assert window.isFullScreen() is True
+
+    window.escape_shortcut.activated.emit()
+
+    assert window.isFullScreen() is False
+    assert window.isHidden() is False
+    assert emitted["count"] == 0
 
 
 def test_player_window_syncs_progress_slider_and_seeks_from_it(qtbot) -> None:

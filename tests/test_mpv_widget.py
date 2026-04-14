@@ -1,3 +1,6 @@
+import sys
+import types
+
 from atv_player.player.mpv_widget import MpvWidget
 
 
@@ -41,3 +44,20 @@ def test_mpv_widget_updates_volume_and_mute_state(qtbot) -> None:
 
     assert widget._player.volume == 35
     assert widget._player.mute is False
+
+
+def test_mpv_widget_disables_mpv_keyboard_bindings_for_embedded_player(qtbot, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeMPV:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    monkeypatch.setitem(sys.modules, "mpv", types.SimpleNamespace(MPV=FakeMPV))
+
+    widget._create_player()
+
+    assert captured["input_default_bindings"] is False
+    assert captured["input_vo_keyboard"] is False

@@ -140,8 +140,11 @@ class PlayerWindow(QWidget):
         left.addWidget(self.video)
 
         self.bottom_area = QWidget()
+        self.bottom_area.setMaximumHeight(60)
         bottom_layout = QVBoxLayout(self.bottom_area)
+        self.bottom_layout = bottom_layout
         bottom_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_layout.setSpacing(4)
 
         progress_row = QHBoxLayout()
         progress_row.setContentsMargins(0, 0, 0, 0)
@@ -227,7 +230,7 @@ class PlayerWindow(QWidget):
         self.return_shortcut.activated.connect(self._return_to_main)
         self.escape_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
         self.escape_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
-        self.escape_shortcut.activated.connect(self._return_to_main)
+        self.escape_shortcut.activated.connect(self._handle_escape)
         self._update_play_button_icon()
         self._apply_visibility_state()
 
@@ -421,6 +424,12 @@ class PlayerWindow(QWidget):
         self.hide()
         self.closed_to_main.emit()
 
+    def _handle_escape(self) -> None:
+        if self.isFullScreen():
+            self.toggle_fullscreen()
+            return
+        self._return_to_main()
+
     def toggle_playback(self) -> None:
         if self.is_playing:
             self.video.pause()
@@ -468,7 +477,7 @@ class PlayerWindow(QWidget):
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Escape:
-            self._return_to_main()
+            self._handle_escape()
             event.accept()
             return
         if event.key() == Qt.Key.Key_P and event.modifiers() & Qt.KeyboardModifier.ControlModifier:

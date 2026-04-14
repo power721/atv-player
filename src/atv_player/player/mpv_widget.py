@@ -23,8 +23,8 @@ class MpvWidget(QWidget):
 
         return mpv.MPV(
             wid=str(int(self.winId())),
-            input_default_bindings=True,
-            input_vo_keyboard=True,
+            input_default_bindings=False,
+            input_vo_keyboard=False,
         )
 
     def _ensure_player(self) -> None:
