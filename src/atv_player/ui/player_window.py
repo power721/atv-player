@@ -196,6 +196,7 @@ class PlayerWindow(QWidget):
         sidebar_layout.addWidget(self.sidebar_actions_widget)
         sidebar_layout.addWidget(self.sidebar_splitter)
         self.sidebar_container = QWidget()
+        self.sidebar_container.setMinimumWidth(250)
         self.sidebar_container.setLayout(sidebar_layout)
 
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
