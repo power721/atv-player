@@ -41,6 +41,11 @@ class VodItem:
     vod_play_url: str = ""
     type_name: str = ""
     vod_content: str = ""
+    vod_year: str = ""
+    vod_area: str = ""
+    vod_lang: str = ""
+    vod_director: str = ""
+    vod_actor: str = ""
     dbid: int = 0
     type: int = 0
     items: list[PlayItem] = field(default_factory=list)

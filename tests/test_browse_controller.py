@@ -78,6 +78,77 @@ def test_build_request_from_detail_maps_playlist_items() -> None:
     assert request.clicked_index == 0
 
 
+def test_build_request_from_detail_maps_title_metadata_fields() -> None:
+    api = FakeApiClient()
+    api.detail_payload = {
+        "list": [
+            {
+                "vod_id": "detail-1",
+                "vod_name": "九寨沟",
+                "type_name": "纪录片",
+                "vod_year": "2006",
+                "vod_area": "中国大陆",
+                "vod_lang": "无对白",
+                "vod_remarks": "6.2",
+                "vod_director": "Masa Nishimura",
+                "vod_actor": "未知",
+                "vod_content": "九寨沟风景名胜区位于四川省阿坝藏族羌族自治州南坪县境内。",
+                "dbid": 19971621,
+                "items": [
+                    {"title": "正片", "url": "http://m/1.m3u8"},
+                ],
+            }
+        ]
+    }
+    controller = BrowseController(api)
+
+    request = controller.build_request_from_detail("detail-1")
+
+    assert request.vod.vod_name == "九寨沟"
+    assert request.vod.type_name == "纪录片"
+    assert request.vod.vod_year == "2006"
+    assert request.vod.vod_area == "中国大陆"
+    assert request.vod.vod_lang == "无对白"
+    assert request.vod.vod_remarks == "6.2"
+    assert request.vod.vod_director == "Masa Nishimura"
+    assert request.vod.vod_actor == "未知"
+    assert request.vod.vod_content == "九寨沟风景名胜区位于四川省阿坝藏族羌族自治州南坪县境内。"
+    assert request.vod.dbid == 19971621
+
+
+def test_build_request_from_folder_item_preserves_available_metadata() -> None:
+    controller = BrowseController(FakeApiClient())
+    clicked_item = VodItem(
+        vod_id="v1",
+        vod_name="九寨沟",
+        vod_pic="poster.jpg",
+        path="/纪录片/九寨沟.mp4",
+        type=2,
+        type_name="纪录片",
+        vod_year="2006",
+        vod_area="中国大陆",
+        vod_lang="无对白",
+        vod_remarks="6.2",
+        vod_director="Masa Nishimura",
+        vod_actor="未知",
+        vod_content="九寨沟风景名胜区位于四川省阿坝藏族羌族自治州南坪县境内。",
+        dbid=19971621,
+        vod_play_url="http://m/1.m3u8",
+    )
+
+    request = controller.build_request_from_folder_item(clicked_item, [clicked_item])
+
+    assert request.vod.type_name == "纪录片"
+    assert request.vod.vod_year == "2006"
+    assert request.vod.vod_area == "中国大陆"
+    assert request.vod.vod_lang == "无对白"
+    assert request.vod.vod_remarks == "6.2"
+    assert request.vod.vod_director == "Masa Nishimura"
+    assert request.vod.vod_actor == "未知"
+    assert request.vod.vod_content.startswith("九寨沟风景名胜区位于")
+    assert request.vod.dbid == 19971621
+
+
 def test_build_vod_list_path_wraps_root_without_encoding() -> None:
     assert build_vod_list_path("/") == "1$/$1"
 
