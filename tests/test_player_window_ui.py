@@ -192,3 +192,19 @@ def test_player_window_persists_and_restores_main_splitter_state(qtbot) -> None:
     restored.show()
 
     assert restored.main_splitter.saveState() == QByteArray(config.player_main_splitter_state)
+
+
+def test_player_window_return_to_main_hides_window_without_closing_session(qtbot) -> None:
+    emitted = {"count": 0}
+    config = AppConfig(last_active_window="player")
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.session = object()
+    window.closed_to_main.connect(lambda: emitted.__setitem__("count", emitted["count"] + 1))
+    window.show()
+    window._return_to_main()
+
+    assert emitted["count"] == 1
+    assert window.isHidden() is True
+    assert window.session is not None
+    assert config.last_active_window == "main"

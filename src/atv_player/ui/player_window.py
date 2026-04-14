@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QByteArray, QTimer, Qt, Signal
-from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
+from PySide6.QtGui import QCloseEvent, QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -32,6 +32,7 @@ class PlayerWindow(QWidget):
         self.is_playing = True
         self._quit_requested = False
         self.setWindowTitle("alist-tvbox 播放器")
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.resize(1280, 800)
         self.setMinimumSize(1000, 700)
         if self.config and self.config.player_window_geometry:
@@ -107,7 +108,14 @@ class PlayerWindow(QWidget):
         self.progress.sliderPressed.connect(self._handle_slider_pressed)
         self.progress.sliderReleased.connect(self._seek_from_slider)
         self.quit_shortcut = QShortcut(QKeySequence.StandardKey.Quit, self)
+        self.quit_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         self.quit_shortcut.activated.connect(self._quit_application)
+        self.return_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
+        self.return_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        self.return_shortcut.activated.connect(self._return_to_main)
+        self.escape_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        self.escape_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        self.escape_shortcut.activated.connect(self._return_to_main)
 
     def open_session(self, session) -> None:
         self.session = session
@@ -217,6 +225,13 @@ class PlayerWindow(QWidget):
         if app is not None:
             app.quit()
 
+    def _return_to_main(self) -> None:
+        if self.config is not None:
+            self.config.last_active_window = "main"
+        self._persist_geometry()
+        self.hide()
+        self.closed_to_main.emit()
+
     def toggle_playback(self) -> None:
         if self.is_playing:
             self.video.pause()
@@ -260,3 +275,14 @@ class PlayerWindow(QWidget):
             self._save_config()
             self.closed_to_main.emit()
         super().closeEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() == Qt.Key.Key_Escape:
+            self._return_to_main()
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_P and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self._return_to_main()
+            event.accept()
+            return
+        super().keyPressEvent(event)
