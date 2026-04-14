@@ -62,3 +62,20 @@ def test_login_controller_uses_base_url_specific_factory() -> None:
     controller.login("http://demo-server:4567", "alice", "secret")
 
     assert seen_base_urls == ["http://demo-server:4567"]
+
+
+def test_login_controller_clears_old_vod_token_after_login() -> None:
+    repo = FakeSettingsRepository()
+    repo.current = AppConfig(
+        base_url="http://old-server",
+        username="alice",
+        token="old-auth",
+        vod_token="old-vod",
+        last_path="/",
+    )
+    controller = LoginController(repo, FakeApiClient())
+
+    result = controller.login("http://new-server", "alice", "secret")
+
+    assert result.token == "token-123"
+    assert result.vod_token == ""

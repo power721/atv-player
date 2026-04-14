@@ -23,6 +23,25 @@ def test_api_client_attaches_authorization_header() -> None:
     assert seen_headers["authorization"] == "token-123"
 
 
+def test_api_client_uses_vod_token_for_vod_requests() -> None:
+    seen_path = {"value": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_path["value"] = request.url.path
+        return httpx.Response(200, json={"list": [], "total": 0})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="auth-123",
+        vod_token="vod-123",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.list_vod("1$%2F$1", page=1, size=25)
+
+    assert seen_path["value"] == "/vod/vod-123"
+
+
 def test_api_client_raises_unauthorized_error_for_401() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"message": "Unauthorized"})
@@ -84,3 +103,16 @@ def test_api_client_maps_history_record() -> None:
     assert isinstance(history, HistoryRecord)
     assert history.key == "movie-1"
     assert history.speed == 1.25
+
+
+def test_api_client_fetches_vod_token_from_api_token() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"token": "vod-123,backup"})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="auth-123",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert client.fetch_vod_token() == "vod-123"

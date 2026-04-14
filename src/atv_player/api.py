@@ -20,9 +20,11 @@ class ApiClient:
         self,
         base_url: str,
         token: str = "",
+        vod_token: str = "",
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         headers = {"Authorization": token} if token else {}
+        self._vod_token = vod_token
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"),
             headers=headers,
@@ -35,6 +37,9 @@ class ApiClient:
             self._client.headers["Authorization"] = token
         else:
             self._client.headers.pop("Authorization", None)
+
+    def set_vod_token(self, vod_token: str) -> None:
+        self._vod_token = vod_token
 
     def _request(self, method: str, url: str, **kwargs: Any) -> Any:
         response = self._client.request(method, url, **kwargs)
@@ -56,18 +61,16 @@ class ApiClient:
         )
 
     def list_vod(self, path_id: str, page: int, size: int) -> dict[str, Any]:
-        token = self._client.headers.get("Authorization", "")
         return self._request(
             "GET",
-            f"/vod/{token}",
+            f"/vod/{self._vod_token}",
             params={"ac": "web", "pg": page, "size": size, "t": path_id},
         )
 
     def get_detail(self, vod_id: str) -> dict[str, Any]:
-        token = self._client.headers.get("Authorization", "")
         return self._request(
             "GET",
-            f"/vod/{token}",
+            f"/vod/{self._vod_token}",
             params={"ac": "web", "ids": vod_id},
         )
 
@@ -83,8 +86,7 @@ class ApiClient:
         return str(data)
 
     def get_history(self, key: str) -> HistoryRecord | None:
-        token = self._client.headers.get("Authorization", "")
-        data = self._request("GET", f"/history/{token}", params={"key": key})
+        data = self._request("GET", f"/history/{self._vod_token}", params={"key": key})
         if not data:
             return None
         return HistoryRecord(
@@ -119,5 +121,11 @@ class ApiClient:
         self._request("POST", "/api/history/-/delete", json=history_ids)
 
     def clear_history(self) -> None:
-        token = self._client.headers.get("Authorization", "")
-        self._request("DELETE", f"/history/{token}")
+        self._request("DELETE", f"/history/{self._vod_token}")
+
+    def fetch_vod_token(self) -> str:
+        data = self._request("GET", "/api/token")
+        token = str(data.get("token") or "")
+        first = token.split(",")[0] if token else "-"
+        self._vod_token = first
+        return first

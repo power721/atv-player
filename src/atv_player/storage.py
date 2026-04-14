@@ -22,12 +22,21 @@ class SettingsRepository:
                     base_url TEXT NOT NULL,
                     username TEXT NOT NULL,
                     token TEXT NOT NULL,
+                    vod_token TEXT NOT NULL,
                     last_path TEXT NOT NULL,
                     main_window_geometry BLOB,
                     player_window_geometry BLOB
                 )
                 """
             )
+            columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(app_config)").fetchall()
+            }
+            if "vod_token" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN vod_token TEXT NOT NULL DEFAULT ''"
+                )
             conn.execute(
                 """
                 INSERT INTO app_config (
@@ -35,11 +44,12 @@ class SettingsRepository:
                     base_url,
                     username,
                     token,
+                    vod_token,
                     last_path,
                     main_window_geometry,
                     player_window_geometry
                 )
-                VALUES (1, 'http://127.0.0.1:4567', '', '', '/', NULL, NULL)
+                VALUES (1, 'http://127.0.0.1:4567', '', '', '', '/', NULL, NULL)
                 ON CONFLICT(id) DO NOTHING
                 """
             )
@@ -52,6 +62,7 @@ class SettingsRepository:
                     base_url,
                     username,
                     token,
+                    vod_token,
                     last_path,
                     main_window_geometry,
                     player_window_geometry
@@ -71,6 +82,7 @@ class SettingsRepository:
                     base_url = ?,
                     username = ?,
                     token = ?,
+                    vod_token = ?,
                     last_path = ?,
                     main_window_geometry = ?,
                     player_window_geometry = ?
@@ -80,6 +92,7 @@ class SettingsRepository:
                     config.base_url,
                     config.username,
                     config.token,
+                    config.vod_token,
                     config.last_path,
                     config.main_window_geometry,
                     config.player_window_geometry,
@@ -88,4 +101,4 @@ class SettingsRepository:
 
     def clear_token(self) -> None:
         with self._connect() as conn:
-            conn.execute("UPDATE app_config SET token = '' WHERE id = 1")
+            conn.execute("UPDATE app_config SET token = '', vod_token = '' WHERE id = 1")

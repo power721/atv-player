@@ -39,8 +39,13 @@ class AppCoordinator(QObject):
     def start(self) -> QWidget:
         config = self.repo.load_config()
         if decide_start_view(config) == "main":
-            self._api_client = ApiClient(config.base_url, token=config.token)
+            self._api_client = ApiClient(
+                config.base_url,
+                token=config.token,
+                vod_token=config.vod_token,
+            )
             try:
+                self._ensure_vod_token(self._api_client)
                 self._api_client.list_vod(encode_vod_path("/"), page=1, size=1)
             except UnauthorizedError:
                 self.repo.clear_token()
@@ -50,7 +55,23 @@ class AppCoordinator(QObject):
 
     def _build_api_client(self) -> ApiClient:
         config = self.repo.load_config()
-        return ApiClient(config.base_url, token=config.token)
+        api_client = ApiClient(
+            config.base_url,
+            token=config.token,
+            vod_token=config.vod_token,
+        )
+        self._ensure_vod_token(api_client)
+        return api_client
+
+    def _ensure_vod_token(self, api_client: ApiClient) -> str:
+        config = self.repo.load_config()
+        if config.vod_token:
+            api_client.set_vod_token(config.vod_token)
+            return config.vod_token
+        vod_token = api_client.fetch_vod_token()
+        config.vod_token = vod_token
+        self.repo.save_config(config)
+        return vod_token
 
     def _show_login(self) -> LoginWindow:
         login_controller = LoginController(
