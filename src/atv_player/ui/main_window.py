@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from PySide6.QtCore import QByteArray, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
-from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QTabWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from atv_player.ui.browse_page import BrowsePage
 from atv_player.ui.history_page import HistoryPage
@@ -16,6 +25,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._save_config = save_config or (lambda: None)
         self.nav_tabs = QTabWidget()
+        self.logout_button = QPushButton("退出登录")
         self.browse_page = BrowsePage(browse_controller)
         self.history_page = HistoryPage(history_controller)
         self.browse_controller = browse_controller
@@ -25,7 +35,15 @@ class MainWindow(QMainWindow):
 
         self.nav_tabs.addTab(self.browse_page, "浏览")
         self.nav_tabs.addTab(self.history_page, "播放记录")
-        self.setCentralWidget(self.nav_tabs)
+        self.logout_button.clicked.connect(self.logout_requested.emit)
+        header_layout = QHBoxLayout()
+        header_layout.addStretch(1)
+        header_layout.addWidget(self.logout_button)
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.addLayout(header_layout)
+        container_layout.addWidget(self.nav_tabs)
+        self.setCentralWidget(container)
         self.setWindowTitle("alist-tvbox Desktop Player")
         if self.config.main_window_geometry:
             self.restoreGeometry(QByteArray(self.config.main_window_geometry))

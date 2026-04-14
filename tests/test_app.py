@@ -35,6 +35,21 @@ def test_main_window_starts_on_browse_tab(qtbot) -> None:
     assert window.nav_tabs.tabText(1) == "播放记录"
 
 
+def test_main_window_logout_button_emits_logout_requested(qtbot) -> None:
+    window = MainWindow(
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+
+    qtbot.addWidget(window)
+
+    assert window.logout_button.text() == "退出登录"
+    with qtbot.waitSignal(window.logout_requested, timeout=1000):
+        window.logout_button.click()
+
+
 def test_decide_start_view_prefers_login_without_token() -> None:
     assert decide_start_view(AppConfig(token="")) == "login"
 
