@@ -93,7 +93,7 @@ def test_player_window_has_reasonable_default_size_and_horizontal_progress(qtbot
     assert window.volume_layout.indexOf(window.mute_button) == 0
     assert window.volume_layout.indexOf(window.volume_slider) == 1
     assert window.volume_slider.maximumWidth() == 180
-    assert window.bottom_area.maximumHeight() == 60
+    assert window.bottom_area.maximumHeight() == 72
     assert window.bottom_layout.spacing() == 4
 
 
@@ -416,6 +416,16 @@ def test_player_window_playback_controls_show_shortcuts_and_pointing_cursor(qtbo
     assert window.play_button.cursor().shape() == Qt.CursorShape.PointingHandCursor
     assert window.refresh_button.cursor().shape() == Qt.CursorShape.PointingHandCursor
     assert window.fullscreen_button.cursor().shape() == Qt.CursorShape.PointingHandCursor
+
+
+def test_player_window_adds_padding_around_bottom_controls(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    margins = window.bottom_layout.contentsMargins()
+
+    assert (margins.left(), margins.top(), margins.right(), margins.bottom()) == (12, 6, 12, 6)
+    assert window.bottom_area.maximumHeight() == 72
 
 
 def test_player_window_control_buttons_drive_video_actions(qtbot) -> None:

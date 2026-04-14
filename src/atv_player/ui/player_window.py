@@ -141,10 +141,10 @@ class PlayerWindow(QWidget):
         sidebar_actions.addWidget(self.toggle_details_button)
 
         self.bottom_area = QWidget()
-        self.bottom_area.setMaximumHeight(60)
+        self.bottom_area.setMaximumHeight(72)
         bottom_layout = QVBoxLayout(self.bottom_area)
         self.bottom_layout = bottom_layout
-        bottom_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_layout.setContentsMargins(12, 6, 12, 6)
         bottom_layout.setSpacing(4)
 
         progress_row = QHBoxLayout()
