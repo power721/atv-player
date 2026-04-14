@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 class MpvWidget(QWidget):
     double_clicked = Signal()
+    playback_finished = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -14,6 +15,7 @@ class MpvWidget(QWidget):
         self._player = None
         self._placeholder = QLabel("mpv surface")
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._placeholder.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._placeholder)
@@ -31,6 +33,25 @@ class MpvWidget(QWidget):
         if self._player is not None and not getattr(self._player, "core_shutdown", False):
             return
         self._player = self._create_player()
+        self._register_player_events()
+
+    def _register_player_events(self) -> None:
+        if self._player is None:
+            return
+        event_callback = getattr(self._player, "event_callback", None)
+        if event_callback is None:
+            return
+
+        @event_callback("end-file")
+        def handle_end_file(event) -> None:
+            event_data = getattr(event, "data", None)
+            if event_data is None:
+                return
+            eof_reason = getattr(type(event_data), "EOF", 0)
+            if getattr(event_data, "reason", None) == eof_reason:
+                self.playback_finished.emit()
+
+        self._end_file_handler = handle_end_file
 
     def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
         self._ensure_player()
@@ -103,6 +124,18 @@ class MpvWidget(QWidget):
             return
         try:
             self._player.mute = not bool(getattr(self._player, "mute", False))
+        except Exception:
+            if getattr(self._player, "core_shutdown", False):
+                return
+            raise
+
+    def set_cursor_autohide(self, value: int | None) -> None:
+        if self._player is None:
+            return
+        try:
+            self._player["input-cursor"] = True
+            self._player["cursor-autohide-fs-only"] = False
+            self._player["cursor-autohide"] = value if value is not None else "no"
         except Exception:
             if getattr(self._player, "core_shutdown", False):
                 return

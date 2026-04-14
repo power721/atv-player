@@ -1,5 +1,5 @@
 from PySide6.QtCore import QByteArray, QEvent, Qt
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QCursor, QKeyEvent, QMouseEvent
 from PySide6.QtWidgets import QApplication, QComboBox
 from PySide6.QtWidgets import QSplitter
 from atv_player.controllers.player_controller import PlayerSession
@@ -446,6 +446,24 @@ def test_player_window_refresh_button_replays_current_item(qtbot) -> None:
     assert window.video.set_volume_calls == [35]
 
 
+def test_player_window_advances_to_next_item_when_playback_finishes(qtbot) -> None:
+    controller = RecordingPlayerController()
+    video = RecordingVideo()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(make_player_session(start_index=0))
+
+    video.load_calls.clear()
+
+    window.video_widget.playback_finished.emit()
+
+    assert window.current_index == 1
+    assert window.playlist.currentRow() == 1
+    assert video.load_calls == [("http://m/2.m3u8", 0)]
+    assert controller.progress_calls == [(0, 30, 1.0)]
+
+
 def test_player_window_playback_controls_show_shortcuts_and_pointing_cursor(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
@@ -470,6 +488,160 @@ def test_player_window_adds_padding_around_bottom_controls(qtbot) -> None:
 
     assert (margins.left(), margins.top(), margins.right(), margins.bottom()) == (12, 6, 12, 6)
     assert window.bottom_area.maximumHeight() == 72
+
+
+def test_player_window_mouse_activity_in_video_restores_cursor_and_starts_autohide(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+    cursor_autohide_calls: list[int | None] = []
+    window.video.set_cursor_autohide = lambda value: cursor_autohide_calls.append(value)
+    window.is_playing = True
+    window._video_pointer_inside = True
+    window._set_video_cursor_hidden(True)
+
+    window._handle_video_mouse_activity()
+
+    assert window.video.cursor().shape() == Qt.CursorShape.ArrowCursor
+    assert window.cursor().shape() == Qt.CursorShape.ArrowCursor
+    assert window._cursor_hide_timer.isActive() is True
+    assert cursor_autohide_calls == [3000]
+
+
+def test_player_window_uses_three_second_cursor_autohide_delay(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert window._CURSOR_HIDE_DELAY_MS == 3000
+
+
+def test_player_window_child_video_surface_enter_starts_autohide(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+    window.is_playing = True
+
+    QApplication.sendEvent(window.video_widget._placeholder, QEvent(QEvent.Type.Enter))
+
+    assert window._video_pointer_inside is True
+    assert window._cursor_hide_timer.isActive() is True
+
+
+def test_player_window_resuming_playback_starts_autohide_when_cursor_is_already_over_video(qtbot, monkeypatch) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+    resume_calls = {"count": 0}
+    window.video.resume = lambda: resume_calls.__setitem__("count", resume_calls["count"] + 1)
+    center_point = window.video_widget.rect().center()
+    global_point = window.video_widget.mapToGlobal(center_point)
+    monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: global_point))
+    cursor_autohide_calls: list[int | None] = []
+    window.video.set_cursor_autohide = lambda value: cursor_autohide_calls.append(value)
+    window.is_playing = False
+
+    window.toggle_playback()
+
+    assert resume_calls["count"] == 1
+    assert window.is_playing is True
+    assert window._video_pointer_inside is True
+    assert window._cursor_hide_timer.isActive() is True
+    assert cursor_autohide_calls[-1] == 3000
+
+
+def test_player_window_app_level_mouse_move_over_video_starts_autohide(qtbot, monkeypatch) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+    window.is_playing = True
+    center_point = window.video_widget.rect().center()
+    global_point = window.video_widget.mapToGlobal(center_point)
+    monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: global_point))
+
+    move_event = QMouseEvent(
+        QEvent.Type.MouseMove,
+        window.rect().center(),
+        global_point,
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    QApplication.sendEvent(window, move_event)
+
+    assert window._video_pointer_inside is True
+    assert window._cursor_hide_timer.isActive() is True
+
+
+def test_player_window_polling_hides_cursor_after_three_seconds_without_events(qtbot, monkeypatch) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+    center_point = window.video_widget.rect().center()
+    global_point = window.video_widget.mapToGlobal(center_point)
+    monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: global_point))
+    window.is_playing = True
+    window._handle_video_mouse_activity(now_ms=1000)
+
+    window._poll_cursor_idle_state(now_ms=4000)
+
+    assert window._video_pointer_inside is True
+    assert window.cursor().shape() == Qt.CursorShape.BlankCursor
+
+
+def test_player_window_cursor_idle_hides_video_cursor_only_when_playing_and_inside(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+    window.is_playing = True
+    window._video_pointer_inside = True
+
+    window._hide_video_cursor_if_idle()
+
+    assert window.video.cursor().shape() == Qt.CursorShape.BlankCursor
+    assert window.cursor().shape() == Qt.CursorShape.BlankCursor
+
+
+def test_player_window_pausing_playback_restores_video_cursor_and_stops_autohide(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+    pause_calls = {"count": 0}
+    window.video.pause = lambda: pause_calls.__setitem__("count", pause_calls["count"] + 1)
+    cursor_autohide_calls: list[int | None] = []
+    window.video.set_cursor_autohide = lambda value: cursor_autohide_calls.append(value)
+    window.is_playing = True
+    window._video_pointer_inside = True
+    window._cursor_hide_timer.start(1500)
+    window._set_video_cursor_hidden(True)
+
+    window.toggle_playback()
+
+    assert pause_calls["count"] == 1
+    assert window.is_playing is False
+    assert window.video.cursor().shape() == Qt.CursorShape.ArrowCursor
+    assert window.cursor().shape() == Qt.CursorShape.ArrowCursor
+    assert window._cursor_hide_timer.isActive() is False
+    assert cursor_autohide_calls[-1] is None
+
+
+def test_player_window_video_leave_restores_cursor_and_stops_autohide(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+    cursor_autohide_calls: list[int | None] = []
+    window.video.set_cursor_autohide = lambda value: cursor_autohide_calls.append(value)
+    window.is_playing = True
+    window._video_pointer_inside = True
+    window._cursor_hide_timer.start(1500)
+    window._set_video_cursor_hidden(True)
+
+    window._handle_video_leave()
+
+    assert window._video_pointer_inside is False
+    assert window.video.cursor().shape() == Qt.CursorShape.ArrowCursor
+    assert window.cursor().shape() == Qt.CursorShape.ArrowCursor
+    assert window._cursor_hide_timer.isActive() is False
+    assert cursor_autohide_calls[-1] is None
 
 
 def test_player_window_exit_fullscreen_restores_maximized_state(qtbot) -> None:
@@ -642,7 +814,7 @@ def test_player_window_keyboard_shortcuts_control_playback_navigation_and_view(q
     assert video.toggle_mute_calls == 1
 
     send_key(window, Qt.Key.Key_Minus, text="-")
-    assert window.current_speed == 0.5
+    assert window.current_speed == 0.75
 
     send_key(window, Qt.Key.Key_Equal, Qt.KeyboardModifier.ShiftModifier, text="+")
     assert window.current_speed == 1.0

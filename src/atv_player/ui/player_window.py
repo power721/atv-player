@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QTimer, Qt, Signal
-from PySide6.QtGui import QCloseEvent, QIcon, QKeyEvent, QKeySequence, QMouseEvent, QShortcut
+from PySide6.QtCore import QByteArray, QEvent, QTimer, Qt, Signal
+from PySide6.QtGui import QCloseEvent, QCursor, QIcon, QKeyEvent, QKeySequence, QMouseEvent, QShortcut
 from PySide6.QtWidgets import QApplication, QStyle, QStyleOptionSlider
 from PySide6.QtWidgets import (
     QComboBox,
@@ -70,6 +71,7 @@ class PlayerWindow(QWidget):
     closed_to_main = Signal()
     _SEEK_SHORTCUT_SECONDS = 15
     _VOLUME_SHORTCUT_STEP = 5
+    _CURSOR_HIDE_DELAY_MS = 3000
 
     def __init__(self, controller, config=None, save_config=None) -> None:
         super().__init__()
@@ -83,15 +85,22 @@ class PlayerWindow(QWidget):
         self._is_muted = False
         self._was_maximized_before_fullscreen = False
         self._quit_requested = False
+        self._video_pointer_inside = False
+        self._app_event_filter_installed = False
+        self._last_cursor_pos = None
+        self._last_cursor_activity_ms = 0
         self.setWindowTitle("alist-tvbox 播放器")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setMouseTracking(True)
         self.resize(1280, 800)
         self.setMinimumSize(1000, 700)
         self._icons_dir = Path(__file__).resolve().parent.parent / "icons"
         if self.config and self.config.player_window_geometry:
             self.restoreGeometry(QByteArray(self.config.player_window_geometry))
 
-        self.video = MpvWidget(self)
+        self.video_widget = MpvWidget(self)
+        self._configure_video_surface_widgets()
+        self.video = self.video_widget
         self.playlist = QListWidget()
         self.play_button = self._create_icon_button("play.svg", "播放/暂停", "Space")
         self.prev_button = self._create_icon_button("previous.svg", "上一集", "PgUp")
@@ -133,6 +142,9 @@ class PlayerWindow(QWidget):
         self.progress_timer = QTimer(self)
         self.progress_timer.setInterval(1000)
         self.progress_timer.timeout.connect(self._sync_progress_slider)
+        self._cursor_hide_timer = QTimer(self)
+        self._cursor_hide_timer.setInterval(100)
+        self._cursor_hide_timer.timeout.connect(self._poll_cursor_idle_state)
         self._slider_dragging = False
 
         self.sidebar_actions_widget = QWidget()
@@ -145,7 +157,7 @@ class PlayerWindow(QWidget):
         self.bottom_area.setMaximumHeight(72)
         bottom_layout = QVBoxLayout(self.bottom_area)
         self.bottom_layout = bottom_layout
-        bottom_layout.setContentsMargins(12, 0, 12, 6)
+        bottom_layout.setContentsMargins(12, 6, 12, 6)
         bottom_layout.setSpacing(4)
 
         progress_row = QHBoxLayout()
@@ -185,7 +197,7 @@ class PlayerWindow(QWidget):
         video_container = QWidget()
         video_layout = QVBoxLayout(video_container)
         video_layout.setContentsMargins(0, 0, 0, 0)
-        video_layout.addWidget(self.video)
+        video_layout.addWidget(self.video_widget)
 
         self.sidebar_splitter = QSplitter(Qt.Orientation.Vertical)
         self.sidebar_splitter.addWidget(self.playlist)
@@ -214,8 +226,8 @@ class PlayerWindow(QWidget):
         self.play_button.clicked.connect(self.toggle_playback)
         self.prev_button.clicked.connect(self.play_previous)
         self.next_button.clicked.connect(self.play_next)
-        self.backward_button.clicked.connect(lambda: self._seek_relative(-10))
-        self.forward_button.clicked.connect(lambda: self._seek_relative(10))
+        self.backward_button.clicked.connect(lambda: self._seek_relative(-self._SEEK_SHORTCUT_SECONDS))
+        self.forward_button.clicked.connect(lambda: self._seek_relative(self._SEEK_SHORTCUT_SECONDS))
         self.refresh_button.clicked.connect(self._replay_current_item)
         self.mute_button.clicked.connect(self._toggle_mute)
         self.wide_button.clicked.connect(self._toggle_wide_mode)
@@ -225,7 +237,8 @@ class PlayerWindow(QWidget):
         self.playlist.itemDoubleClicked.connect(self._play_clicked_item)
         self.toggle_playlist_button.clicked.connect(self._update_sidebar_visibility)
         self.toggle_details_button.clicked.connect(self._update_sidebar_visibility)
-        self.video.double_clicked.connect(self.toggle_fullscreen)
+        self.video_widget.double_clicked.connect(self.toggle_fullscreen)
+        self.video_widget.playback_finished.connect(self._handle_playback_finished)
         self.progress.sliderPressed.connect(self._handle_slider_pressed)
         self.progress.sliderReleased.connect(self._seek_from_slider)
         self.progress.clicked_value.connect(self._seek_to_position)
@@ -242,6 +255,10 @@ class PlayerWindow(QWidget):
         self._register_shortcuts()
         self._update_play_button_icon()
         self._apply_visibility_state()
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)
+            self._app_event_filter_installed = True
 
     def _format_tooltip(self, label: str, shortcut: str | None = None) -> str:
         if shortcut is None:
@@ -268,6 +285,95 @@ class PlayerWindow(QWidget):
         icon_name = "volume-off.svg" if self._is_muted else "volume-on.svg"
         self._set_button_icon(self.mute_button, icon_name)
 
+    def _video_surface_widgets(self) -> list[QWidget]:
+        return [self.video_widget, *self.video_widget.findChildren(QWidget)]
+
+    def _belongs_to_player_window(self, watched: object) -> bool:
+        return isinstance(watched, QWidget) and (watched is self or watched.window() is self)
+
+    def _configure_video_surface_widgets(self) -> None:
+        for widget in self._video_surface_widgets():
+            widget.setMouseTracking(True)
+            widget.installEventFilter(self)
+            widget.setCursor(Qt.CursorShape.ArrowCursor)
+
+    def _set_video_cursor_hidden(self, hidden: bool) -> None:
+        cursor_shape = Qt.CursorShape.BlankCursor if hidden else Qt.CursorShape.ArrowCursor
+        for widget in self._video_surface_widgets():
+            widget.setCursor(cursor_shape)
+        self.setCursor(cursor_shape)
+
+    def _restore_video_cursor(self, stop_timer: bool = True) -> None:
+        if stop_timer:
+            self._cursor_hide_timer.stop()
+        self._set_video_cursor_hidden(False)
+        if hasattr(self.video, "set_cursor_autohide"):
+            self.video.set_cursor_autohide(None)
+
+    def _cursor_now_ms(self) -> int:
+        return int(time.monotonic() * 1000)
+
+    def _handle_video_mouse_activity(self, now_ms: int | None = None) -> None:
+        now_ms = self._cursor_now_ms() if now_ms is None else now_ms
+        self._last_cursor_pos = QCursor.pos()
+        self._last_cursor_activity_ms = now_ms
+        self._set_video_cursor_hidden(False)
+        if self.is_playing:
+            if hasattr(self.video, "set_cursor_autohide"):
+                self.video.set_cursor_autohide(self._CURSOR_HIDE_DELAY_MS if self._video_pointer_inside else None)
+            if not self._cursor_hide_timer.isActive():
+                self._cursor_hide_timer.start()
+            return
+        self._restore_video_cursor()
+
+    def _handle_video_leave(self) -> None:
+        self._video_pointer_inside = False
+        self._restore_video_cursor()
+
+    def _hide_video_cursor_if_idle(self) -> None:
+        if self.is_playing and self._video_pointer_inside:
+            self._set_video_cursor_hidden(True)
+
+    def _refresh_video_pointer_inside_state(self) -> None:
+        global_pos = QCursor.pos()
+        local_pos = self.video_widget.mapFromGlobal(global_pos)
+        self._video_pointer_inside = self.video_widget.rect().contains(local_pos)
+
+    def _poll_cursor_idle_state(self, now_ms: int | None = None) -> None:
+        now_ms = self._cursor_now_ms() if now_ms is None else now_ms
+        global_pos = QCursor.pos()
+        if self._last_cursor_pos is None or global_pos != self._last_cursor_pos:
+            self._refresh_video_pointer_inside_state()
+            self._handle_video_mouse_activity(now_ms=now_ms)
+            return
+        self._refresh_video_pointer_inside_state()
+        if not self.is_playing:
+            self._restore_video_cursor()
+            return
+        if not self._video_pointer_inside:
+            self._restore_video_cursor(stop_timer=False)
+            if not self._cursor_hide_timer.isActive():
+                self._cursor_hide_timer.start()
+            return
+        if hasattr(self.video, "set_cursor_autohide"):
+            self.video.set_cursor_autohide(self._CURSOR_HIDE_DELAY_MS)
+        if now_ms - self._last_cursor_activity_ms >= self._CURSOR_HIDE_DELAY_MS:
+            self._set_video_cursor_hidden(True)
+
+    def _sync_video_cursor_autohide(self) -> None:
+        self._refresh_video_pointer_inside_state()
+        if self.is_playing and self._video_pointer_inside:
+            self._handle_video_mouse_activity()
+            return
+        if self.is_playing:
+            self._last_cursor_pos = QCursor.pos()
+            self._last_cursor_activity_ms = self._cursor_now_ms()
+            if not self._cursor_hide_timer.isActive():
+                self._cursor_hide_timer.start()
+            self._restore_video_cursor(stop_timer=False)
+            return
+        self._restore_video_cursor()
+
     def open_session(self, session, start_paused: bool = False) -> None:
         self.session = session
         self.current_index = session.start_index
@@ -287,6 +393,7 @@ class PlayerWindow(QWidget):
         self._load_current_item(session.start_position_seconds, pause=start_paused)
         self.report_timer.start()
         self.progress_timer.start()
+        self._sync_video_cursor_autohide()
 
     def _load_current_item(self, start_position_seconds: int = 0, pause: bool = False) -> None:
         if self.session is None:
@@ -520,6 +627,7 @@ class PlayerWindow(QWidget):
         if self.config is not None:
             self.config.last_active_window = "player"
         self._set_last_player_paused(not self.is_playing)
+        self._restore_video_cursor()
         self._persist_geometry()
         app = QApplication.instance()
         if app is not None:
@@ -531,6 +639,7 @@ class PlayerWindow(QWidget):
         except Exception:
             pass
         self.is_playing = False
+        self._restore_video_cursor()
         self._set_last_player_paused(True)
         self._update_play_button_icon()
         if self.config is not None:
@@ -553,6 +662,7 @@ class PlayerWindow(QWidget):
         self.is_playing = not self.is_playing
         self._set_last_player_paused(not self.is_playing)
         self._update_play_button_icon()
+        self._sync_video_cursor_autohide()
 
     def play_previous(self) -> None:
         if self.session is None or self.current_index <= 0:
@@ -570,6 +680,11 @@ class PlayerWindow(QWidget):
         self.playlist.setCurrentRow(self.current_index)
         self._load_current_item()
 
+    def _handle_playback_finished(self) -> None:
+        if self.session is None or self.current_index + 1 >= len(self.session.playlist):
+            return
+        self.play_next()
+
     def _play_clicked_item(self, item: QListWidgetItem) -> None:
         row = self.playlist.row(item)
         if row == self.current_index or self.session is None:
@@ -584,12 +699,35 @@ class PlayerWindow(QWidget):
         finally:
             self.report_timer.stop()
             self.progress_timer.stop()
+            self._restore_video_cursor()
+            app = QApplication.instance()
+            if self._app_event_filter_installed and app is not None:
+                app.removeEventFilter(self)
+                self._app_event_filter_installed = False
         self._persist_geometry()
         if not self._quit_requested and self.config is not None:
             self.config.last_active_window = "main"
             self._save_config()
             self.closed_to_main.emit()
         super().closeEvent(event)
+
+    def eventFilter(self, watched: object, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.MouseMove and self._belongs_to_player_window(watched):
+            self._refresh_video_pointer_inside_state()
+            if self.is_playing and self._video_pointer_inside:
+                self._handle_video_mouse_activity()
+            else:
+                self._restore_video_cursor()
+        if isinstance(watched, QWidget) and watched in self._video_surface_widgets():
+            if event.type() == QEvent.Type.Enter:
+                self._video_pointer_inside = True
+                self._handle_video_mouse_activity()
+            elif event.type() == QEvent.Type.MouseMove:
+                self._video_pointer_inside = True
+                self._handle_video_mouse_activity()
+            elif event.type() == QEvent.Type.Leave:
+                self._handle_video_leave()
+        return super().eventFilter(watched, event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Escape:
