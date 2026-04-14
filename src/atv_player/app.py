@@ -6,7 +6,7 @@ from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QApplication, QWidget
 
 from atv_player.api import ApiClient, UnauthorizedError
-from atv_player.controllers.browse_controller import BrowseController, encode_vod_path
+from atv_player.controllers.browse_controller import BrowseController
 from atv_player.controllers.history_controller import HistoryController
 from atv_player.controllers.login_controller import LoginController
 from atv_player.controllers.player_controller import PlayerController
@@ -46,7 +46,6 @@ class AppCoordinator(QObject):
             )
             try:
                 self._ensure_vod_token(self._api_client)
-                self._api_client.list_vod(encode_vod_path("/"), page=1, size=1)
             except UnauthorizedError:
                 self.repo.clear_token()
                 return self._show_login()
