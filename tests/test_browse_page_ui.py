@@ -1,6 +1,7 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QSplitter
 
+from atv_player.models import HistoryRecord
 from atv_player.ui.browse_page import BrowsePage
 from atv_player.ui.history_page import HistoryPage
 from atv_player.ui.search_page import SearchPage
@@ -19,7 +20,8 @@ class FakeBrowseController:
 
 
 class FakeHistoryController:
-    pass
+    def load_page(self, page: int, size: int):
+        return [], 0
 
 
 class FakeSearchController:
@@ -209,3 +211,87 @@ def test_browse_page_disables_prev_and_next_when_unavailable(qtbot) -> None:
 
     assert page.prev_page_button.isEnabled() is False
     assert page.next_page_button.isEnabled() is False
+
+
+def test_history_page_loads_selected_page_and_page_size(qtbot) -> None:
+    class Controller:
+        def __init__(self) -> None:
+            self.calls: list[tuple[int, int]] = []
+
+        def load_page(self, page: int, size: int):
+            self.calls.append((page, size))
+            return [], 120
+
+    controller = Controller()
+    page = HistoryPage(controller)
+    qtbot.addWidget(page)
+
+    page.page_size_combo.setCurrentText("30")
+    page.load_history()
+    controller.calls.clear()
+
+    page.next_page()
+
+    assert controller.calls[-1] == (2, 30)
+    assert page.page_label.text() == "第 2 / 4 页"
+
+
+def test_history_page_disables_prev_and_next_when_unavailable(qtbot) -> None:
+    class Controller:
+        def load_page(self, page: int, size: int):
+            return [], 20
+
+    page = HistoryPage(Controller())
+    qtbot.addWidget(page)
+
+    page.page_size_combo.setCurrentText("20")
+    page.load_history()
+
+    assert page.prev_page_button.isEnabled() is False
+    assert page.next_page_button.isEnabled() is False
+
+
+def test_history_page_delete_reloads_previous_page_when_last_page_becomes_empty(qtbot) -> None:
+    class Controller:
+        def __init__(self) -> None:
+            self.calls: list[tuple[int, int]] = []
+            self.records = {
+                2: [
+                    HistoryRecord(
+                        id=9,
+                        key="movie-1",
+                        vod_name="Movie",
+                        vod_pic="",
+                        vod_remarks="Ep",
+                        episode=0,
+                        episode_url="",
+                        position=0,
+                        opening=0,
+                        ending=0,
+                        speed=1.0,
+                        create_time=1,
+                    )
+                ],
+                1: [],
+            }
+
+        def load_page(self, page: int, size: int):
+            self.calls.append((page, size))
+            total = 51 if page == 2 else 50
+            return self.records.get(page, []), total
+
+        def delete_one(self, history_id: int) -> None:
+            self.records[2] = []
+
+    controller = Controller()
+    page = HistoryPage(controller)
+    qtbot.addWidget(page)
+    page.current_page = 2
+    page.page_size = 50
+
+    page.load_history()
+    page.table.selectRow(0)
+    page.delete_selected()
+
+    assert controller.calls[-1] == (1, 50)
+    assert page.current_page == 1
