@@ -35,7 +35,11 @@ class BrowsePage(QWidget):
         self.results_table.setHorizontalHeaderLabels(["来源", "名称"])
         self.results_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.status_label = QLabel("")
-        self.path_label = QLabel("/")
+        self.breadcrumb_bar = QWidget()
+        self.breadcrumb_layout = QHBoxLayout(self.breadcrumb_bar)
+        self.breadcrumb_layout.setContentsMargins(0, 0, 0, 0)
+        self.breadcrumb_layout.setSpacing(4)
+        self.breadcrumb_buttons: list[QPushButton] = []
         self.refresh_button = QPushButton("刷新")
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["类型", "名称", "时间"])
@@ -73,8 +77,10 @@ class BrowsePage(QWidget):
         self.status_label.hide()
 
         file_layout = QVBoxLayout()
-        file_layout.addWidget(self.path_label)
-        file_layout.addWidget(self.refresh_button)
+        breadcrumb_row = QHBoxLayout()
+        breadcrumb_row.addWidget(self.breadcrumb_bar, 1)
+        breadcrumb_row.addWidget(self.refresh_button)
+        file_layout.addLayout(breadcrumb_row)
         file_layout.addWidget(self.table)
         self.file_panel = QWidget()
         self.file_panel.setLayout(file_layout)
@@ -99,14 +105,14 @@ class BrowsePage(QWidget):
 
     def load_path(self, path: str) -> None:
         self.current_path = path or "/"
-        self.path_label.setText(self.current_path)
+        self._update_breadcrumbs()
         try:
             items, _total = self.controller.load_folder(self.current_path)
         except UnauthorizedError:
             self.unauthorized.emit()
             return
         except ApiError as exc:
-            self.path_label.setText(f"{self.current_path} | {exc}")
+            self._set_breadcrumb_status(str(exc))
             return
         self.current_items = items
         self._populate_table(items)
@@ -189,6 +195,37 @@ class BrowsePage(QWidget):
         self.clear_button.hide()
         self.status_label.hide()
         self.content_splitter.setSizes([0, max(self.content_splitter.width(), self.width(), 1)])
+
+    def _clear_breadcrumbs(self) -> None:
+        while self.breadcrumb_layout.count():
+            item = self.breadcrumb_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self.breadcrumb_buttons = []
+
+    def _update_breadcrumbs(self) -> None:
+        self._clear_breadcrumbs()
+        segments = [segment for segment in self.current_path.split("/") if segment]
+        entries = [("🏠首页", "/")]
+        current = ""
+        for segment in segments:
+            current = f"{current}/{segment}" if current else f"/{segment}"
+            entries.append((segment, current))
+        for index, (label, path) in enumerate(entries):
+            button = QPushButton(label)
+            button.setFlat(True)
+            button.clicked.connect(lambda _checked=False, target=path: self.load_path(target))
+            self.breadcrumb_layout.addWidget(button)
+            self.breadcrumb_buttons.append(button)
+            if index < len(entries) - 1:
+                self.breadcrumb_layout.addWidget(QLabel("/"))
+        self.breadcrumb_layout.addStretch(1)
+
+    def _set_breadcrumb_status(self, message: str) -> None:
+        self._clear_breadcrumbs()
+        self.breadcrumb_layout.addWidget(QLabel(f"{self.current_path} | {message}"))
+        self.breadcrumb_layout.addStretch(1)
 
     def _populate_table(self, items: list[VodItem]) -> None:
         self.table.setRowCount(len(items))

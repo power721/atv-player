@@ -6,7 +6,12 @@ from atv_player.ui.history_page import HistoryPage
 
 
 class FakeBrowseController:
-    pass
+    def __init__(self) -> None:
+        self.loaded_paths: list[str] = []
+
+    def load_folder(self, path: str, page: int = 1, size: int = 50):
+        self.loaded_paths.append(path)
+        return [], 0
 
 
 class FakeHistoryController:
@@ -57,3 +62,19 @@ def test_tables_are_read_only(qtbot) -> None:
     assert browse_page.results_table.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers
     assert browse_page.table.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers
     assert history_page.table.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers
+
+
+def test_browse_page_breadcrumb_click_loads_target_folder(qtbot) -> None:
+    controller = FakeBrowseController()
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+    page.show()
+
+    page.load_path("/电影/国产/动作")
+
+    assert [button.text() for button in page.breadcrumb_buttons] == ["🏠首页", "电影", "国产", "动作"]
+
+    controller.loaded_paths.clear()
+    page.breadcrumb_buttons[2].click()
+
+    assert controller.loaded_paths == ["/电影/国产"]
