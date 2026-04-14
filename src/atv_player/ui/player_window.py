@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -26,12 +26,15 @@ class PlayerWindow(QWidget):
         self.current_speed = 1.0
         self.is_playing = True
         self.setWindowTitle("alist-tvbox 播放器")
+        self.resize(1280, 800)
+        self.setMinimumSize(1000, 700)
         self.video = MpvWidget(self)
         self.playlist = QListWidget()
         self.play_button = QPushButton("播放/暂停")
         self.prev_button = QPushButton("上一集")
         self.next_button = QPushButton("下一集")
-        self.progress = QSlider()
+        self.progress = QSlider(Qt.Orientation.Horizontal)
+        self.progress.setFixedHeight(24)
         self.details = QTextEdit()
         self.details.setReadOnly(True)
         self.report_timer = QTimer(self)
@@ -84,10 +87,25 @@ class PlayerWindow(QWidget):
         try:
             self.video.load(current_item.url)
             if start_position_seconds:
-                QTimer.singleShot(200, lambda: self.video.seek(start_position_seconds))
+                QTimer.singleShot(
+                    200,
+                    lambda: self._attempt_resume_seek(start_position_seconds, retries_remaining=2),
+                )
             self.video.set_speed(self.current_speed)
         except Exception as exc:
             self.details.append(f"\n播放失败: {exc}")
+
+    def _attempt_resume_seek(self, seconds: int, retries_remaining: int) -> None:
+        try:
+            self.video.seek(seconds)
+        except Exception as exc:
+            if retries_remaining > 0:
+                QTimer.singleShot(
+                    300,
+                    lambda: self._attempt_resume_seek(seconds, retries_remaining=retries_remaining - 1),
+                )
+                return
+            self.details.append(f"\n恢复播放失败: {exc}")
 
     def report_progress(self) -> None:
         if self.session is None:

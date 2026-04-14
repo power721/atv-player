@@ -1,10 +1,11 @@
-from atv_player.controllers.browse_controller import BrowseController, encode_vod_path, filter_search_results
+from atv_player.controllers.browse_controller import BrowseController, build_vod_list_path, filter_search_results
 from atv_player.models import VodItem
 
 
 class FakeApiClient:
     def __init__(self) -> None:
         self.resolved_links: list[str] = []
+        self.list_vod_calls: list[tuple[str, int, int]] = []
         self.detail_payload = {
             "list": [
                 {
@@ -25,6 +26,10 @@ class FakeApiClient:
 
     def get_detail(self, vod_id: str) -> dict:
         return self.detail_payload
+
+    def list_vod(self, path_id: str, page: int, size: int) -> dict:
+        self.list_vod_calls.append((path_id, page, size))
+        return {"list": [], "total": 0}
 
 
 def test_filter_search_results_by_drive_type() -> None:
@@ -73,5 +78,14 @@ def test_build_request_from_detail_maps_playlist_items() -> None:
     assert request.clicked_index == 0
 
 
-def test_encode_vod_path_encodes_root_slash() -> None:
-    assert encode_vod_path("/") == "1$%2F$1"
+def test_build_vod_list_path_wraps_root_without_encoding() -> None:
+    assert build_vod_list_path("/") == "1$/$1"
+
+
+def test_load_folder_wraps_path_without_encoding_for_file_list_api() -> None:
+    api = FakeApiClient()
+    controller = BrowseController(api)
+
+    controller.load_folder("/电影/国产", page=2, size=30)
+
+    assert api.list_vod_calls == [("1$/电影/国产$1", 2, 30)]

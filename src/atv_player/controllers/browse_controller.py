@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from urllib.parse import quote
-
 from atv_player.models import OpenPlayerRequest, PlayItem, VodItem
 
 
-def encode_vod_path(path: str) -> str:
+def build_vod_list_path(path: str) -> str:
     normalized = path or "/"
-    return f"1${quote(normalized, safe='')}$1"
+    return f"1${normalized}$1"
 
 
 def _map_play_item(payload: dict, index: int) -> PlayItem:
@@ -53,7 +51,7 @@ class BrowseController:
         self._api_client = api_client
 
     def load_folder(self, path: str, page: int = 1, size: int = 50) -> tuple[list[VodItem], int]:
-        payload = self._api_client.list_vod(encode_vod_path(path), page=page, size=size)
+        payload = self._api_client.list_vod(build_vod_list_path(path), page=page, size=size)
         items = [_map_vod_item(item) for item in payload.get("list", [])]
         return items, int(payload.get("total", len(items)))
 
