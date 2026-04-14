@@ -97,6 +97,7 @@ class PlayerWindow(QWidget):
         self.next_button = self._create_icon_button("next.svg", "下一集")
         self.backward_button = self._create_icon_button("seek-backward.svg", "后退")
         self.forward_button = self._create_icon_button("seek-forward.svg", "前进")
+        self.refresh_button = self._create_icon_button("refresh.svg", "重新播放")
         self.mute_button = self._create_icon_button("volume-on.svg", "静音")
         self.wide_button = self._create_icon_button("grid.svg", "宽屏")
         self.fullscreen_button = self._create_icon_button("maximize.svg", "全屏")
@@ -165,6 +166,7 @@ class PlayerWindow(QWidget):
         control_group_layout.addWidget(self.next_button)
         control_group_layout.addWidget(self.backward_button)
         control_group_layout.addWidget(self.forward_button)
+        control_group_layout.addWidget(self.refresh_button)
         control_group_layout.addWidget(self.wide_button)
         control_group_layout.addWidget(self.fullscreen_button)
         control_group_layout.addWidget(self.speed_combo)
@@ -212,6 +214,7 @@ class PlayerWindow(QWidget):
         self.next_button.clicked.connect(self.play_next)
         self.backward_button.clicked.connect(lambda: self._seek_relative(-10))
         self.forward_button.clicked.connect(lambda: self._seek_relative(10))
+        self.refresh_button.clicked.connect(self._replay_current_item)
         self.mute_button.clicked.connect(self._toggle_mute)
         self.wide_button.clicked.connect(self._toggle_wide_mode)
         self.fullscreen_button.clicked.connect(self.toggle_fullscreen)
@@ -344,6 +347,14 @@ class PlayerWindow(QWidget):
             self.video.seek_relative(seconds)
         except Exception as exc:
             self.details.append(f"\n跳转失败: {exc}")
+
+    def _replay_current_item(self) -> None:
+        if self.session is None:
+            return
+        self.is_playing = True
+        self._update_play_button_icon()
+        self.playlist.setCurrentRow(self.current_index)
+        self._load_current_item(start_position_seconds=0)
 
     def _toggle_mute(self) -> None:
         try:

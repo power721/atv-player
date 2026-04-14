@@ -367,6 +367,40 @@ def test_player_window_mute_button_icon_tracks_mute_state(qtbot) -> None:
     assert window.mute_button.icon().pixmap(24, 24).toImage() == unmuted_icon
 
 
+def test_player_window_refresh_button_replays_current_item(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, int]] = []
+            self.set_speed_calls: list[float] = []
+            self.set_volume_calls: list[int] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.load_calls.append((url, start_seconds))
+
+        def set_speed(self, value: float) -> None:
+            self.set_speed_calls.append(value)
+
+        def set_volume(self, value: int) -> None:
+            self.set_volume_calls.append(value)
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.volume_slider.setValue(35)
+    window.open_session(make_player_session(start_index=1, speed=1.5))
+    window.video.load_calls.clear()
+    window.video.set_speed_calls.clear()
+    window.video.set_volume_calls.clear()
+
+    window.refresh_button.click()
+
+    assert window.current_index == 1
+    assert window.playlist.currentRow() == 1
+    assert window.video.load_calls == [("http://m/2.m3u8", 0)]
+    assert window.video.set_speed_calls == [1.5]
+    assert window.video.set_volume_calls == [35]
+
+
 def test_player_window_control_buttons_drive_video_actions(qtbot) -> None:
     class FakeVideo:
         def __init__(self) -> None:
