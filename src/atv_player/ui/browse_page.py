@@ -41,8 +41,8 @@ class BrowsePage(QWidget):
         self.breadcrumb_layout.setSpacing(4)
         self.breadcrumb_buttons: list[QPushButton] = []
         self.refresh_button = QPushButton("刷新")
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["类型", "名称", "时间"])
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["类型", "名称", "大小", "豆瓣ID", "评分", "时间"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.current_items: list[VodItem] = []
         self.current_path = "/"
@@ -232,7 +232,10 @@ class BrowsePage(QWidget):
         for row, item in enumerate(items):
             self.table.setItem(row, 0, QTableWidgetItem(self._item_kind(item)))
             self.table.setItem(row, 1, QTableWidgetItem(item.vod_name))
-            self.table.setItem(row, 2, QTableWidgetItem(item.vod_time))
+            self.table.setItem(row, 2, QTableWidgetItem(self._item_size(item)))
+            self.table.setItem(row, 3, QTableWidgetItem(self._item_dbid(item)))
+            self.table.setItem(row, 4, QTableWidgetItem(self._item_rating(item)))
+            self.table.setItem(row, 5, QTableWidgetItem(item.vod_time))
         self.table.resizeColumnsToContents()
 
     def _item_kind(self, item: VodItem) -> str:
@@ -243,6 +246,16 @@ class BrowsePage(QWidget):
         if item.type == 9:
             return "播放列表"
         return f"类型{item.type}"
+
+    def _item_size(self, item: VodItem) -> str:
+        return item.vod_remarks if getattr(item, "vod_tag", "") == "file" else "-"
+
+    def _item_dbid(self, item: VodItem) -> str:
+        dbid = getattr(item, "dbid", 0)
+        return str(dbid) if dbid else ""
+
+    def _item_rating(self, item: VodItem) -> str:
+        return item.vod_remarks if getattr(item, "vod_tag", "") == "folder" else ""
 
     def _handle_open(self, row: int, _column: int) -> None:
         if not (0 <= row < len(self.current_items)):

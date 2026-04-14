@@ -27,7 +27,7 @@ def test_browse_page_uses_split_view_for_search_and_file_list(qtbot) -> None:
     assert page.content_splitter.indexOf(page.search_panel) == 0
     assert page.content_splitter.indexOf(page.file_panel) == 1
     assert page.results_table.columnCount() == 2
-    assert page.table.columnCount() == 3
+    assert page.table.columnCount() == 6
 
 
 def test_browse_page_hides_search_results_panel_when_empty(qtbot) -> None:
@@ -78,3 +78,39 @@ def test_browse_page_breadcrumb_click_loads_target_folder(qtbot) -> None:
     page.breadcrumb_buttons[2].click()
 
     assert controller.loaded_paths == ["/电影/国产"]
+
+
+def test_browse_page_shows_size_dbid_and_rating_columns(qtbot) -> None:
+    page = BrowsePage(FakeBrowseController())
+    qtbot.addWidget(page)
+
+    page._populate_table(
+        [
+            type("Item", (), {
+                "type": 2,
+                "vod_tag": "file",
+                "vod_name": "Episode 1",
+                "vod_time": "2026-04-14",
+                "vod_remarks": "1.4 GB",
+                "dbid": 123456,
+            })(),
+            type("Item", (), {
+                "type": 1,
+                "vod_tag": "folder",
+                "vod_name": "Movie Folder",
+                "vod_time": "2026-04-14",
+                "vod_remarks": "8.6",
+                "dbid": 654321,
+            })(),
+        ]
+    )
+
+    assert page.table.horizontalHeaderItem(2).text() == "大小"
+    assert page.table.horizontalHeaderItem(3).text() == "豆瓣ID"
+    assert page.table.horizontalHeaderItem(4).text() == "评分"
+    assert page.table.item(0, 2).text() == "1.4 GB"
+    assert page.table.item(0, 3).text() == "123456"
+    assert page.table.item(0, 4).text() == ""
+    assert page.table.item(1, 2).text() == "-"
+    assert page.table.item(1, 3).text() == "654321"
+    assert page.table.item(1, 4).text() == "8.6"
