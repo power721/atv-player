@@ -1,0 +1,1 @@
+uv run src/atv_player/main.py
