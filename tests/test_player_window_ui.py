@@ -107,6 +107,43 @@ def test_player_window_uses_splitters_for_resizable_panels(qtbot) -> None:
     assert window.sidebar_splitter.orientation() == Qt.Orientation.Vertical
 
 
+def test_player_window_uses_vertical_shell_with_bottom_controls(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+
+    root_layout = window.layout()
+
+    assert root_layout is not None
+    assert root_layout.count() == 2
+    assert root_layout.itemAt(0).widget() is window.main_splitter
+    assert root_layout.itemAt(1).widget() is window.bottom_area
+    assert window.main_splitter.orientation() == Qt.Orientation.Horizontal
+    assert window.sidebar_splitter.orientation() == Qt.Orientation.Vertical
+
+
+def test_player_window_bottom_controls_are_not_nested_inside_video_pane(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    main_container = window.main_splitter.widget(0)
+
+    assert main_container is not None
+    assert main_container.layout().indexOf(window.bottom_area) == -1
+
+
+def test_player_window_falls_back_when_saved_splitter_state_is_invalid(qtbot) -> None:
+    config = AppConfig(player_main_splitter_state=b"not-a-real-splitter-state")
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.show()
+
+    sizes = window.main_splitter.sizes()
+
+    assert len(sizes) == 2
+    assert all(size > 0 for size in sizes)
+
+
 def test_player_window_retries_resume_seek_when_player_is_not_ready(qtbot, monkeypatch) -> None:
     class FakeVideo:
         def __init__(self) -> None:

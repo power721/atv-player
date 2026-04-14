@@ -138,9 +138,6 @@ class PlayerWindow(QWidget):
         sidebar_actions.addWidget(self.toggle_playlist_button)
         sidebar_actions.addWidget(self.toggle_details_button)
 
-        left = QVBoxLayout()
-        left.addWidget(self.video)
-
         self.bottom_area = QWidget()
         self.bottom_area.setMaximumHeight(60)
         bottom_layout = QVBoxLayout(self.bottom_area)
@@ -181,10 +178,10 @@ class PlayerWindow(QWidget):
         controls.addWidget(volume_group, 0, Qt.AlignmentFlag.AlignRight)
         bottom_layout.addLayout(controls)
 
-        left.addWidget(self.bottom_area)
-
         video_container = QWidget()
-        video_container.setLayout(left)
+        video_layout = QVBoxLayout(video_container)
+        video_layout.setContentsMargins(0, 0, 0, 0)
+        video_layout.addWidget(self.video)
 
         self.sidebar_splitter = QSplitter(Qt.Orientation.Vertical)
         self.sidebar_splitter.addWidget(self.playlist)
@@ -202,11 +199,12 @@ class PlayerWindow(QWidget):
         self.main_splitter.addWidget(self.sidebar_container)
         self.main_splitter.setStretchFactor(0, 3)
         self.main_splitter.setStretchFactor(1, 1)
-        if self.config and self.config.player_main_splitter_state:
-            self.main_splitter.restoreState(QByteArray(self.config.player_main_splitter_state))
+        self._restore_main_splitter_state()
 
-        layout = QHBoxLayout(self)
-        layout.addWidget(self.main_splitter)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.main_splitter, 1)
+        layout.addWidget(self.bottom_area, 0)
 
         self.play_button.clicked.connect(self.toggle_playback)
         self.prev_button.clicked.connect(self.play_previous)
@@ -457,6 +455,14 @@ class PlayerWindow(QWidget):
         if hours:
             return f"{hours:02d}:{minutes:02d}:{remaining_seconds:02d}"
         return f"{minutes:02d}:{remaining_seconds:02d}"
+
+    def _restore_main_splitter_state(self) -> None:
+        if self.config is None or not self.config.player_main_splitter_state:
+            self.main_splitter.setSizes([960, 320])
+            return
+        restored = self.main_splitter.restoreState(QByteArray(self.config.player_main_splitter_state))
+        if not restored:
+            self.main_splitter.setSizes([960, 320])
 
     def _persist_geometry(self) -> None:
         if self.config is None:
