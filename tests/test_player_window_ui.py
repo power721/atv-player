@@ -107,6 +107,17 @@ def test_player_window_uses_splitters_for_resizable_panels(qtbot) -> None:
     assert window.sidebar_splitter.orientation() == Qt.Orientation.Vertical
 
 
+def test_player_window_uses_detail_container_with_metadata_and_log_views(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert window.details is not None
+    assert window.metadata_view.isReadOnly() is True
+    assert window.log_view.isReadOnly() is True
+    assert window.details.layout().indexOf(window.metadata_view) != -1
+    assert window.details.layout().indexOf(window.log_view) != -1
+
+
 def test_player_window_uses_vertical_shell_with_bottom_controls(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
@@ -251,6 +262,58 @@ def test_player_window_can_open_session_paused(qtbot) -> None:
     assert window.play_button.icon().pixmap(24, 24).toImage() == player_window_module.QIcon(
         str(window._icons_dir / "play.svg")
     ).pixmap(24, 24).toImage()
+
+
+def test_player_window_renders_title_metadata_in_expected_order(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="movie-1",
+            vod_name="九寨沟",
+            type_name="纪录片",
+            vod_year="2006",
+            vod_area="中国大陆",
+            vod_lang="无对白",
+            vod_remarks="6.2",
+            vod_director="Masa Nishimura",
+            vod_actor="未知",
+            vod_content="九寨沟风景名胜区位于四川省阿坝藏族羌族自治州南坪县境内。",
+            dbid=19971621,
+        ),
+        playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    assert window.metadata_view.toPlainText() == (
+        "名称: 九寨沟\n"
+        "类型: 纪录片\n"
+        "年代: 2006\n"
+        "地区: 中国大陆\n"
+        "语言: 无对白\n"
+        "评分: 6.2\n"
+        "导演: Masa Nishimura\n"
+        "演员: 未知\n"
+        "豆瓣ID: 19971621\n"
+        "\n"
+        "简介:\n"
+        "九寨沟风景名胜区位于四川省阿坝藏族羌族自治州南坪县境内。"
+    )
 
 
 def test_player_window_can_hide_playlist_and_details(qtbot) -> None:
