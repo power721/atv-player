@@ -204,6 +204,74 @@ def test_player_window_keeps_empty_reserved_poster_area_without_placeholder_text
     assert window.poster_label.minimumHeight() > 0
 
 
+def test_player_window_renders_remote_poster_via_backend_image_proxy(qtbot, monkeypatch, tmp_path) -> None:
+    poster_path = tmp_path / "poster.png"
+    pixmap = QPixmap(20, 30)
+    pixmap.fill(QColor("blue"))
+    assert pixmap.save(str(poster_path)) is True
+    poster_bytes = poster_path.read_bytes()
+    requested: list[str] = []
+
+    class FakeResponse:
+        def __init__(self, content: bytes) -> None:
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, timeout: float) -> FakeResponse:
+        requested.append(url)
+        return FakeResponse(poster_bytes)
+
+    monkeypatch.setattr(
+        player_window_module,
+        "httpx",
+        type("FakeHttpx", (), {"get": staticmethod(fake_get)}),
+        raising=False,
+    )
+
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="movie-1",
+            vod_name="九寨沟",
+            vod_pic="https://img3.doubanio.com/view/photo/s_ratio_poster/public/p123.jpg",
+        ),
+        playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(base_url="http://127.0.0.1:4567"),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    rendered = window.poster_label.pixmap()
+    assert rendered is not None
+    assert rendered.isNull() is False
+    assert requested == [
+        "http://127.0.0.1:4567/images?url=https%3A%2F%2Fimg3.doubanio.com%2Fview%2Fphoto%2Fm%2Fpublic%2Fp123.jpg"
+    ]
+
+
 def test_player_window_uses_vertical_shell_with_bottom_controls(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from urllib.parse import quote
 
+import httpx
 from PySide6.QtCore import QByteArray, QEvent, QSize, QTimer, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QCursor, QIcon, QKeyEvent, QKeySequence, QMouseEvent, QPixmap, QShortcut
 from PySide6.QtWidgets import QApplication, QStyle, QStyleOptionSlider
@@ -461,7 +463,19 @@ class PlayerWindow(QWidget):
     def _load_poster_pixmap(self, source: str) -> QPixmap:
         if not source:
             return QPixmap()
-        pixmap = QPixmap(source)
+        pixmap = QPixmap()
+        source_path = Path(source)
+        if source_path.is_file():
+            pixmap = QPixmap(str(source_path))
+        else:
+            image_url = self._image_proxy_url(source)
+            if image_url:
+                try:
+                    response = httpx.get(image_url, timeout=30.0)
+                    response.raise_for_status()
+                except Exception:
+                    return QPixmap()
+                pixmap.loadFromData(response.content)
         if pixmap.isNull():
             return QPixmap()
         return pixmap.scaled(
@@ -469,6 +483,14 @@ class PlayerWindow(QWidget):
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
+
+    def _image_proxy_url(self, source: str) -> str:
+        if not source or self.config is None or not self.config.base_url:
+            return ""
+        normalized = source
+        if "doubanio.com" in normalized:
+            normalized = normalized.replace("s_ratio_poster", "m")
+        return f"{self.config.base_url.rstrip('/')}/images?url={quote(normalized, safe='')}"
 
     def _render_poster(self) -> None:
         if self.session is None:
