@@ -91,6 +91,8 @@ class PlayerWindow(QWidget):
         self.main_splitter.addWidget(sidebar_container)
         self.main_splitter.setStretchFactor(0, 3)
         self.main_splitter.setStretchFactor(1, 2)
+        if self.config and self.config.player_main_splitter_state:
+            self.main_splitter.restoreState(QByteArray(self.config.player_main_splitter_state))
 
         layout = QHBoxLayout(self)
         layout.addWidget(self.main_splitter)
@@ -203,6 +205,7 @@ class PlayerWindow(QWidget):
         if self.config is None:
             return
         self.config.player_window_geometry = bytes(self.saveGeometry())
+        self.config.player_main_splitter_state = bytes(self.main_splitter.saveState())
         self._save_config()
 
     def _quit_application(self) -> None:

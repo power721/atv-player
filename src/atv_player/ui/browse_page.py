@@ -1,9 +1,21 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QLabel, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QComboBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+    QLineEdit,
+)
 
 from atv_player.api import ApiError, UnauthorizedError
+from atv_player.controllers.browse_controller import filter_search_results
 from atv_player.models import VodItem
 
 
@@ -14,20 +26,67 @@ class BrowsePage(QWidget):
     def __init__(self, controller) -> None:
         super().__init__()
         self.controller = controller
+        self.keyword_edit = QLineEdit()
+        self.filter_combo = QComboBox()
+        self.search_button = QPushButton("搜索")
+        self.clear_button = QPushButton("清空")
+        self.results_table = QTableWidget(0, 2)
+        self.results_table.setHorizontalHeaderLabels(["来源", "名称"])
+        self.status_label = QLineEdit()
+        self.status_label.setReadOnly(True)
+        self.status_label.setPlaceholderText("搜索电报资源")
         self.path_label = QLabel("/")
         self.refresh_button = QPushButton("刷新")
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["类型", "名称", "时间"])
         self.current_items: list[VodItem] = []
         self.current_path = "/"
+        self._results: list[VodItem] = []
+        self._filtered_results: list[VodItem] = []
 
+        self.filter_combo.addItem("全部", "")
+        self.filter_combo.addItem("📀 0", "0")
+        self.filter_combo.addItem("💾 3", "3")
+        self.filter_combo.addItem("🚀 5", "5")
+        self.filter_combo.addItem("🌞 7", "7")
+        self.filter_combo.addItem("📡 8", "8")
+        self.filter_combo.addItem("☁ 9", "9")
+
+        search_controls = QHBoxLayout()
+        search_controls.addWidget(self.keyword_edit)
+        search_controls.addWidget(self.filter_combo)
+        search_controls.addWidget(self.search_button)
+        search_controls.addWidget(self.clear_button)
+
+        search_layout = QVBoxLayout()
+        search_layout.addLayout(search_controls)
+        search_layout.addWidget(self.status_label)
+        search_layout.addWidget(self.results_table)
+        self.search_panel = QWidget()
+        self.search_panel.setLayout(search_layout)
+
+        file_layout = QVBoxLayout()
+        file_layout.addWidget(self.path_label)
+        file_layout.addWidget(self.refresh_button)
+        file_layout.addWidget(self.table)
+        self.file_panel = QWidget()
+        self.file_panel.setLayout(file_layout)
+
+        self.content_splitter = QSplitter()
+        self.content_splitter.addWidget(self.search_panel)
+        self.content_splitter.addWidget(self.file_panel)
+        self.content_splitter.setStretchFactor(0, 2)
+        self.content_splitter.setStretchFactor(1, 3)
+
+        self.search_button.clicked.connect(self.search)
+        self.clear_button.clicked.connect(self.clear_results)
+        self.filter_combo.currentIndexChanged.connect(self._apply_filter)
+        self.results_table.cellDoubleClicked.connect(self._open_search_result)
         self.refresh_button.clicked.connect(self.reload)
         self.table.cellDoubleClicked.connect(self._handle_open)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(self.path_label)
-        layout.addWidget(self.refresh_button)
-        layout.addWidget(self.table)
+        layout.addWidget(self.content_splitter)
 
     def load_path(self, path: str) -> None:
         self.current_path = path or "/"
@@ -45,6 +104,51 @@ class BrowsePage(QWidget):
 
     def reload(self) -> None:
         self.load_path(self.current_path)
+
+    def search(self) -> None:
+        keyword = self.keyword_edit.text().strip()
+        if not keyword:
+            self.status_label.setText("请输入关键词")
+            return
+        try:
+            self._results = self.controller.search(keyword)
+        except UnauthorizedError:
+            self.unauthorized.emit()
+            return
+        except ApiError as exc:
+            self.status_label.setText(str(exc))
+            return
+        self.status_label.setText(f"{len(self._results)} 条结果")
+        self._apply_filter()
+
+    def clear_results(self) -> None:
+        self._results = []
+        self._filtered_results = []
+        self.results_table.setRowCount(0)
+        self.status_label.clear()
+
+    def _apply_filter(self) -> None:
+        drive_type = self.filter_combo.currentData()
+        self._filtered_results = filter_search_results(self._results, drive_type or "")
+        self.results_table.setRowCount(len(self._filtered_results))
+        for row, item in enumerate(self._filtered_results):
+            self.results_table.setItem(row, 0, QTableWidgetItem(item.type_name))
+            self.results_table.setItem(row, 1, QTableWidgetItem(item.vod_name))
+        self.results_table.resizeColumnsToContents()
+
+    def _open_search_result(self, row: int, _column: int) -> None:
+        if not (0 <= row < len(self._filtered_results)):
+            return
+        item = self._filtered_results[row]
+        try:
+            path = self.controller.resolve_search_result(item)
+        except UnauthorizedError:
+            self.unauthorized.emit()
+            return
+        except ApiError as exc:
+            self.status_label.setText(str(exc))
+            return
+        self.load_path(path)
 
     def _populate_table(self, items: list[VodItem]) -> None:
         self.table.setRowCount(len(items))

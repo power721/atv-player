@@ -30,7 +30,8 @@ class SettingsRepository:
                     last_playback_vod_id TEXT NOT NULL DEFAULT '',
                     last_playback_clicked_vod_id TEXT NOT NULL DEFAULT '',
                     main_window_geometry BLOB,
-                    player_window_geometry BLOB
+                    player_window_geometry BLOB,
+                    player_main_splitter_state BLOB
                 )
                 """
             )
@@ -62,6 +63,10 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN last_playback_clicked_vod_id TEXT NOT NULL DEFAULT ''"
                 )
+            if "player_main_splitter_state" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN player_main_splitter_state BLOB"
+                )
             conn.execute(
                 """
                 INSERT INTO app_config (
@@ -77,9 +82,10 @@ class SettingsRepository:
                     last_playback_vod_id,
                     last_playback_clicked_vod_id,
                     main_window_geometry,
-                    player_window_geometry
+                    player_window_geometry,
+                    player_main_splitter_state
                 )
-                VALUES (1, 'http://127.0.0.1:4567', '', '', '', '/', 'main', '', '', '', '', NULL, NULL)
+                VALUES (1, 'http://127.0.0.1:4567', '', '', '', '/', 'main', '', '', '', '', NULL, NULL, NULL)
                 ON CONFLICT(id) DO NOTHING
                 """
             )
@@ -100,7 +106,8 @@ class SettingsRepository:
                     last_playback_vod_id,
                     last_playback_clicked_vod_id,
                     main_window_geometry,
-                    player_window_geometry
+                    player_window_geometry,
+                    player_main_splitter_state
                 FROM app_config
                 WHERE id = 1
                 """
@@ -125,7 +132,8 @@ class SettingsRepository:
                     last_playback_vod_id = ?,
                     last_playback_clicked_vod_id = ?,
                     main_window_geometry = ?,
-                    player_window_geometry = ?
+                    player_window_geometry = ?,
+                    player_main_splitter_state = ?
                 WHERE id = 1
                 """,
                 (
@@ -141,6 +149,7 @@ class SettingsRepository:
                     config.last_playback_clicked_vod_id,
                     config.main_window_geometry,
                     config.player_window_geometry,
+                    config.player_main_splitter_state,
                 ),
             )
 

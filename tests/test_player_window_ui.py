@@ -1,7 +1,7 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtWidgets import QSplitter
 from atv_player.controllers.player_controller import PlayerSession
-from atv_player.models import PlayItem, VodItem
+from atv_player.models import AppConfig, PlayItem, VodItem
 
 import atv_player.ui.player_window as player_window_module
 from atv_player.ui.player_window import PlayerWindow
@@ -172,3 +172,23 @@ def test_player_window_syncs_progress_slider_and_seeks_from_it(qtbot) -> None:
     window._seek_from_slider()
 
     assert window.video.seek_calls == [75]
+
+
+def test_player_window_persists_and_restores_main_splitter_state(qtbot) -> None:
+    saved = {"called": 0}
+    config = AppConfig()
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: saved.__setitem__("called", saved["called"] + 1))
+    qtbot.addWidget(window)
+    window.show()
+    window.main_splitter.setSizes([900, 300])
+
+    window._persist_geometry()
+
+    assert config.player_main_splitter_state is not None
+    assert saved["called"] >= 1
+
+    restored = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(restored)
+    restored.show()
+
+    assert restored.main_splitter.saveState() == QByteArray(config.player_main_splitter_state)

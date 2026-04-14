@@ -15,6 +15,7 @@ class AppConfig:
     last_playback_clicked_vod_id: str = ""
     main_window_geometry: bytes | None = None
     player_window_geometry: bytes | None = None
+    player_main_splitter_state: bytes | None = None
 
 
 @dataclass(slots=True)

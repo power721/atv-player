@@ -30,6 +30,9 @@ def test_main_window_starts_on_browse_tab(qtbot) -> None:
     window.show()
 
     assert window.nav_tabs.currentIndex() == 0
+    assert window.nav_tabs.count() == 2
+    assert window.nav_tabs.tabText(0) == "浏览"
+    assert window.nav_tabs.tabText(1) == "播放记录"
 
 
 def test_decide_start_view_prefers_login_without_token() -> None:

@@ -7,7 +7,6 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QTabWidget
 from atv_player.ui.browse_page import BrowsePage
 from atv_player.ui.history_page import HistoryPage
 from atv_player.ui.player_window import PlayerWindow
-from atv_player.ui.search_page import SearchPage
 
 
 class MainWindow(QMainWindow):
@@ -18,7 +17,6 @@ class MainWindow(QMainWindow):
         self._save_config = save_config or (lambda: None)
         self.nav_tabs = QTabWidget()
         self.browse_page = BrowsePage(browse_controller)
-        self.search_page = SearchPage(browse_controller)
         self.history_page = HistoryPage(history_controller)
         self.browse_controller = browse_controller
         self.player_controller = player_controller
@@ -26,7 +24,6 @@ class MainWindow(QMainWindow):
         self.config = config
 
         self.nav_tabs.addTab(self.browse_page, "浏览")
-        self.nav_tabs.addTab(self.search_page, "搜索")
         self.nav_tabs.addTab(self.history_page, "播放记录")
         self.setCentralWidget(self.nav_tabs)
         self.setWindowTitle("alist-tvbox Desktop Player")
@@ -34,11 +31,9 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(QByteArray(self.config.main_window_geometry))
 
         self.browse_page.open_requested.connect(self.open_player)
-        self.search_page.browse_requested.connect(self.show_browse_path)
         self.history_page.open_detail_requested.connect(self.open_history_detail)
 
         self.browse_page.unauthorized.connect(self.logout_requested.emit)
-        self.search_page.unauthorized.connect(self.logout_requested.emit)
         self.history_page.unauthorized.connect(self.logout_requested.emit)
         self.quit_shortcut = QShortcut(QKeySequence.StandardKey.Quit, self)
         self.quit_shortcut.activated.connect(self._quit_application)

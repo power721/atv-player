@@ -21,6 +21,7 @@ def test_settings_repository_round_trip(tmp_path: Path) -> None:
         last_playback_clicked_vod_id="vod-2",
         main_window_geometry=None,
         player_window_geometry=None,
+        player_main_splitter_state=b"split-main",
     )
 
     repo.save_config(config)
@@ -46,6 +47,7 @@ def test_settings_repository_clear_token_preserves_other_fields(tmp_path: Path) 
             last_playback_clicked_vod_id="vod-1",
             main_window_geometry=None,
             player_window_geometry=None,
+            player_main_splitter_state=b"split-main",
         )
     )
 
@@ -58,3 +60,4 @@ def test_settings_repository_clear_token_preserves_other_fields(tmp_path: Path) 
     assert saved.vod_token == ""
     assert saved.last_path == "/TV"
     assert saved.last_active_window == "player"
+    assert saved.player_main_splitter_state == b"split-main"
