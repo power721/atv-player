@@ -53,7 +53,10 @@ class ApiClient:
             raise ApiError(payload.get("message") or payload.get("detail") or response.text)
         if not response.content:
             return None
-        return response.json()
+        try:
+            return response.json()
+        except ValueError:
+            return response.text
 
     def login(self, username: str, password: str) -> dict[str, Any]:
         return self._request(

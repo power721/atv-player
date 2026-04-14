@@ -99,7 +99,13 @@ class BrowseController:
     def build_request_from_detail(self, vod_id: str) -> OpenPlayerRequest:
         payload = self._api_client.get_detail(vod_id)
         detail = _map_vod_item(payload["list"][0])
-        return OpenPlayerRequest(vod=detail, playlist=detail.items, clicked_index=0)
+        return OpenPlayerRequest(
+            vod=detail,
+            playlist=detail.items,
+            clicked_index=0,
+            source_mode="detail",
+            source_vod_id=vod_id,
+        )
 
     def build_request_from_folder_item(
         self,
@@ -114,4 +120,12 @@ class BrowseController:
             path=clicked_item.path,
             type=clicked_item.type,
         )
-        return OpenPlayerRequest(vod=vod, playlist=playlist, clicked_index=clicked_index)
+        return OpenPlayerRequest(
+            vod=vod,
+            playlist=playlist,
+            clicked_index=clicked_index,
+            source_mode="folder",
+            source_path=clicked_item.path.rsplit("/", 1)[0] or "/",
+            source_vod_id=clicked_item.vod_id,
+            source_clicked_vod_id=clicked_item.vod_id,
+        )

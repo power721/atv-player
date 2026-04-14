@@ -24,6 +24,11 @@ class SettingsRepository:
                     token TEXT NOT NULL,
                     vod_token TEXT NOT NULL,
                     last_path TEXT NOT NULL,
+                    last_active_window TEXT NOT NULL DEFAULT 'main',
+                    last_playback_mode TEXT NOT NULL DEFAULT '',
+                    last_playback_path TEXT NOT NULL DEFAULT '',
+                    last_playback_vod_id TEXT NOT NULL DEFAULT '',
+                    last_playback_clicked_vod_id TEXT NOT NULL DEFAULT '',
                     main_window_geometry BLOB,
                     player_window_geometry BLOB
                 )
@@ -37,6 +42,26 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN vod_token TEXT NOT NULL DEFAULT ''"
                 )
+            if "last_active_window" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN last_active_window TEXT NOT NULL DEFAULT 'main'"
+                )
+            if "last_playback_mode" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN last_playback_mode TEXT NOT NULL DEFAULT ''"
+                )
+            if "last_playback_path" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN last_playback_path TEXT NOT NULL DEFAULT ''"
+                )
+            if "last_playback_vod_id" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN last_playback_vod_id TEXT NOT NULL DEFAULT ''"
+                )
+            if "last_playback_clicked_vod_id" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN last_playback_clicked_vod_id TEXT NOT NULL DEFAULT ''"
+                )
             conn.execute(
                 """
                 INSERT INTO app_config (
@@ -46,10 +71,15 @@ class SettingsRepository:
                     token,
                     vod_token,
                     last_path,
+                    last_active_window,
+                    last_playback_mode,
+                    last_playback_path,
+                    last_playback_vod_id,
+                    last_playback_clicked_vod_id,
                     main_window_geometry,
                     player_window_geometry
                 )
-                VALUES (1, 'http://127.0.0.1:4567', '', '', '', '/', NULL, NULL)
+                VALUES (1, 'http://127.0.0.1:4567', '', '', '', '/', 'main', '', '', '', '', NULL, NULL)
                 ON CONFLICT(id) DO NOTHING
                 """
             )
@@ -64,6 +94,11 @@ class SettingsRepository:
                     token,
                     vod_token,
                     last_path,
+                    last_active_window,
+                    last_playback_mode,
+                    last_playback_path,
+                    last_playback_vod_id,
+                    last_playback_clicked_vod_id,
                     main_window_geometry,
                     player_window_geometry
                 FROM app_config
@@ -84,6 +119,11 @@ class SettingsRepository:
                     token = ?,
                     vod_token = ?,
                     last_path = ?,
+                    last_active_window = ?,
+                    last_playback_mode = ?,
+                    last_playback_path = ?,
+                    last_playback_vod_id = ?,
+                    last_playback_clicked_vod_id = ?,
                     main_window_geometry = ?,
                     player_window_geometry = ?
                 WHERE id = 1
@@ -94,6 +134,11 @@ class SettingsRepository:
                     config.token,
                     config.vod_token,
                     config.last_path,
+                    config.last_active_window,
+                    config.last_playback_mode,
+                    config.last_playback_path,
+                    config.last_playback_vod_id,
+                    config.last_playback_clicked_vod_id,
                     config.main_window_geometry,
                     config.player_window_geometry,
                 ),

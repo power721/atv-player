@@ -84,7 +84,7 @@ class AppCoordinator(QObject):
             self.main_window = None
         return self.login_window
 
-    def _show_main(self) -> MainWindow:
+    def _show_main(self):
         self._api_client = self._build_api_client()
         config = self.repo.load_config()
         browse_controller = BrowseController(self._api_client)
@@ -95,11 +95,16 @@ class AppCoordinator(QObject):
             history_controller=history_controller,
             player_controller=player_controller,
             config=config,
+            save_config=lambda: self.repo.save_config(config),
         )
         self.main_window.logout_requested.connect(self._handle_logout_requested)
         if self.login_window is not None:
             self.login_window.close()
             self.login_window = None
+        if config.last_active_window == "player":
+            restored = self.main_window.restore_last_player()
+            if restored is not None:
+                return restored
         return self.main_window
 
     def _handle_login_succeeded(self) -> None:

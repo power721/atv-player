@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QMainWindow, QMessageBox, QTabWidget
+from PySide6.QtCore import QByteArray, Signal
+from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
+from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QTabWidget
 
 from atv_player.ui.browse_page import BrowsePage
 from atv_player.ui.history_page import HistoryPage
@@ -12,8 +13,9 @@ from atv_player.ui.search_page import SearchPage
 class MainWindow(QMainWindow):
     logout_requested = Signal()
 
-    def __init__(self, browse_controller, history_controller, player_controller, config) -> None:
+    def __init__(self, browse_controller, history_controller, player_controller, config, save_config=None) -> None:
         super().__init__()
+        self._save_config = save_config or (lambda: None)
         self.nav_tabs = QTabWidget()
         self.browse_page = BrowsePage(browse_controller)
         self.search_page = SearchPage(browse_controller)
@@ -28,6 +30,8 @@ class MainWindow(QMainWindow):
         self.nav_tabs.addTab(self.history_page, "播放记录")
         self.setCentralWidget(self.nav_tabs)
         self.setWindowTitle("alist-tvbox Desktop Player")
+        if self.config.main_window_geometry:
+            self.restoreGeometry(QByteArray(self.config.main_window_geometry))
 
         self.browse_page.open_requested.connect(self.open_player)
         self.search_page.browse_requested.connect(self.show_browse_path)
@@ -36,6 +40,10 @@ class MainWindow(QMainWindow):
         self.browse_page.unauthorized.connect(self.logout_requested.emit)
         self.search_page.unauthorized.connect(self.logout_requested.emit)
         self.history_page.unauthorized.connect(self.logout_requested.emit)
+        self.quit_shortcut = QShortcut(QKeySequence.StandardKey.Quit, self)
+        self.quit_shortcut.activated.connect(self._quit_application)
+        self.player_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
+        self.player_shortcut.activated.connect(self.show_or_restore_player)
 
         if hasattr(browse_controller, "load_folder"):
             self.browse_page.load_path(config.last_path or "/")
@@ -61,11 +69,69 @@ class MainWindow(QMainWindow):
             request.clicked_index,
         )
         if self.player_window is None:
-            self.player_window = PlayerWindow(self.player_controller)
+            self.player_window = PlayerWindow(self.player_controller, self.config, self._save_config)
+            if hasattr(self.player_window, "closed_to_main"):
+                self.player_window.closed_to_main.connect(self._show_main_again)
+        self.config.last_active_window = "player"
+        self.config.last_playback_mode = request.source_mode
+        self.config.last_playback_path = request.source_path
+        self.config.last_playback_vod_id = request.source_vod_id
+        self.config.last_playback_clicked_vod_id = request.source_clicked_vod_id
+        self.config.main_window_geometry = bytes(self.saveGeometry())
+        self._save_config()
         self.player_window.open_session(session)
         self.player_window.show()
         self.player_window.raise_()
         self.player_window.activateWindow()
+        self.hide()
+
+    def _show_main_again(self) -> None:
+        self.config.last_active_window = "main"
+        self._save_config()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def show_or_restore_player(self) -> None:
+        if self.player_window is not None and getattr(self.player_window, "session", None) is not None:
+            self.config.last_active_window = "player"
+            self._save_config()
+            self.player_window.show()
+            self.player_window.raise_()
+            self.player_window.activateWindow()
+            self.hide()
+            return self.player_window
+        return self.restore_last_player()
+
+    def restore_last_player(self):
+        mode = self.config.last_playback_mode
+        if mode == "detail" and self.config.last_playback_vod_id:
+            request = self.browse_controller.build_request_from_detail(self.config.last_playback_vod_id)
+        elif mode == "folder" and self.config.last_playback_path and self.config.last_playback_clicked_vod_id:
+            items, _ = self.browse_controller.load_folder(self.config.last_playback_path)
+            clicked = next((item for item in items if item.vod_id == self.config.last_playback_clicked_vod_id), None)
+            if clicked is None:
+                return None
+            request = self.browse_controller.build_request_from_folder_item(clicked, items)
+        else:
+            return None
+        self.open_player(request)
+        return self.player_window
 
     def show_error(self, message: str) -> None:
         QMessageBox.critical(self, "错误", message)
+
+    def _quit_application(self) -> None:
+        self.config.last_active_window = "main"
+        self.config.main_window_geometry = bytes(self.saveGeometry())
+        self._save_config()
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self.config.main_window_geometry = bytes(self.saveGeometry())
+        if self.isVisible():
+            self.config.last_active_window = "main"
+        self._save_config()
+        super().closeEvent(event)

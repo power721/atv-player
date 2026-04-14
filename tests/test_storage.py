@@ -14,6 +14,11 @@ def test_settings_repository_round_trip(tmp_path: Path) -> None:
         token="token-123",
         vod_token="vod-123",
         last_path="/Movies",
+        last_active_window="player",
+        last_playback_mode="folder",
+        last_playback_path="/Movies",
+        last_playback_vod_id="vod-1",
+        last_playback_clicked_vod_id="vod-2",
         main_window_geometry=None,
         player_window_geometry=None,
     )
@@ -34,6 +39,11 @@ def test_settings_repository_clear_token_preserves_other_fields(tmp_path: Path) 
             token="token-123",
             vod_token="vod-123",
             last_path="/TV",
+            last_active_window="player",
+            last_playback_mode="detail",
+            last_playback_path="/TV",
+            last_playback_vod_id="vod-1",
+            last_playback_clicked_vod_id="vod-1",
             main_window_geometry=None,
             player_window_geometry=None,
         )
@@ -47,3 +57,4 @@ def test_settings_repository_clear_token_preserves_other_fields(tmp_path: Path) 
     assert saved.token == ""
     assert saved.vod_token == ""
     assert saved.last_path == "/TV"
+    assert saved.last_active_window == "player"

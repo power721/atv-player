@@ -8,6 +8,11 @@ class AppConfig:
     token: str = ""
     vod_token: str = ""
     last_path: str = "/"
+    last_active_window: str = "main"
+    last_playback_mode: str = ""
+    last_playback_path: str = ""
+    last_playback_vod_id: str = ""
+    last_playback_clicked_vod_id: str = ""
     main_window_geometry: bytes | None = None
     player_window_geometry: bytes | None = None
 
@@ -60,3 +65,7 @@ class OpenPlayerRequest:
     vod: VodItem
     playlist: list[PlayItem]
     clicked_index: int
+    source_mode: str = ""
+    source_path: str = ""
+    source_vod_id: str = ""
+    source_clicked_vod_id: str = ""

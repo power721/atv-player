@@ -131,3 +131,17 @@ def test_api_client_treats_successful_empty_delete_response_as_none() -> None:
     )
 
     assert client.delete_history(9) is None
+
+
+def test_api_client_returns_plain_text_for_successful_text_response() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="/电影/国产")
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="auth-123",
+        vod_token="vod-123",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert client.resolve_share_link("https://t.me/share") == "/电影/国产"
