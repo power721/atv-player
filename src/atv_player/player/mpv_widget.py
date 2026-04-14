@@ -88,11 +88,11 @@ class MpvWidget(QWidget):
                 return
             raise
 
-    def set_volume(self, volume: int) -> None:
+    def set_volume(self, value: int) -> None:
         if self._player is None:
             return
         try:
-            self._player.volume = volume
+            self._player.volume = value
         except Exception:
             if getattr(self._player, "core_shutdown", False):
                 return
@@ -102,7 +102,7 @@ class MpvWidget(QWidget):
         if self._player is None:
             return
         try:
-            self._player.mute = not bool(self._player.mute)
+            self._player.mute = not bool(getattr(self._player, "mute", False))
         except Exception:
             if getattr(self._player, "core_shutdown", False):
                 return
