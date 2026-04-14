@@ -1,8 +1,9 @@
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QAbstractItemView, QSplitter
+from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QSplitter
 
 from atv_player.ui.browse_page import BrowsePage
 from atv_player.ui.history_page import HistoryPage
+from atv_player.ui.search_page import SearchPage
 
 
 class FakeBrowseController:
@@ -15,6 +16,10 @@ class FakeBrowseController:
 
 
 class FakeHistoryController:
+    pass
+
+
+class FakeSearchController:
     pass
 
 
@@ -114,3 +119,34 @@ def test_browse_page_shows_size_dbid_and_rating_columns(qtbot) -> None:
     assert page.table.item(1, 2).text() == "-"
     assert page.table.item(1, 3).text() == "654321"
     assert page.table.item(1, 4).text() == "8.6"
+
+
+def test_main_text_columns_stretch_and_other_columns_fit_content(qtbot) -> None:
+    browse_page = BrowsePage(FakeBrowseController())
+    history_page = HistoryPage(FakeHistoryController())
+    search_page = SearchPage(FakeSearchController())
+    qtbot.addWidget(browse_page)
+    qtbot.addWidget(history_page)
+    qtbot.addWidget(search_page)
+
+    browse_results_header = browse_page.results_table.horizontalHeader()
+    assert browse_results_header.sectionResizeMode(0) == QHeaderView.ResizeMode.ResizeToContents
+    assert browse_results_header.sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch
+
+    browse_files_header = browse_page.table.horizontalHeader()
+    assert browse_files_header.sectionResizeMode(0) == QHeaderView.ResizeMode.ResizeToContents
+    assert browse_files_header.sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch
+    assert browse_files_header.sectionResizeMode(2) == QHeaderView.ResizeMode.ResizeToContents
+    assert browse_files_header.sectionResizeMode(3) == QHeaderView.ResizeMode.ResizeToContents
+    assert browse_files_header.sectionResizeMode(4) == QHeaderView.ResizeMode.ResizeToContents
+    assert browse_files_header.sectionResizeMode(5) == QHeaderView.ResizeMode.ResizeToContents
+
+    history_header = history_page.table.horizontalHeader()
+    assert history_header.sectionResizeMode(0) == QHeaderView.ResizeMode.Stretch
+    assert history_header.sectionResizeMode(1) == QHeaderView.ResizeMode.ResizeToContents
+    assert history_header.sectionResizeMode(2) == QHeaderView.ResizeMode.ResizeToContents
+    assert history_header.sectionResizeMode(3) == QHeaderView.ResizeMode.ResizeToContents
+
+    search_header = search_page.results_table.horizontalHeader()
+    assert search_header.sectionResizeMode(0) == QHeaderView.ResizeMode.ResizeToContents
+    assert search_header.sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 from atv_player.api import ApiError, UnauthorizedError
 from atv_player.controllers.browse_controller import filter_search_results
 from atv_player.models import VodItem
+from atv_player.ui.table_utils import configure_table_columns
 
 
 class BrowsePage(QWidget):
@@ -34,6 +35,7 @@ class BrowsePage(QWidget):
         self.results_table = QTableWidget(0, 2)
         self.results_table.setHorizontalHeaderLabels(["来源", "名称"])
         self.results_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        configure_table_columns(self.results_table, stretch_column=1)
         self.status_label = QLabel("")
         self.breadcrumb_bar = QWidget()
         self.breadcrumb_layout = QHBoxLayout(self.breadcrumb_bar)
@@ -44,6 +46,7 @@ class BrowsePage(QWidget):
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(["类型", "名称", "大小", "豆瓣ID", "评分", "时间"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        configure_table_columns(self.table, stretch_column=1)
         self.current_items: list[VodItem] = []
         self.current_path = "/"
         self._results: list[VodItem] = []
@@ -158,7 +161,6 @@ class BrowsePage(QWidget):
         for row, item in enumerate(self._filtered_results):
             self.results_table.setItem(row, 0, QTableWidgetItem(item.type_name))
             self.results_table.setItem(row, 1, QTableWidgetItem(item.vod_name))
-        self.results_table.resizeColumnsToContents()
         if self._filtered_results:
             self._show_search_results_panel()
             self.status_label.show()
@@ -236,7 +238,6 @@ class BrowsePage(QWidget):
             self.table.setItem(row, 3, QTableWidgetItem(self._item_dbid(item)))
             self.table.setItem(row, 4, QTableWidgetItem(self._item_rating(item)))
             self.table.setItem(row, 5, QTableWidgetItem(item.vod_time))
-        self.table.resizeColumnsToContents()
 
     def _item_kind(self, item: VodItem) -> str:
         if item.type == 1:

@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 
 from atv_player.api import ApiError, UnauthorizedError
 from atv_player.models import HistoryRecord
+from atv_player.ui.table_utils import configure_table_columns
 
 
 class HistoryPage(QWidget):
@@ -29,6 +30,7 @@ class HistoryPage(QWidget):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        configure_table_columns(self.table, stretch_column=0)
         self.records: list[HistoryRecord] = []
 
         actions = QHBoxLayout()
@@ -58,7 +60,6 @@ class HistoryPage(QWidget):
             self.table.setItem(row, 1, QTableWidgetItem(record.vod_remarks))
             self.table.setItem(row, 2, QTableWidgetItem(str(record.position // 1000)))
             self.table.setItem(row, 3, QTableWidgetItem(str(record.create_time)))
-        self.table.resizeColumnsToContents()
 
     def delete_selected(self) -> None:
         rows = sorted({index.row() for index in self.table.selectionModel().selectedRows()})

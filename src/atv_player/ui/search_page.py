@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 from atv_player.api import ApiError, UnauthorizedError
 from atv_player.controllers.browse_controller import filter_search_results
 from atv_player.models import VodItem
+from atv_player.ui.table_utils import configure_table_columns
 
 
 class SearchPage(QWidget):
@@ -30,6 +31,7 @@ class SearchPage(QWidget):
         self.clear_button = QPushButton("清空")
         self.results_table = QTableWidget(0, 2)
         self.results_table.setHorizontalHeaderLabels(["来源", "名称"])
+        configure_table_columns(self.results_table, stretch_column=1)
         self.status_label = QLineEdit()
         self.status_label.setReadOnly(True)
         self.status_label.setPlaceholderText("搜索电报资源")
@@ -87,7 +89,6 @@ class SearchPage(QWidget):
         for row, item in enumerate(filtered):
             self.results_table.setItem(row, 0, QTableWidgetItem(item.type_name))
             self.results_table.setItem(row, 1, QTableWidgetItem(item.vod_name))
-        self.results_table.resizeColumnsToContents()
         self._filtered_results = filtered
 
     def _open_selected(self, row: int, _column: int) -> None:
