@@ -314,6 +314,23 @@ def test_player_window_syncs_progress_slider_and_seeks_from_it(qtbot) -> None:
     assert window.video.seek_calls == [75]
 
 
+def test_player_window_clicking_progress_track_seeks_immediately(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.seek_calls: list[int] = []
+
+        def seek(self, seconds: int) -> None:
+            self.seek_calls.append(seconds)
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.progress.clicked_value.emit(48)
+
+    assert window.video.seek_calls == [48]
+
+
 def test_player_window_exposes_extended_playback_controls(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)

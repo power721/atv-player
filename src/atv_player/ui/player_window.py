@@ -227,6 +227,7 @@ class PlayerWindow(QWidget):
         self.video.double_clicked.connect(self.toggle_fullscreen)
         self.progress.sliderPressed.connect(self._handle_slider_pressed)
         self.progress.sliderReleased.connect(self._seek_from_slider)
+        self.progress.clicked_value.connect(self._seek_to_position)
         self.quit_shortcut = QShortcut(QKeySequence.StandardKey.Quit, self)
         self.quit_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         self.quit_shortcut.activated.connect(self._quit_application)
@@ -444,8 +445,11 @@ class PlayerWindow(QWidget):
 
     def _seek_from_slider(self) -> None:
         self._slider_dragging = False
+        self._seek_to_position(self.progress.value())
+
+    def _seek_to_position(self, seconds: int) -> None:
         try:
-            self.video.seek(self.progress.value())
+            self.video.seek(seconds)
         except Exception as exc:
             self.details.append(f"\n跳转失败: {exc}")
 
