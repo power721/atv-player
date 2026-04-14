@@ -166,6 +166,90 @@ def test_app_coordinator_falls_back_to_main_when_player_restore_fails(monkeypatc
     assert repo.config.last_active_window == "main"
 
 
+def test_app_coordinator_logout_clears_tokens_and_shows_login(monkeypatch) -> None:
+    class FakeRepo:
+        def __init__(self) -> None:
+            self.config = AppConfig(
+                base_url="http://127.0.0.1:4567",
+                username="alice",
+                token="auth-123",
+                vod_token="vod-123",
+            )
+            self.clear_token_calls = 0
+
+        def load_config(self) -> AppConfig:
+            return self.config
+
+        def save_config(self, config: AppConfig) -> None:
+            self.config = config
+
+        def clear_token(self) -> None:
+            self.clear_token_calls += 1
+            self.config.token = ""
+            self.config.vod_token = ""
+
+    class SignalStub:
+        def __init__(self) -> None:
+            self._callbacks = []
+
+        def connect(self, callback) -> None:
+            self._callbacks.append(callback)
+
+        def emit(self) -> None:
+            for callback in list(self._callbacks):
+                callback()
+
+    class FakeMainWindow:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+            self.logout_requested = SignalStub()
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class FakeLoginWindow:
+        login_succeeded = SignalStub()
+
+        def __init__(self, controller) -> None:
+            self.controller = controller
+            self.shown = False
+
+        def show(self) -> None:
+            self.shown = True
+
+    class FakeApiClient:
+        def __init__(self, base_url: str, token: str = "", vod_token: str = "") -> None:
+            self.base_url = base_url
+            self.token = token
+            self.vod_token = vod_token
+
+        def set_vod_token(self, vod_token: str) -> None:
+            self.vod_token = vod_token
+
+    repo = FakeRepo()
+    coordinator = AppCoordinator(repo)
+
+    monkeypatch.setattr(app_module, "MainWindow", FakeMainWindow)
+    monkeypatch.setattr(app_module, "LoginWindow", FakeLoginWindow)
+    monkeypatch.setattr(
+        coordinator,
+        "_build_api_client",
+        lambda: FakeApiClient(repo.config.base_url, repo.config.token, repo.config.vod_token),
+    )
+
+    main_window = coordinator._show_main()
+    main_window.logout_requested.emit()
+
+    assert repo.clear_token_calls == 1
+    assert repo.config.token == ""
+    assert repo.config.vod_token == ""
+    assert isinstance(coordinator.login_window, FakeLoginWindow)
+    assert coordinator.login_window.shown is True
+    assert coordinator.main_window is None
+    assert main_window.closed is True
+
+
 def test_main_window_open_player_hides_main_and_updates_last_active_state(qtbot, monkeypatch) -> None:
     created = {}
 
