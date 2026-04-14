@@ -29,6 +29,7 @@ class SettingsRepository:
                     last_playback_path TEXT NOT NULL DEFAULT '',
                     last_playback_vod_id TEXT NOT NULL DEFAULT '',
                     last_playback_clicked_vod_id TEXT NOT NULL DEFAULT '',
+                    last_player_paused INTEGER NOT NULL DEFAULT 0,
                     main_window_geometry BLOB,
                     player_window_geometry BLOB,
                     player_main_splitter_state BLOB
@@ -63,6 +64,10 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN last_playback_clicked_vod_id TEXT NOT NULL DEFAULT ''"
                 )
+            if "last_player_paused" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN last_player_paused INTEGER NOT NULL DEFAULT 0"
+                )
             if "player_main_splitter_state" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN player_main_splitter_state BLOB"
@@ -81,11 +86,12 @@ class SettingsRepository:
                     last_playback_path,
                     last_playback_vod_id,
                     last_playback_clicked_vod_id,
+                    last_player_paused,
                     main_window_geometry,
                     player_window_geometry,
                     player_main_splitter_state
                 )
-                VALUES (1, 'http://127.0.0.1:4567', '', '', '', '/', 'main', '', '', '', '', NULL, NULL, NULL)
+                VALUES (1, 'http://127.0.0.1:4567', '', '', '', '/', 'main', '', '', '', '', 0, NULL, NULL, NULL)
                 ON CONFLICT(id) DO NOTHING
                 """
             )
@@ -105,6 +111,7 @@ class SettingsRepository:
                     last_playback_path,
                     last_playback_vod_id,
                     last_playback_clicked_vod_id,
+                    last_player_paused,
                     main_window_geometry,
                     player_window_geometry,
                     player_main_splitter_state
@@ -113,7 +120,9 @@ class SettingsRepository:
                 """
             ).fetchone()
         assert row is not None
-        return AppConfig(*row)
+        values = list(row)
+        values[10] = bool(values[10])
+        return AppConfig(*values)
 
     def save_config(self, config: AppConfig) -> None:
         with self._connect() as conn:
@@ -131,6 +140,7 @@ class SettingsRepository:
                     last_playback_path = ?,
                     last_playback_vod_id = ?,
                     last_playback_clicked_vod_id = ?,
+                    last_player_paused = ?,
                     main_window_geometry = ?,
                     player_window_geometry = ?,
                     player_main_splitter_state = ?
@@ -147,6 +157,7 @@ class SettingsRepository:
                     config.last_playback_path,
                     config.last_playback_vod_id,
                     config.last_playback_clicked_vod_id,
+                    int(config.last_player_paused),
                     config.main_window_geometry,
                     config.player_window_geometry,
                     config.player_main_splitter_state,

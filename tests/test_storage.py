@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 
 from atv_player.models import AppConfig
@@ -19,6 +20,7 @@ def test_settings_repository_round_trip(tmp_path: Path) -> None:
         last_playback_path="/Movies",
         last_playback_vod_id="vod-1",
         last_playback_clicked_vod_id="vod-2",
+        last_player_paused=True,
         main_window_geometry=None,
         player_window_geometry=None,
         player_main_splitter_state=b"split-main",
@@ -28,6 +30,57 @@ def test_settings_repository_round_trip(tmp_path: Path) -> None:
     saved = repo.load_config()
 
     assert saved == config
+
+
+def test_settings_repository_migrates_missing_last_player_paused_column(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE app_config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                base_url TEXT NOT NULL,
+                username TEXT NOT NULL,
+                token TEXT NOT NULL,
+                vod_token TEXT NOT NULL,
+                last_path TEXT NOT NULL,
+                last_active_window TEXT NOT NULL DEFAULT 'main',
+                last_playback_mode TEXT NOT NULL DEFAULT '',
+                last_playback_path TEXT NOT NULL DEFAULT '',
+                last_playback_vod_id TEXT NOT NULL DEFAULT '',
+                last_playback_clicked_vod_id TEXT NOT NULL DEFAULT '',
+                main_window_geometry BLOB,
+                player_window_geometry BLOB,
+                player_main_splitter_state BLOB
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO app_config (
+                id,
+                base_url,
+                username,
+                token,
+                vod_token,
+                last_path,
+                last_active_window,
+                last_playback_mode,
+                last_playback_path,
+                last_playback_vod_id,
+                last_playback_clicked_vod_id,
+                main_window_geometry,
+                player_window_geometry,
+                player_main_splitter_state
+            )
+            VALUES (1, 'http://127.0.0.1:4567', 'alice', '', '', '/TV', 'player', 'detail', '/TV', 'vod-1', 'vod-1', NULL, NULL, NULL)
+            """
+        )
+
+    repo = SettingsRepository(db_path)
+    saved = repo.load_config()
+
+    assert saved.last_player_paused is False
 
 
 def test_settings_repository_clear_token_preserves_other_fields(tmp_path: Path) -> None:
@@ -45,6 +98,7 @@ def test_settings_repository_clear_token_preserves_other_fields(tmp_path: Path) 
             last_playback_path="/TV",
             last_playback_vod_id="vod-1",
             last_playback_clicked_vod_id="vod-1",
+            last_player_paused=True,
             main_window_geometry=None,
             player_window_geometry=None,
             player_main_splitter_state=b"split-main",
@@ -60,4 +114,5 @@ def test_settings_repository_clear_token_preserves_other_fields(tmp_path: Path) 
     assert saved.vod_token == ""
     assert saved.last_path == "/TV"
     assert saved.last_active_window == "player"
+    assert saved.last_player_paused is True
     assert saved.player_main_splitter_state == b"split-main"

@@ -13,6 +13,7 @@ class AppConfig:
     last_playback_path: str = ""
     last_playback_vod_id: str = ""
     last_playback_clicked_vod_id: str = ""
+    last_player_paused: bool = False
     main_window_geometry: bytes | None = None
     player_window_geometry: bytes | None = None
     player_main_splitter_state: bytes | None = None
