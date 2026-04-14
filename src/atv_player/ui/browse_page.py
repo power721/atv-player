@@ -27,14 +27,12 @@ class BrowsePage(QWidget):
         super().__init__()
         self.controller = controller
         self.keyword_edit = QLineEdit()
-        self.filter_combo = QComboBox()
         self.search_button = QPushButton("搜索")
+        self.filter_combo = QComboBox()
         self.clear_button = QPushButton("清空")
         self.results_table = QTableWidget(0, 2)
         self.results_table.setHorizontalHeaderLabels(["来源", "名称"])
-        self.status_label = QLineEdit()
-        self.status_label.setReadOnly(True)
-        self.status_label.setPlaceholderText("搜索电报资源")
+        self.status_label = QLabel("")
         self.path_label = QLabel("/")
         self.refresh_button = QPushButton("刷新")
         self.table = QTableWidget(0, 3)
@@ -52,18 +50,24 @@ class BrowsePage(QWidget):
         self.filter_combo.addItem("📡 8", "8")
         self.filter_combo.addItem("☁ 9", "9")
 
-        search_controls = QHBoxLayout()
-        search_controls.addWidget(self.keyword_edit)
-        search_controls.addWidget(self.filter_combo)
-        search_controls.addWidget(self.search_button)
-        search_controls.addWidget(self.clear_button)
+        top_search_controls = QHBoxLayout()
+        top_search_controls.addWidget(self.keyword_edit)
+        top_search_controls.addWidget(self.search_button)
+
+        result_actions = QHBoxLayout()
+        result_actions.addWidget(self.filter_combo)
+        result_actions.addWidget(self.clear_button)
 
         search_layout = QVBoxLayout()
-        search_layout.addLayout(search_controls)
+        search_layout.addLayout(result_actions)
         search_layout.addWidget(self.status_label)
         search_layout.addWidget(self.results_table)
         self.search_panel = QWidget()
         self.search_panel.setLayout(search_layout)
+        self.search_panel.hide()
+        self.filter_combo.hide()
+        self.clear_button.hide()
+        self.status_label.hide()
 
         file_layout = QVBoxLayout()
         file_layout.addWidget(self.path_label)
@@ -75,8 +79,9 @@ class BrowsePage(QWidget):
         self.content_splitter = QSplitter()
         self.content_splitter.addWidget(self.search_panel)
         self.content_splitter.addWidget(self.file_panel)
-        self.content_splitter.setStretchFactor(0, 2)
+        self.content_splitter.setStretchFactor(0, 1)
         self.content_splitter.setStretchFactor(1, 3)
+        self.content_splitter.setSizes([0, 1])
 
         self.search_button.clicked.connect(self.search)
         self.clear_button.clicked.connect(self.clear_results)
@@ -86,6 +91,7 @@ class BrowsePage(QWidget):
         self.table.cellDoubleClicked.connect(self._handle_open)
 
         layout = QVBoxLayout(self)
+        layout.addLayout(top_search_controls)
         layout.addWidget(self.content_splitter)
 
     def load_path(self, path: str) -> None:
@@ -116,7 +122,15 @@ class BrowsePage(QWidget):
             self.unauthorized.emit()
             return
         except ApiError as exc:
+            self._show_search_results_panel()
+            self.status_label.show()
             self.status_label.setText(str(exc))
+            return
+        if self._results:
+            self._show_search_results_panel()
+            self.status_label.show()
+        else:
+            self._hide_search_results_panel()
             return
         self.status_label.setText(f"{len(self._results)} 条结果")
         self._apply_filter()
@@ -126,6 +140,7 @@ class BrowsePage(QWidget):
         self._filtered_results = []
         self.results_table.setRowCount(0)
         self.status_label.clear()
+        self._hide_search_results_panel()
 
     def _apply_filter(self) -> None:
         drive_type = self.filter_combo.currentData()
@@ -135,6 +150,11 @@ class BrowsePage(QWidget):
             self.results_table.setItem(row, 0, QTableWidgetItem(item.type_name))
             self.results_table.setItem(row, 1, QTableWidgetItem(item.vod_name))
         self.results_table.resizeColumnsToContents()
+        if self._filtered_results:
+            self._show_search_results_panel()
+            self.status_label.show()
+        else:
+            self._hide_search_results_panel()
 
     def _open_search_result(self, row: int, _column: int) -> None:
         if not (0 <= row < len(self._filtered_results)):
@@ -146,9 +166,26 @@ class BrowsePage(QWidget):
             self.unauthorized.emit()
             return
         except ApiError as exc:
+            self._show_search_results_panel()
+            self.status_label.show()
             self.status_label.setText(str(exc))
             return
         self.load_path(path)
+
+    def _show_search_results_panel(self) -> None:
+        self.search_panel.show()
+        self.filter_combo.show()
+        self.clear_button.show()
+        total = max(self.content_splitter.width(), self.width(), 1200)
+        left = max(total // 4, 220)
+        self.content_splitter.setSizes([left, max(total - left, left)])
+
+    def _hide_search_results_panel(self) -> None:
+        self.search_panel.hide()
+        self.filter_combo.hide()
+        self.clear_button.hide()
+        self.status_label.hide()
+        self.content_splitter.setSizes([0, max(self.content_splitter.width(), self.width(), 1)])
 
     def _populate_table(self, items: list[VodItem]) -> None:
         self.table.setRowCount(len(items))
