@@ -80,6 +80,7 @@ class PlayerWindow(QWidget):
         self.current_index = 0
         self.current_speed = 1.0
         self.is_playing = True
+        self._is_muted = False
         self._quit_requested = False
         self.setWindowTitle("alist-tvbox 播放器")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -96,7 +97,7 @@ class PlayerWindow(QWidget):
         self.next_button = self._create_icon_button("next.svg", "下一集")
         self.backward_button = self._create_icon_button("seek-backward.svg", "后退")
         self.forward_button = self._create_icon_button("seek-forward.svg", "前进")
-        self.mute_button = self._create_icon_button("volume-off.svg", "静音")
+        self.mute_button = self._create_icon_button("volume-on.svg", "静音")
         self.wide_button = self._create_icon_button("grid.svg", "宽屏")
         self.fullscreen_button = self._create_icon_button("maximize.svg", "全屏")
         self.wide_button.setCheckable(True)
@@ -248,6 +249,13 @@ class PlayerWindow(QWidget):
         icon_name = "pause.svg" if self.is_playing else "play.svg"
         self.play_button.setIcon(QIcon(str(self._icons_dir / icon_name)))
 
+    def _set_button_icon(self, button: QPushButton, icon_name: str) -> None:
+        button.setIcon(QIcon(str(self._icons_dir / icon_name)))
+
+    def _update_mute_button_icon(self) -> None:
+        icon_name = "volume-off.svg" if self._is_muted else "volume-on.svg"
+        self._set_button_icon(self.mute_button, icon_name)
+
     def open_session(self, session) -> None:
         self.session = session
         self.current_index = session.start_index
@@ -340,6 +348,8 @@ class PlayerWindow(QWidget):
     def _toggle_mute(self) -> None:
         try:
             self.video.toggle_mute()
+            self._is_muted = not self._is_muted
+            self._update_mute_button_icon()
         except Exception as exc:
             self.details.append(f"\n静音失败: {exc}")
 

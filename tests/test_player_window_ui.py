@@ -343,6 +343,30 @@ def test_player_window_uses_distinct_seek_icons(qtbot) -> None:
     assert window.next_button.icon().pixmap(24, 24).toImage() != window.forward_button.icon().pixmap(24, 24).toImage()
 
 
+def test_player_window_mute_button_icon_tracks_mute_state(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.toggle_mute_calls = 0
+
+        def toggle_mute(self) -> None:
+            self.toggle_mute_calls += 1
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    unmuted_icon = window.mute_button.icon().pixmap(24, 24).toImage()
+
+    window.mute_button.click()
+    muted_icon = window.mute_button.icon().pixmap(24, 24).toImage()
+
+    window.mute_button.click()
+
+    assert window.video.toggle_mute_calls == 2
+    assert muted_icon != unmuted_icon
+    assert window.mute_button.icon().pixmap(24, 24).toImage() == unmuted_icon
+
+
 def test_player_window_control_buttons_drive_video_actions(qtbot) -> None:
     class FakeVideo:
         def __init__(self) -> None:
