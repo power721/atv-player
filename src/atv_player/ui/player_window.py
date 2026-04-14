@@ -387,6 +387,7 @@ class PlayerWindow(QWidget):
     def open_session(self, session, start_paused: bool = False) -> None:
         self.session = session
         self._render_metadata()
+        self._reset_log()
         self.current_index = session.start_index
         self.current_speed = session.speed
         speed_text = self._speed_text(session.speed)
@@ -401,7 +402,6 @@ class PlayerWindow(QWidget):
             self.playlist.addItem(QListWidgetItem(item.title))
         self.playlist.setCurrentRow(self.current_index)
         self.progress.setValue(0)
-        self.log_view.clear()
         self._load_current_item(session.start_position_seconds, pause=start_paused)
         self.report_timer.start()
         self.progress_timer.start()
@@ -411,17 +411,14 @@ class PlayerWindow(QWidget):
         if self.session is None:
             return
         current_item = self.session.playlist[self.current_index]
-        self.log_view.setPlainText(
-            f"标题: {self.session.vod.vod_name}\n"
-            f"当前: {current_item.title}\n"
-            f"URL: {current_item.url}"
-        )
+        self._append_log(f"当前: {current_item.title}")
+        self._append_log(f"URL: {current_item.url}")
         try:
             self.video.load(current_item.url, pause=pause, start_seconds=start_position_seconds)
             self.video.set_speed(self.current_speed)
             self.video.set_volume(self.volume_slider.value())
         except Exception as exc:
-            self.log_view.append(f"\n播放失败: {exc}")
+            self._append_log(f"播放失败: {exc}")
 
     def _format_metadata_text(self, vod) -> str:
         rows = [
@@ -447,6 +444,17 @@ class PlayerWindow(QWidget):
             return
         self.metadata_view.setPlainText(self._format_metadata_text(self.session.vod))
 
+    def _reset_log(self) -> None:
+        self.log_view.clear()
+
+    def _append_log(self, message: str) -> None:
+        if not message:
+            return
+        if self.log_view.toPlainText():
+            self.log_view.append(message)
+            return
+        self.log_view.setPlainText(message)
+
     def _set_last_player_paused(self, paused: bool) -> None:
         if self.config is None:
             return
@@ -461,7 +469,7 @@ class PlayerWindow(QWidget):
                     lambda: self._attempt_resume_seek(seconds, retries_remaining=retries_remaining - 1),
                 )
                 return
-            self.log_view.append("\n恢复播放失败: 媒体尚未进入可跳转状态")
+            self._append_log("恢复播放失败: 媒体尚未进入可跳转状态")
             return
         try:
             self.video.seek(seconds)
@@ -472,7 +480,7 @@ class PlayerWindow(QWidget):
                     lambda: self._attempt_resume_seek(seconds, retries_remaining=retries_remaining - 1),
                 )
                 return
-            self.log_view.append(f"\n恢复播放失败: {exc}")
+            self._append_log(f"恢复播放失败: {exc}")
 
     def report_progress(self) -> None:
         if self.session is None:
@@ -486,7 +494,7 @@ class PlayerWindow(QWidget):
                 speed=self.current_speed,
             )
         except Exception as exc:
-            self.log_view.append(f"\n进度上报失败: {exc}")
+            self._append_log(f"进度上报失败: {exc}")
 
     def _update_sidebar_visibility(self) -> None:
         self._apply_visibility_state()
@@ -505,7 +513,7 @@ class PlayerWindow(QWidget):
         try:
             self.video.seek_relative(seconds)
         except Exception as exc:
-            self.log_view.append(f"\n跳转失败: {exc}")
+            self._append_log(f"跳转失败: {exc}")
 
     def _replay_current_item(self) -> None:
         if self.session is None:
@@ -521,20 +529,20 @@ class PlayerWindow(QWidget):
             self._is_muted = not self._is_muted
             self._update_mute_button_icon()
         except Exception as exc:
-            self.log_view.append(f"\n静音失败: {exc}")
+            self._append_log(f"静音失败: {exc}")
 
     def _change_speed(self, text: str) -> None:
         try:
             self.current_speed = float(text.rstrip("x"))
             self.video.set_speed(self.current_speed)
         except Exception as exc:
-            self.log_view.append(f"\n倍速设置失败: {exc}")
+            self._append_log(f"倍速设置失败: {exc}")
 
     def _change_volume(self, value: int) -> None:
         try:
             self.video.set_volume(value)
         except Exception as exc:
-            self.log_view.append(f"\n音量设置失败: {exc}")
+            self._append_log(f"音量设置失败: {exc}")
 
     def _step_volume(self, delta: int) -> None:
         value = max(self.volume_slider.minimum(), min(self.volume_slider.value() + delta, self.volume_slider.maximum()))
@@ -602,7 +610,7 @@ class PlayerWindow(QWidget):
         try:
             self.video.seek(seconds)
         except Exception as exc:
-            self.log_view.append(f"\n跳转失败: {exc}")
+            self._append_log(f"跳转失败: {exc}")
 
     def _sync_progress_slider(self) -> None:
         if self._slider_dragging:

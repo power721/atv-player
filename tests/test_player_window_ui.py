@@ -207,7 +207,7 @@ def test_player_window_reports_failure_after_seek_retries_are_exhausted(qtbot, m
     window._attempt_resume_seek(42, retries_remaining=1)
 
     assert scheduled_delays == [300]
-    assert "恢复播放失败" in window.details.toPlainText()
+    assert "恢复播放失败" in window.log_view.toPlainText()
 
 
 def test_player_window_passes_resume_offset_into_video_load(qtbot) -> None:
@@ -314,6 +314,79 @@ def test_player_window_renders_title_metadata_in_expected_order(qtbot) -> None:
         "简介:\n"
         "九寨沟风景名胜区位于四川省阿坝藏族羌族自治州南坪县境内。"
     )
+
+
+def test_player_window_appends_runtime_failures_to_log_view_without_overwriting_metadata(qtbot) -> None:
+    class FailingVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            raise RuntimeError("boom")
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="九寨沟", type_name="纪录片", vod_content="简介文本"),
+        playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FailingVideo()
+
+    window.open_session(session)
+
+    assert "名称: 九寨沟" in window.metadata_view.toPlainText()
+    assert "播放失败: boom" in window.log_view.toPlainText()
+    assert "播放失败: boom" not in window.metadata_view.toPlainText()
+
+
+def test_player_window_opening_new_session_refreshes_metadata_and_clears_old_logs(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    first_session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="九寨沟", type_name="纪录片", vod_content="第一条简介"),
+        playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    second_session = PlayerSession(
+        vod=VodItem(vod_id="movie-2", vod_name="黄龙", type_name="纪录片", vod_content="第二条简介"),
+        playlist=[PlayItem(title="正片", url="http://m/2.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(first_session)
+    window._append_log("播放失败: boom")
+    window.open_session(second_session)
+
+    assert "名称: 黄龙" in window.metadata_view.toPlainText()
+    assert "第一条简介" not in window.metadata_view.toPlainText()
+    assert "播放失败: boom" not in window.log_view.toPlainText()
 
 
 def test_player_window_can_hide_playlist_and_details(qtbot) -> None:
