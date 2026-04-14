@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import QByteArray, QTimer, Qt, Signal
-from PySide6.QtGui import QCloseEvent, QKeyEvent, QKeySequence, QShortcut
-from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QCloseEvent, QIcon, QKeyEvent, QKeySequence, QShortcut, QMouseEvent
+from PySide6.QtWidgets import QApplication, QStyleOptionSlider, QStyle
 from PySide6.QtWidgets import (
+    QComboBox,
     QHBoxLayout,
     QListWidget,
     QListWidgetItem,
@@ -16,6 +19,57 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.player.mpv_widget import MpvWidget
+
+
+class ClickableSlider(QSlider):
+    """A QSlider that allows clicking on the groove to set position directly."""
+
+    clicked_value = Signal(int)  # Emits the value at click position
+
+    def mousePressEvent(self, event: QMouseEvent):
+        """Handle mouse press - jump to click position."""
+        if event.button() == Qt.LeftButton:
+            option = QStyleOptionSlider()
+            self.initStyleOption(option)
+            handle_rect = self.style().subControlRect(
+                QStyle.CC_Slider,
+                option,
+                QStyle.SC_SliderHandle,
+                self,
+            )
+
+            # Press on handle: keep default QSlider drag behavior.
+            if handle_rect.contains(event.position().toPoint()):
+                super().mousePressEvent(event)
+                return
+
+            # Press on groove: jump directly and emit click signal.
+            value = self._pixel_pos_to_value(event.position().x())
+            self.setValue(value)
+            self.clicked_value.emit(value)
+            event.accept()
+            return
+
+        super().mousePressEvent(event)
+
+    def _pixel_pos_to_value(self, pos: int) -> int:
+        """Convert pixel position to slider value."""
+        groove_rect = self.rect()
+        # Account for handle size
+        handle_width = 12
+        available_width = groove_rect.width() - handle_width
+
+        if available_width <= 0:
+            return self.minimum()
+
+        # Adjust position to account for handle offset
+        adjusted_pos = pos - handle_width // 2
+        adjusted_pos = max(0, min(adjusted_pos, available_width))
+
+        # Calculate value
+        value_range = self.maximum() - self.minimum()
+        value = self.minimum() + int((adjusted_pos / available_width) * value_range)
+        return value
 
 
 class PlayerWindow(QWidget):
@@ -35,20 +89,33 @@ class PlayerWindow(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.resize(1280, 800)
         self.setMinimumSize(1000, 700)
+        self._icons_dir = Path(__file__).resolve().parent.parent / "icons"
         if self.config and self.config.player_window_geometry:
             self.restoreGeometry(QByteArray(self.config.player_window_geometry))
         self.video = MpvWidget(self)
         self.playlist = QListWidget()
-        self.play_button = QPushButton("播放/暂停")
-        self.prev_button = QPushButton("上一集")
-        self.next_button = QPushButton("下一集")
-        self.toggle_playlist_button = QPushButton("播放列表")
-        self.toggle_details_button = QPushButton("详情")
+        self.play_button = self._create_icon_button("play.svg", "播放/暂停")
+        self.prev_button = self._create_icon_button("previous.svg", "上一集")
+        self.next_button = self._create_icon_button("next.svg", "下一集")
+        self.backward_button = self._create_icon_button("previous.svg", "后退")
+        self.forward_button = self._create_icon_button("next.svg", "前进")
+        self.mute_button = self._create_icon_button("volume-off.svg", "静音")
+        self.wide_button = self._create_icon_button("grid.svg", "宽屏")
+        self.fullscreen_button = self._create_icon_button("maximize.svg", "全屏")
+        self.wide_button.setCheckable(True)
+        self.toggle_playlist_button = self._create_icon_button("queue.svg", "播放列表")
+        self.toggle_details_button = self._create_icon_button("info.svg", "详情")
         self.toggle_playlist_button.setCheckable(True)
         self.toggle_details_button.setCheckable(True)
         self.toggle_playlist_button.setChecked(True)
         self.toggle_details_button.setChecked(True)
-        self.progress = QSlider(Qt.Orientation.Horizontal)
+        self.speed_combo = QComboBox()
+        self.speed_combo.addItems(["0.5x", "1.0x", "1.25x", "1.5x", "2.0x"])
+        self.speed_combo.setCurrentText("1.0x")
+        self.volume_slider = ClickableSlider(Qt.Orientation.Horizontal)
+        self.volume_slider.setRange(0, 100)
+        self.volume_slider.setValue(100)
+        self.progress = ClickableSlider(Qt.Orientation.Horizontal)
         self.progress.setFixedHeight(24)
         self.details = QTextEdit()
         self.details.setReadOnly(True)
@@ -71,6 +138,13 @@ class PlayerWindow(QWidget):
         controls.addWidget(self.prev_button)
         controls.addWidget(self.play_button)
         controls.addWidget(self.next_button)
+        controls.addWidget(self.backward_button)
+        controls.addWidget(self.forward_button)
+        controls.addWidget(self.mute_button)
+        controls.addWidget(self.wide_button)
+        controls.addWidget(self.fullscreen_button)
+        controls.addWidget(self.speed_combo)
+        controls.addWidget(self.volume_slider)
         left.addLayout(controls)
 
         video_container = QWidget()
@@ -84,14 +158,14 @@ class PlayerWindow(QWidget):
         sidebar_layout = QVBoxLayout()
         sidebar_layout.addLayout(sidebar_actions)
         sidebar_layout.addWidget(self.sidebar_splitter)
-        sidebar_container = QWidget()
-        sidebar_container.setLayout(sidebar_layout)
+        self.sidebar_container = QWidget()
+        self.sidebar_container.setLayout(sidebar_layout)
 
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.main_splitter.addWidget(video_container)
-        self.main_splitter.addWidget(sidebar_container)
+        self.main_splitter.addWidget(self.sidebar_container)
         self.main_splitter.setStretchFactor(0, 3)
-        self.main_splitter.setStretchFactor(1, 2)
+        self.main_splitter.setStretchFactor(1, 1)
         if self.config and self.config.player_main_splitter_state:
             self.main_splitter.restoreState(QByteArray(self.config.player_main_splitter_state))
 
@@ -101,6 +175,13 @@ class PlayerWindow(QWidget):
         self.play_button.clicked.connect(self.toggle_playback)
         self.prev_button.clicked.connect(self.play_previous)
         self.next_button.clicked.connect(self.play_next)
+        self.backward_button.clicked.connect(lambda: self._seek_relative(-10))
+        self.forward_button.clicked.connect(lambda: self._seek_relative(10))
+        self.mute_button.clicked.connect(self._toggle_mute)
+        self.wide_button.clicked.connect(self._toggle_wide_mode)
+        self.fullscreen_button.clicked.connect(self.toggle_fullscreen)
+        self.speed_combo.currentTextChanged.connect(self._change_speed)
+        self.volume_slider.valueChanged.connect(self._change_volume)
         self.playlist.itemDoubleClicked.connect(self._play_clicked_item)
         self.toggle_playlist_button.clicked.connect(self._update_sidebar_visibility)
         self.toggle_details_button.clicked.connect(self._update_sidebar_visibility)
@@ -116,12 +197,26 @@ class PlayerWindow(QWidget):
         self.escape_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
         self.escape_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         self.escape_shortcut.activated.connect(self._return_to_main)
+        self._update_play_button_icon()
+
+    def _create_icon_button(self, icon_name: str, tooltip: str) -> QPushButton:
+        button = QPushButton("")
+        button.setToolTip(tooltip)
+        button.setIcon(QIcon(str(self._icons_dir / icon_name)))
+        button.setIconSize(button.iconSize())
+        button.setFixedHeight(28)
+        return button
+
+    def _update_play_button_icon(self) -> None:
+        icon_name = "pause.svg" if self.is_playing else "play.svg"
+        self.play_button.setIcon(QIcon(str(self._icons_dir / icon_name)))
 
     def open_session(self, session) -> None:
         self.session = session
         self.current_index = session.start_index
         self.current_speed = session.speed
         self.is_playing = True
+        self._update_play_button_icon()
         self.playlist.clear()
         for item in session.playlist:
             self.playlist.addItem(QListWidgetItem(item.title))
@@ -143,6 +238,7 @@ class PlayerWindow(QWidget):
         try:
             self.video.load(current_item.url, start_seconds=start_position_seconds)
             self.video.set_speed(self.current_speed)
+            self.video.set_volume(self.volume_slider.value())
         except Exception as exc:
             self.details.append(f"\n播放失败: {exc}")
 
@@ -185,6 +281,41 @@ class PlayerWindow(QWidget):
         self.playlist.setHidden(not self.toggle_playlist_button.isChecked())
         self.details.setHidden(not self.toggle_details_button.isChecked())
 
+    def _toggle_wide_mode(self) -> None:
+        if self.wide_button.isChecked():
+            self._sidebar_sizes = self.main_splitter.sizes()
+            self.sidebar_container.hide()
+            self.main_splitter.setSizes([1, 0])
+            return
+        self.sidebar_container.show()
+        if hasattr(self, "_sidebar_sizes"):
+            self.main_splitter.setSizes(self._sidebar_sizes)
+
+    def _seek_relative(self, seconds: int) -> None:
+        try:
+            self.video.seek_relative(seconds)
+        except Exception as exc:
+            self.details.append(f"\n跳转失败: {exc}")
+
+    def _toggle_mute(self) -> None:
+        try:
+            self.video.toggle_mute()
+        except Exception as exc:
+            self.details.append(f"\n静音失败: {exc}")
+
+    def _change_speed(self, text: str) -> None:
+        try:
+            self.current_speed = float(text.rstrip("x"))
+            self.video.set_speed(self.current_speed)
+        except Exception as exc:
+            self.details.append(f"\n倍速设置失败: {exc}")
+
+    def _change_volume(self, value: int) -> None:
+        try:
+            self.video.set_volume(value)
+        except Exception as exc:
+            self.details.append(f"\n音量设置失败: {exc}")
+
     def _handle_slider_pressed(self) -> None:
         self._slider_dragging = True
 
@@ -226,6 +357,12 @@ class PlayerWindow(QWidget):
             app.quit()
 
     def _return_to_main(self) -> None:
+        try:
+            self.video.pause()
+        except Exception:
+            pass
+        self.is_playing = False
+        self._update_play_button_icon()
         if self.config is not None:
             self.config.last_active_window = "main"
         self._persist_geometry()
@@ -238,6 +375,7 @@ class PlayerWindow(QWidget):
         else:
             self.video.resume()
         self.is_playing = not self.is_playing
+        self._update_play_button_icon()
 
     def play_previous(self) -> None:
         if self.session is None or self.current_index <= 0:

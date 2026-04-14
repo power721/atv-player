@@ -102,9 +102,14 @@ class AppCoordinator(QObject):
             self.login_window.close()
             self.login_window = None
         if config.last_active_window == "player":
-            restored = self.main_window.restore_last_player()
-            if restored is not None:
-                return restored
+            try:
+                restored = self.main_window.restore_last_player()
+            except Exception:
+                config.last_active_window = "main"
+                self.repo.save_config(config)
+            else:
+                if restored is not None:
+                    return restored
         return self.main_window
 
     def _handle_login_succeeded(self) -> None:

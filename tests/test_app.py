@@ -97,6 +97,60 @@ def test_app_coordinator_start_does_not_require_vod_root_probe(monkeypatch) -> N
     assert FakeApiClient.list_vod_calls == 0
 
 
+def test_app_coordinator_falls_back_to_main_when_player_restore_fails(monkeypatch) -> None:
+    class FakeRepo:
+        def __init__(self) -> None:
+            self.config = AppConfig(
+                base_url="http://127.0.0.1:4567",
+                username="alice",
+                token="auth-123",
+                vod_token="vod-123",
+                last_active_window="player",
+                last_playback_mode="detail",
+                last_playback_vod_id="vod-1",
+            )
+
+        def load_config(self) -> AppConfig:
+            return self.config
+
+        def save_config(self, config: AppConfig) -> None:
+            self.config = config
+
+        def clear_token(self) -> None:
+            self.config.token = ""
+            self.config.vod_token = ""
+
+    class FakeApiClient:
+        def __init__(self, base_url: str, token: str = "", vod_token: str = "") -> None:
+            self.base_url = base_url
+            self.token = token
+            self.vod_token = vod_token
+
+        def set_vod_token(self, vod_token: str) -> None:
+            self.vod_token = vod_token
+
+    class FakeMainWindow:
+        logout_requested = type("SignalStub", (), {"connect": lambda self, cb: None})()
+
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        def restore_last_player(self):
+            raise RuntimeError("restore failed")
+
+    repo = FakeRepo()
+    coordinator = AppCoordinator(repo)
+
+    monkeypatch.setattr(app_module, "ApiClient", FakeApiClient)
+    monkeypatch.setattr(app_module, "MainWindow", FakeMainWindow)
+    monkeypatch.setattr(coordinator, "_build_api_client", lambda: FakeApiClient("http://127.0.0.1:4567", "auth-123", "vod-123"))
+
+    widget = coordinator._show_main()
+
+    assert isinstance(widget, FakeMainWindow)
+    assert repo.config.last_active_window == "main"
+
+
 def test_main_window_open_player_hides_main_and_updates_last_active_state(qtbot, monkeypatch) -> None:
     created = {}
 
@@ -182,6 +236,42 @@ def test_main_window_ctrl_p_shows_existing_player_window(qtbot) -> None:
     assert window.player_window.show_calls == 1
     assert window.player_window.raise_calls == 1
     assert window.player_window.activate_calls == 1
+
+
+def test_main_window_escape_shows_existing_player_window(qtbot) -> None:
+    class ExistingPlayerWindow:
+        def __init__(self) -> None:
+            self.session = object()
+            self.show_calls = 0
+            self.raise_calls = 0
+            self.activate_calls = 0
+
+        def show(self) -> None:
+            self.show_calls += 1
+
+        def raise_(self) -> None:
+            self.raise_calls += 1
+
+        def activateWindow(self) -> None:
+            self.activate_calls += 1
+
+    config = AppConfig(last_active_window="main")
+    window = MainWindow(
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    window.player_window = ExistingPlayerWindow()
+    window.show()
+
+    window.show_or_restore_player()
+
+    assert window.isHidden() is True
+    assert config.last_active_window == "player"
+    assert window.player_window.show_calls == 1
 
 
 def test_main_window_ctrl_p_restores_last_player_when_missing(qtbot, monkeypatch) -> None:

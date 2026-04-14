@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QByteArray, Signal
+from PySide6.QtCore import QByteArray, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QTabWidget
 
@@ -39,6 +39,8 @@ class MainWindow(QMainWindow):
         self.quit_shortcut.activated.connect(self._quit_application)
         self.player_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
         self.player_shortcut.activated.connect(self.show_or_restore_player)
+        self.escape_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        self.escape_shortcut.activated.connect(self.show_or_restore_player)
 
         if hasattr(browse_controller, "load_folder"):
             self.browse_page.load_path(config.last_path or "/")

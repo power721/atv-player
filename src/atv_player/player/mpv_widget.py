@@ -60,6 +60,16 @@ class MpvWidget(QWidget):
                 return
             raise
 
+    def seek_relative(self, seconds: int) -> None:
+        if self._player is None:
+            return
+        try:
+            self._player.command("seek", seconds, "relative")
+        except Exception:
+            if getattr(self._player, "core_shutdown", False):
+                return
+            raise
+
     def can_seek(self) -> bool:
         if self._player is None:
             return False
@@ -73,6 +83,26 @@ class MpvWidget(QWidget):
             return
         try:
             self._player.speed = speed
+        except Exception:
+            if getattr(self._player, "core_shutdown", False):
+                return
+            raise
+
+    def set_volume(self, volume: int) -> None:
+        if self._player is None:
+            return
+        try:
+            self._player.volume = volume
+        except Exception:
+            if getattr(self._player, "core_shutdown", False):
+                return
+            raise
+
+    def toggle_mute(self) -> None:
+        if self._player is None:
+            return
+        try:
+            self._player.mute = not bool(self._player.mute)
         except Exception:
             if getattr(self._player, "core_shutdown", False):
                 return
