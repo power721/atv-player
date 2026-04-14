@@ -226,6 +226,33 @@ def test_player_window_passes_resume_offset_into_video_load(qtbot) -> None:
     assert window.video.load_calls == [("http://m/1.m3u8", False, 42)]
 
 
+def test_player_window_can_open_session_paused(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.load_calls.append((url, pause, start_seconds))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(make_player_session(start_index=1), start_paused=True)
+
+    assert window.is_playing is False
+    assert window.video.load_calls == [("http://m/2.m3u8", True, 0)]
+    assert window.play_button.icon().pixmap(24, 24).toImage() == player_window_module.QIcon(
+        str(window._icons_dir / "play.svg")
+    ).pixmap(24, 24).toImage()
+
+
 def test_player_window_can_hide_playlist_and_details(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
@@ -573,6 +600,19 @@ def test_player_window_ctrl_q_quits_application(qtbot, monkeypatch) -> None:
     assert config.last_active_window == "player"
 
 
+def test_player_window_quit_application_preserves_current_paused_state(qtbot, monkeypatch) -> None:
+    config = AppConfig(last_active_window="player", last_player_paused=False)
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.is_playing = False
+
+    monkeypatch.setattr(QApplication, "quit", lambda *args, **kwargs: None)
+
+    window._quit_application()
+
+    assert config.last_player_paused is True
+
+
 def test_player_window_keyboard_shortcuts_control_playback_navigation_and_view(qtbot) -> None:
     controller = RecordingPlayerController()
     video = RecordingVideo()
@@ -630,6 +670,27 @@ def test_player_window_keyboard_shortcuts_control_playback_navigation_and_view(q
     assert controller.progress_calls == [(1, 30, 1.0), (0, 30, 1.0)]
 
 
+def test_player_window_toggle_playback_persists_last_player_paused(qtbot) -> None:
+    config = AppConfig(last_player_paused=False)
+    saved = {"count": 0}
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("count", saved["count"] + 1),
+    )
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.toggle_playback()
+
+    assert config.last_player_paused is True
+
+    window.toggle_playback()
+
+    assert config.last_player_paused is False
+    assert saved["count"] >= 2
+
+
 def test_player_window_escape_shortcut_returns_to_main_when_not_fullscreen(qtbot) -> None:
     emitted = {"count": 0}
     config = AppConfig(last_active_window="player")
@@ -654,3 +715,19 @@ def test_player_window_escape_shortcut_returns_to_main_when_not_fullscreen(qtbot
     assert emitted["count"] == 1
     assert pauses["count"] == 1
     assert config.last_active_window == "main"
+
+
+def test_player_window_return_to_main_persists_paused_restore_state(qtbot) -> None:
+    config = AppConfig(last_active_window="player", last_player_paused=False)
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+
+    class FakeVideo:
+        def pause(self) -> None:
+            return None
+
+    window.session = object()
+    window.video = FakeVideo()
+    window._return_to_main()
+
+    assert config.last_player_paused is True

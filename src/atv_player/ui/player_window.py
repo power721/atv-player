@@ -268,7 +268,7 @@ class PlayerWindow(QWidget):
         icon_name = "volume-off.svg" if self._is_muted else "volume-on.svg"
         self._set_button_icon(self.mute_button, icon_name)
 
-    def open_session(self, session) -> None:
+    def open_session(self, session, start_paused: bool = False) -> None:
         self.session = session
         self.current_index = session.start_index
         self.current_speed = session.speed
@@ -276,18 +276,19 @@ class PlayerWindow(QWidget):
         speed_index = self.speed_combo.findText(speed_text)
         if speed_index >= 0:
             self.speed_combo.setCurrentIndex(speed_index)
-        self.is_playing = True
+        self.is_playing = not start_paused
+        self._set_last_player_paused(start_paused)
         self._update_play_button_icon()
         self.playlist.clear()
         for item in session.playlist:
             self.playlist.addItem(QListWidgetItem(item.title))
         self.playlist.setCurrentRow(self.current_index)
         self.progress.setValue(0)
-        self._load_current_item(session.start_position_seconds)
+        self._load_current_item(session.start_position_seconds, pause=start_paused)
         self.report_timer.start()
         self.progress_timer.start()
 
-    def _load_current_item(self, start_position_seconds: int = 0) -> None:
+    def _load_current_item(self, start_position_seconds: int = 0, pause: bool = False) -> None:
         if self.session is None:
             return
         current_item = self.session.playlist[self.current_index]
@@ -297,11 +298,17 @@ class PlayerWindow(QWidget):
             f"URL: {current_item.url}"
         )
         try:
-            self.video.load(current_item.url, start_seconds=start_position_seconds)
+            self.video.load(current_item.url, pause=pause, start_seconds=start_position_seconds)
             self.video.set_speed(self.current_speed)
             self.video.set_volume(self.volume_slider.value())
         except Exception as exc:
             self.details.append(f"\n播放失败: {exc}")
+
+    def _set_last_player_paused(self, paused: bool) -> None:
+        if self.config is None:
+            return
+        self.config.last_player_paused = paused
+        self._save_config()
 
     def _attempt_resume_seek(self, seconds: int, retries_remaining: int) -> None:
         if hasattr(self.video, "can_seek") and not self.video.can_seek():
@@ -512,6 +519,7 @@ class PlayerWindow(QWidget):
         self._quit_requested = True
         if self.config is not None:
             self.config.last_active_window = "player"
+        self._set_last_player_paused(not self.is_playing)
         self._persist_geometry()
         app = QApplication.instance()
         if app is not None:
@@ -523,6 +531,7 @@ class PlayerWindow(QWidget):
         except Exception:
             pass
         self.is_playing = False
+        self._set_last_player_paused(True)
         self._update_play_button_icon()
         if self.config is not None:
             self.config.last_active_window = "main"
@@ -542,6 +551,7 @@ class PlayerWindow(QWidget):
         else:
             self.video.resume()
         self.is_playing = not self.is_playing
+        self._set_last_player_paused(not self.is_playing)
         self._update_play_button_icon()
 
     def play_previous(self) -> None:
