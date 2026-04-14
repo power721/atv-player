@@ -335,6 +335,14 @@ def test_player_window_exposes_extended_playback_controls(qtbot) -> None:
     assert window.volume_slider.maximum() == 100
 
 
+def test_player_window_uses_distinct_seek_icons(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert window.prev_button.icon().pixmap(24, 24).toImage() != window.backward_button.icon().pixmap(24, 24).toImage()
+    assert window.next_button.icon().pixmap(24, 24).toImage() != window.forward_button.icon().pixmap(24, 24).toImage()
+
+
 def test_player_window_control_buttons_drive_video_actions(qtbot) -> None:
     class FakeVideo:
         def __init__(self) -> None:
