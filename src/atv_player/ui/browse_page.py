@@ -43,12 +43,20 @@ class BrowsePage(QWidget):
         self.breadcrumb_layout.setSpacing(4)
         self.breadcrumb_buttons: list[QPushButton] = []
         self.refresh_button = QPushButton("刷新")
+        self.prev_page_button = QPushButton("上一页")
+        self.next_page_button = QPushButton("下一页")
+        self.page_label = QLabel("第 1 / 1 页")
+        self.page_size_combo = QComboBox()
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(["类型", "名称", "大小", "豆瓣ID", "评分", "时间"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         configure_table_columns(self.table, stretch_column=1)
         self.current_items: list[VodItem] = []
         self.current_path = "/"
+        self.current_page = 1
+        self.page_size = 50
+        self.total_items = 0
+        self._page_state_by_path: dict[str, tuple[int, int]] = {}
         self._results: list[VodItem] = []
         self._filtered_results: list[VodItem] = []
 
@@ -59,6 +67,9 @@ class BrowsePage(QWidget):
         self.filter_combo.addItem("🌞 7", "7")
         self.filter_combo.addItem("📡 8", "8")
         self.filter_combo.addItem("☁ 9", "9")
+        for size in ("20", "30", "50", "100"):
+            self.page_size_combo.addItem(size, int(size))
+        self.page_size_combo.setCurrentText(str(self.page_size))
 
         top_search_controls = QHBoxLayout()
         top_search_controls.addWidget(self.keyword_edit)
@@ -85,6 +96,13 @@ class BrowsePage(QWidget):
         breadcrumb_row.addWidget(self.refresh_button)
         file_layout.addLayout(breadcrumb_row)
         file_layout.addWidget(self.table)
+        pagination_row = QHBoxLayout()
+        pagination_row.addStretch(1)
+        pagination_row.addWidget(self.prev_page_button)
+        pagination_row.addWidget(self.page_label)
+        pagination_row.addWidget(self.next_page_button)
+        pagination_row.addWidget(self.page_size_combo)
+        file_layout.addLayout(pagination_row)
         self.file_panel = QWidget()
         self.file_panel.setLayout(file_layout)
 
@@ -101,26 +119,51 @@ class BrowsePage(QWidget):
         self.results_table.cellDoubleClicked.connect(self._open_search_result)
         self.refresh_button.clicked.connect(self.reload)
         self.table.cellDoubleClicked.connect(self._handle_open)
+        self.prev_page_button.clicked.connect(self.previous_page)
+        self.next_page_button.clicked.connect(self.next_page)
+        self.page_size_combo.currentIndexChanged.connect(self._change_page_size)
 
         layout = QVBoxLayout(self)
         layout.addLayout(top_search_controls)
         layout.addWidget(self.content_splitter)
+        self._update_pagination_controls()
 
     def load_path(self, path: str) -> None:
-        self.current_path = path or "/"
+        target_path = path or "/"
+        if target_path != self.current_path:
+            saved_page, saved_size = self._page_state_by_path.get(target_path, (1, self.page_size))
+            self.current_page = saved_page
+            self.page_size = saved_size
+            self._sync_page_size_combo()
+        self.current_path = target_path
         self._update_breadcrumbs()
         try:
-            items, _total = self.controller.load_folder(self.current_path)
+            items, total = self.controller.load_folder(self.current_path, page=self.current_page, size=self.page_size)
         except UnauthorizedError:
             self.unauthorized.emit()
             return
         except ApiError as exc:
             self._set_breadcrumb_status(str(exc))
             return
+        self.total_items = total
+        self._page_state_by_path[self.current_path] = (self.current_page, self.page_size)
         self.current_items = items
         self._populate_table(items)
+        self._update_pagination_controls()
 
     def reload(self) -> None:
+        self.load_path(self.current_path)
+
+    def previous_page(self) -> None:
+        if self.current_page <= 1:
+            return
+        self.current_page -= 1
+        self.load_path(self.current_path)
+
+    def next_page(self) -> None:
+        if self.current_page >= self._total_pages():
+            return
+        self.current_page += 1
         self.load_path(self.current_path)
 
     def search(self) -> None:
@@ -197,6 +240,34 @@ class BrowsePage(QWidget):
         self.clear_button.hide()
         self.status_label.hide()
         self.content_splitter.setSizes([0, max(self.content_splitter.width(), self.width(), 1)])
+
+    def _change_page_size(self) -> None:
+        page_size = self.page_size_combo.currentData()
+        if page_size is None:
+            return
+        page_size = int(page_size)
+        if page_size == self.page_size:
+            return
+        self.page_size = page_size
+        self.current_page = 1
+        self.load_path(self.current_path)
+
+    def _sync_page_size_combo(self) -> None:
+        index = self.page_size_combo.findData(self.page_size)
+        if index < 0:
+            return
+        self.page_size_combo.blockSignals(True)
+        self.page_size_combo.setCurrentIndex(index)
+        self.page_size_combo.blockSignals(False)
+
+    def _total_pages(self) -> int:
+        return max(1, (self.total_items + self.page_size - 1) // self.page_size)
+
+    def _update_pagination_controls(self) -> None:
+        total_pages = self._total_pages()
+        self.page_label.setText(f"第 {self.current_page} / {total_pages} 页")
+        self.prev_page_button.setEnabled(self.current_page > 1)
+        self.next_page_button.setEnabled(self.current_page < total_pages)
 
     def _clear_breadcrumbs(self) -> None:
         while self.breadcrumb_layout.count():

@@ -7,12 +7,15 @@ from atv_player.ui.search_page import SearchPage
 
 
 class FakeBrowseController:
-    def __init__(self) -> None:
+    def __init__(self, total: int = 0) -> None:
         self.loaded_paths: list[str] = []
+        self.load_calls: list[tuple[str, int, int]] = []
+        self.total = total
 
     def load_folder(self, path: str, page: int = 1, size: int = 50):
         self.loaded_paths.append(path)
-        return [], 0
+        self.load_calls.append((path, page, size))
+        return [], self.total
 
 
 class FakeHistoryController:
@@ -150,3 +153,59 @@ def test_main_text_columns_stretch_and_other_columns_fit_content(qtbot) -> None:
     search_header = search_page.results_table.horizontalHeader()
     assert search_header.sectionResizeMode(0) == QHeaderView.ResizeMode.ResizeToContents
     assert search_header.sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch
+
+
+def test_browse_page_loads_selected_page_and_page_size(qtbot) -> None:
+    controller = FakeBrowseController(total=120)
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+
+    page.page_size_combo.setCurrentText("30")
+    page.load_path("/电影")
+    controller.load_calls.clear()
+
+    page.next_page()
+
+    assert controller.load_calls[-1] == ("/电影", 2, 30)
+    assert page.page_label.text() == "第 2 / 4 页"
+
+
+def test_browse_page_resets_to_first_page_for_new_path(qtbot) -> None:
+    controller = FakeBrowseController(total=120)
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+
+    page.load_path("/电影")
+    page.next_page()
+    page.load_path("/剧集")
+
+    assert controller.load_calls[-1] == ("/剧集", 1, 50)
+    assert page.current_page == 1
+
+
+def test_browse_page_remembers_page_state_per_path(qtbot) -> None:
+    controller = FakeBrowseController(total=120)
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+
+    page.page_size_combo.setCurrentText("30")
+    page.load_path("/电影")
+    page.next_page()
+    page.load_path("/剧集")
+    page.load_path("/电影")
+
+    assert controller.load_calls[-1] == ("/电影", 2, 30)
+    assert page.current_page == 2
+    assert page.page_size == 30
+
+
+def test_browse_page_disables_prev_and_next_when_unavailable(qtbot) -> None:
+    controller = FakeBrowseController(total=30)
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+
+    page.page_size_combo.setCurrentText("30")
+    page.load_path("/电影")
+
+    assert page.prev_page_button.isEnabled() is False
+    assert page.next_page_button.isEnabled() is False
