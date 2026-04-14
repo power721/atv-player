@@ -1,10 +1,15 @@
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QSplitter
+from PySide6.QtWidgets import QAbstractItemView, QSplitter
 
 from atv_player.ui.browse_page import BrowsePage
+from atv_player.ui.history_page import HistoryPage
 
 
 class FakeBrowseController:
+    pass
+
+
+class FakeHistoryController:
     pass
 
 
@@ -41,3 +46,14 @@ def test_browse_page_shows_search_results_panel_at_one_quarter_width(qtbot) -> N
     left, right = page.content_splitter.sizes()
     assert 200 <= left <= 400
     assert right > left
+
+
+def test_tables_are_read_only(qtbot) -> None:
+    browse_page = BrowsePage(FakeBrowseController())
+    history_page = HistoryPage(FakeHistoryController())
+    qtbot.addWidget(browse_page)
+    qtbot.addWidget(history_page)
+
+    assert browse_page.results_table.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers
+    assert browse_page.table.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers
+    assert history_page.table.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers

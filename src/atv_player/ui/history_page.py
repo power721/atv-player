@@ -26,6 +26,7 @@ class HistoryPage(QWidget):
         self.clear_button = QPushButton("清空")
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["标题", "当前播放", "进度", "时间"])
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.records: list[HistoryRecord] = []

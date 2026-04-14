@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QHBoxLayout,
     QLabel,
@@ -32,11 +33,13 @@ class BrowsePage(QWidget):
         self.clear_button = QPushButton("清空")
         self.results_table = QTableWidget(0, 2)
         self.results_table.setHorizontalHeaderLabels(["来源", "名称"])
+        self.results_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.status_label = QLabel("")
         self.path_label = QLabel("/")
         self.refresh_button = QPushButton("刷新")
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["类型", "名称", "时间"])
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.current_items: list[VodItem] = []
         self.current_path = "/"
         self._results: list[VodItem] = []
