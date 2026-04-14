@@ -4,6 +4,8 @@ from typing import Any
 
 import httpx
 
+from atv_player.models import HistoryRecord
+
 
 class ApiError(RuntimeError):
     pass
@@ -80,9 +82,25 @@ class ApiClient:
         )
         return str(data)
 
-    def get_history(self, key: str):
+    def get_history(self, key: str) -> HistoryRecord | None:
         token = self._client.headers.get("Authorization", "")
-        return self._request("GET", f"/history/{token}", params={"key": key})
+        data = self._request("GET", f"/history/{token}", params={"key": key})
+        if not data:
+            return None
+        return HistoryRecord(
+            id=int(data["id"]),
+            key=str(data["key"]),
+            vod_name=str(data["vodName"]),
+            vod_pic=str(data["vodPic"]),
+            vod_remarks=str(data["vodRemarks"]),
+            episode=int(data["episode"]),
+            episode_url=str(data["episodeUrl"]),
+            position=int(data["position"]),
+            opening=int(data["opening"]),
+            ending=int(data["ending"]),
+            speed=float(data["speed"]),
+            create_time=int(data["createTime"]),
+        )
 
     def list_history(self, page: int, size: int) -> dict[str, Any]:
         return self._request(

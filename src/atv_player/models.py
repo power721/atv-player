@@ -52,3 +52,10 @@ class HistoryRecord:
     ending: int
     speed: float
     create_time: int
+
+
+@dataclass(slots=True)
+class OpenPlayerRequest:
+    vod: VodItem
+    playlist: list[PlayItem]
+    clicked_index: int

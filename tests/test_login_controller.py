@@ -47,3 +47,18 @@ def test_login_controller_reads_defaults_from_storage() -> None:
 
     assert config.base_url == "http://demo"
     assert config.username == "bob"
+
+
+def test_login_controller_uses_base_url_specific_factory() -> None:
+    repo = FakeSettingsRepository()
+    seen_base_urls: list[str] = []
+
+    def factory(base_url: str) -> FakeApiClient:
+        seen_base_urls.append(base_url)
+        return FakeApiClient()
+
+    controller = LoginController(repo, factory)
+
+    controller.login("http://demo-server:4567", "alice", "secret")
+
+    assert seen_base_urls == ["http://demo-server:4567"]

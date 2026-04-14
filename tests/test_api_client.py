@@ -2,6 +2,7 @@ import httpx
 import pytest
 
 from atv_player.api import ApiClient, ApiError, UnauthorizedError
+from atv_player.models import HistoryRecord
 
 
 def test_api_client_attaches_authorization_header() -> None:
@@ -50,3 +51,36 @@ def test_api_client_raises_api_error_for_non_401_failure() -> None:
         client.telegram_search("movie")
 
     assert str(exc.value) == "boom"
+
+
+def test_api_client_maps_history_record() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": 1,
+                "key": "movie-1",
+                "vodName": "Movie",
+                "vodPic": "pic",
+                "vodRemarks": "Episode 2",
+                "episode": 1,
+                "episodeUrl": "2.m3u8",
+                "position": 90000,
+                "opening": 0,
+                "ending": 0,
+                "speed": 1.25,
+                "createTime": 123456,
+            },
+        )
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        transport=httpx.MockTransport(handler),
+    )
+
+    history = client.get_history("movie-1")
+
+    assert isinstance(history, HistoryRecord)
+    assert history.key == "movie-1"
+    assert history.speed == 1.25

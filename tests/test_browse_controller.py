@@ -5,10 +5,26 @@ from atv_player.models import VodItem
 class FakeApiClient:
     def __init__(self) -> None:
         self.resolved_links: list[str] = []
+        self.detail_payload = {
+            "list": [
+                {
+                    "vod_id": "detail-1",
+                    "vod_name": "Movie",
+                    "vod_pic": "pic",
+                    "items": [
+                        {"title": "Episode 1", "url": "1.m3u8"},
+                        {"title": "Episode 2", "url": "2.m3u8"},
+                    ],
+                }
+            ]
+        }
 
     def resolve_share_link(self, link: str) -> str:
         self.resolved_links.append(link)
         return "/Movies/Resolved"
+
+    def get_detail(self, vod_id: str) -> dict:
+        return self.detail_payload
 
 
 def test_filter_search_results_by_drive_type() -> None:
@@ -45,3 +61,13 @@ def test_resolve_search_result_returns_backend_folder_path() -> None:
 
     assert resolved_path == "/Movies/Resolved"
     assert api.resolved_links == ["https://t.me/share"]
+
+
+def test_build_request_from_detail_maps_playlist_items() -> None:
+    controller = BrowseController(FakeApiClient())
+
+    request = controller.build_request_from_detail("detail-1")
+
+    assert request.vod.vod_id == "detail-1"
+    assert [item.title for item in request.playlist] == ["Episode 1", "Episode 2"]
+    assert request.clicked_index == 0
