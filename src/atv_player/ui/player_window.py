@@ -111,7 +111,7 @@ class PlayerWindow(QWidget):
         self.toggle_details_button.setChecked(True)
 
         self.speed_combo = QComboBox()
-        self.speed_combo.addItems(["0.5x", "1.0x", "1.25x", "1.5x", "2.0x"])
+        self.speed_combo.addItems(["0.5x", "0.75x", "1.0x", "1.25x", "1.5x", "2.0x"])
         self.speed_combo.setCurrentText("1.0x")
 
         self.current_time_label = QLabel("00:00")
@@ -145,7 +145,7 @@ class PlayerWindow(QWidget):
         self.bottom_area.setMaximumHeight(72)
         bottom_layout = QVBoxLayout(self.bottom_area)
         self.bottom_layout = bottom_layout
-        bottom_layout.setContentsMargins(12, 6, 12, 6)
+        bottom_layout.setContentsMargins(12, 0, 12, 6)
         bottom_layout.setSpacing(4)
 
         progress_row = QHBoxLayout()
