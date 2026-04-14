@@ -832,7 +832,7 @@ def test_player_window_control_buttons_drive_video_actions(qtbot) -> None:
     window.volume_slider.setValue(35)
     window.speed_combo.setCurrentText("1.5x")
 
-    assert window.video.seek_relative_calls == [-10, 10]
+    assert window.video.seek_relative_calls == [-15, 15]
     assert window.video.toggle_mute_calls == 1
     assert window.video.set_volume_calls[-1] == 35
     assert window.current_speed == 1.5
