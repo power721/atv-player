@@ -78,6 +78,26 @@ class MpvWidget(QWidget):
                 return
             raise
 
+    def set_volume(self, value: int) -> None:
+        if self._player is None:
+            return
+        try:
+            self._player.volume = value
+        except Exception:
+            if getattr(self._player, "core_shutdown", False):
+                return
+            raise
+
+    def toggle_mute(self) -> None:
+        if self._player is None:
+            return
+        try:
+            self._player.mute = not bool(getattr(self._player, "mute", False))
+        except Exception:
+            if getattr(self._player, "core_shutdown", False):
+                return
+            raise
+
     def pause(self) -> None:
         if self._player is None:
             return

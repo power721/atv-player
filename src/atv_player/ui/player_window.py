@@ -5,11 +5,13 @@ from PySide6.QtGui import QCloseEvent, QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication
 from PySide6.QtWidgets import (
     QHBoxLayout,
+    QLabel,
     QListWidget,
     QListWidgetItem,
     QPushButton,
     QSlider,
     QSplitter,
+    QStyle,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -42,14 +44,23 @@ class PlayerWindow(QWidget):
         self.play_button = QPushButton("播放/暂停")
         self.prev_button = QPushButton("上一集")
         self.next_button = QPushButton("下一集")
+        self.mute_button = QPushButton("")
+        self.mute_button.setToolTip("静音")
+        self.mute_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaVolume))
         self.toggle_playlist_button = QPushButton("播放列表")
         self.toggle_details_button = QPushButton("详情")
         self.toggle_playlist_button.setCheckable(True)
         self.toggle_details_button.setCheckable(True)
         self.toggle_playlist_button.setChecked(True)
         self.toggle_details_button.setChecked(True)
+        self.current_time_label = QLabel("00:00")
+        self.duration_label = QLabel("00:00")
         self.progress = QSlider(Qt.Orientation.Horizontal)
         self.progress.setFixedHeight(24)
+        self.volume_slider = QSlider(Qt.Orientation.Horizontal)
+        self.volume_slider.setRange(0, 100)
+        self.volume_slider.setValue(100)
+        self.volume_slider.setMaximumWidth(180)
         self.details = QTextEdit()
         self.details.setReadOnly(True)
         self.report_timer = QTimer(self)
@@ -60,18 +71,46 @@ class PlayerWindow(QWidget):
         self.progress_timer.timeout.connect(self._sync_progress_slider)
         self._slider_dragging = False
 
-        sidebar_actions = QHBoxLayout()
+        self.sidebar_actions_widget = QWidget()
+        sidebar_actions = QHBoxLayout(self.sidebar_actions_widget)
+        sidebar_actions.setContentsMargins(0, 0, 0, 0)
         sidebar_actions.addWidget(self.toggle_playlist_button)
         sidebar_actions.addWidget(self.toggle_details_button)
 
         left = QVBoxLayout()
         left.addWidget(self.video)
-        left.addWidget(self.progress)
+        self.bottom_area = QWidget()
+        bottom_layout = QVBoxLayout(self.bottom_area)
+        bottom_layout.setContentsMargins(0, 0, 0, 0)
+
+        progress_row = QHBoxLayout()
+        progress_row.setContentsMargins(0, 0, 0, 0)
+        progress_row.addWidget(self.current_time_label)
+        progress_row.addWidget(self.progress, 1)
+        progress_row.addWidget(self.duration_label)
+        bottom_layout.addLayout(progress_row)
+
         controls = QHBoxLayout()
-        controls.addWidget(self.prev_button)
-        controls.addWidget(self.play_button)
-        controls.addWidget(self.next_button)
-        left.addLayout(controls)
+        controls.setContentsMargins(0, 0, 0, 0)
+        controls.addStretch(1)
+        control_group = QWidget()
+        control_group_layout = QHBoxLayout(control_group)
+        control_group_layout.setContentsMargins(0, 0, 0, 0)
+        control_group_layout.addWidget(self.prev_button)
+        control_group_layout.addWidget(self.play_button)
+        control_group_layout.addWidget(self.next_button)
+        controls.addWidget(control_group)
+        controls.addStretch(1)
+
+        volume_group = QWidget()
+        self.volume_layout = QHBoxLayout(volume_group)
+        self.volume_layout.setContentsMargins(0, 0, 0, 0)
+        self.volume_layout.addWidget(self.mute_button)
+        self.volume_layout.addWidget(self.volume_slider)
+        controls.addWidget(volume_group, 0, Qt.AlignmentFlag.AlignRight)
+        bottom_layout.addLayout(controls)
+
+        left.addWidget(self.bottom_area)
 
         video_container = QWidget()
         video_container.setLayout(left)
@@ -82,14 +121,14 @@ class PlayerWindow(QWidget):
         self.sidebar_splitter.setChildrenCollapsible(True)
 
         sidebar_layout = QVBoxLayout()
-        sidebar_layout.addLayout(sidebar_actions)
+        sidebar_layout.addWidget(self.sidebar_actions_widget)
         sidebar_layout.addWidget(self.sidebar_splitter)
-        sidebar_container = QWidget()
-        sidebar_container.setLayout(sidebar_layout)
+        self.sidebar_container = QWidget()
+        self.sidebar_container.setLayout(sidebar_layout)
 
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.main_splitter.addWidget(video_container)
-        self.main_splitter.addWidget(sidebar_container)
+        self.main_splitter.addWidget(self.sidebar_container)
         self.main_splitter.setStretchFactor(0, 3)
         self.main_splitter.setStretchFactor(1, 2)
         if self.config and self.config.player_main_splitter_state:
@@ -101,6 +140,8 @@ class PlayerWindow(QWidget):
         self.play_button.clicked.connect(self.toggle_playback)
         self.prev_button.clicked.connect(self.play_previous)
         self.next_button.clicked.connect(self.play_next)
+        self.mute_button.clicked.connect(self._toggle_mute)
+        self.volume_slider.valueChanged.connect(self._change_volume)
         self.playlist.itemDoubleClicked.connect(self._play_clicked_item)
         self.toggle_playlist_button.clicked.connect(self._update_sidebar_visibility)
         self.toggle_details_button.clicked.connect(self._update_sidebar_visibility)
@@ -116,6 +157,7 @@ class PlayerWindow(QWidget):
         self.escape_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
         self.escape_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         self.escape_shortcut.activated.connect(self._return_to_main)
+        self._apply_visibility_state()
 
     def open_session(self, session) -> None:
         self.session = session
@@ -142,7 +184,10 @@ class PlayerWindow(QWidget):
         )
         try:
             self.video.load(current_item.url, start_seconds=start_position_seconds)
-            self.video.set_speed(self.current_speed)
+            if hasattr(self.video, "set_speed"):
+                self.video.set_speed(self.current_speed)
+            if hasattr(self.video, "set_volume"):
+                self.video.set_volume(self.volume_slider.value())
         except Exception as exc:
             self.details.append(f"\n播放失败: {exc}")
 
@@ -182,8 +227,19 @@ class PlayerWindow(QWidget):
             self.details.append(f"\n进度上报失败: {exc}")
 
     def _update_sidebar_visibility(self) -> None:
-        self.playlist.setHidden(not self.toggle_playlist_button.isChecked())
-        self.details.setHidden(not self.toggle_details_button.isChecked())
+        self._apply_visibility_state()
+
+    def _toggle_mute(self) -> None:
+        try:
+            self.video.toggle_mute()
+        except Exception as exc:
+            self.details.append(f"\n静音失败: {exc}")
+
+    def _change_volume(self, value: int) -> None:
+        try:
+            self.video.set_volume(value)
+        except Exception as exc:
+            self.details.append(f"\n音量设置失败: {exc}")
 
     def _handle_slider_pressed(self) -> None:
         self._slider_dragging = True
@@ -202,12 +258,32 @@ class PlayerWindow(QWidget):
         position = self.video.position_seconds()
         self.progress.setMaximum(max(duration, 0))
         self.progress.setValue(max(min(position, self.progress.maximum()), 0))
+        self.current_time_label.setText(self._format_time(position))
+        self.duration_label.setText(self._format_time(duration))
 
     def toggle_fullscreen(self) -> None:
         if self.isFullScreen():
             self.showNormal()
+            self._apply_visibility_state()
             return
         self.showFullScreen()
+        self._apply_visibility_state()
+
+    def _apply_visibility_state(self) -> None:
+        is_fullscreen = self.isFullScreen()
+        self.bottom_area.setHidden(is_fullscreen)
+        self.sidebar_actions_widget.setHidden(is_fullscreen)
+        self.sidebar_container.setHidden(is_fullscreen)
+        self.playlist.setHidden(is_fullscreen or not self.toggle_playlist_button.isChecked())
+        self.details.setHidden(is_fullscreen or not self.toggle_details_button.isChecked())
+
+    def _format_time(self, seconds: int) -> str:
+        total_seconds = max(int(seconds), 0)
+        minutes, remaining_seconds = divmod(total_seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours:
+            return f"{hours:02d}:{minutes:02d}:{remaining_seconds:02d}"
+        return f"{minutes:02d}:{remaining_seconds:02d}"
 
     def _persist_geometry(self) -> None:
         if self.config is None:

@@ -21,6 +21,11 @@ def test_player_window_has_reasonable_default_size_and_horizontal_progress(qtbot
     assert window.width() >= 1000
     assert window.height() >= 700
     assert window.progress.orientation() == Qt.Orientation.Horizontal
+    assert window.current_time_label.text() == "00:00"
+    assert window.duration_label.text() == "00:00"
+    assert window.volume_layout.indexOf(window.mute_button) == 0
+    assert window.volume_layout.indexOf(window.volume_slider) == 1
+    assert window.volume_slider.maximumWidth() == 180
 
 
 def test_player_window_uses_splitters_for_resizable_panels(qtbot) -> None:
@@ -138,11 +143,21 @@ def test_player_window_toggle_fullscreen_changes_window_state(qtbot) -> None:
     qtbot.addWidget(window)
     window.show()
 
+    window.toggle_details_button.click()
+
     window.toggle_fullscreen()
     assert window.isFullScreen() is True
+    assert window.bottom_area.isHidden() is True
+    assert window.sidebar_actions_widget.isHidden() is True
+    assert window.playlist.isHidden() is True
+    assert window.details.isHidden() is True
 
     window.toggle_fullscreen()
     assert window.isFullScreen() is False
+    assert window.bottom_area.isHidden() is False
+    assert window.sidebar_actions_widget.isHidden() is False
+    assert window.playlist.isHidden() is False
+    assert window.details.isHidden() is True
 
 
 def test_player_window_syncs_progress_slider_and_seeks_from_it(qtbot) -> None:
@@ -167,6 +182,8 @@ def test_player_window_syncs_progress_slider_and_seeks_from_it(qtbot) -> None:
 
     assert window.progress.maximum() == 120
     assert window.progress.value() == 30
+    assert window.current_time_label.text() == "00:30"
+    assert window.duration_label.text() == "02:00"
 
     window.progress.setValue(75)
     window._seek_from_slider()
