@@ -323,14 +323,15 @@ def test_player_window_exposes_extended_playback_controls(qtbot) -> None:
     assert window.next_button.text() == ""
     assert window.backward_button.text() == ""
     assert window.forward_button.text() == ""
+    assert window.refresh_button.text() == ""
     assert window.mute_button.text() == ""
     assert window.wide_button.text() == ""
     assert window.fullscreen_button.text() == ""
     assert window.toggle_playlist_button.text() == ""
     assert window.toggle_details_button.text() == ""
-    assert window.play_button.toolTip() == "播放/暂停"
-    assert window.mute_button.toolTip() == "静音"
-    assert window.fullscreen_button.toolTip() == "全屏"
+    assert window.play_button.toolTip() == "播放/暂停 (Space)"
+    assert window.mute_button.toolTip() == "静音 (M)"
+    assert window.fullscreen_button.toolTip() == "全屏 (Enter)"
     assert isinstance(window.speed_combo, QComboBox)
     assert window.volume_slider.maximum() == 100
 
@@ -399,6 +400,22 @@ def test_player_window_refresh_button_replays_current_item(qtbot) -> None:
     assert window.video.load_calls == [("http://m/2.m3u8", 0)]
     assert window.video.set_speed_calls == [1.5]
     assert window.video.set_volume_calls == [35]
+
+
+def test_player_window_playback_controls_show_shortcuts_and_pointing_cursor(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert window.play_button.toolTip() == "播放/暂停 (Space)"
+    assert window.prev_button.toolTip() == "上一集 (PgUp)"
+    assert window.next_button.toolTip() == "下一集 (PgDn)"
+    assert window.backward_button.toolTip() == "后退 (Left)"
+    assert window.forward_button.toolTip() == "前进 (Right)"
+    assert window.mute_button.toolTip() == "静音 (M)"
+    assert window.fullscreen_button.toolTip() == "全屏 (Enter)"
+    assert window.play_button.cursor().shape() == Qt.CursorShape.PointingHandCursor
+    assert window.refresh_button.cursor().shape() == Qt.CursorShape.PointingHandCursor
+    assert window.fullscreen_button.cursor().shape() == Qt.CursorShape.PointingHandCursor
 
 
 def test_player_window_control_buttons_drive_video_actions(qtbot) -> None:

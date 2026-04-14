@@ -92,15 +92,15 @@ class PlayerWindow(QWidget):
 
         self.video = MpvWidget(self)
         self.playlist = QListWidget()
-        self.play_button = self._create_icon_button("play.svg", "播放/暂停")
-        self.prev_button = self._create_icon_button("previous.svg", "上一集")
-        self.next_button = self._create_icon_button("next.svg", "下一集")
-        self.backward_button = self._create_icon_button("seek-backward.svg", "后退")
-        self.forward_button = self._create_icon_button("seek-forward.svg", "前进")
+        self.play_button = self._create_icon_button("play.svg", "播放/暂停", "Space")
+        self.prev_button = self._create_icon_button("previous.svg", "上一集", "PgUp")
+        self.next_button = self._create_icon_button("next.svg", "下一集", "PgDn")
+        self.backward_button = self._create_icon_button("seek-backward.svg", "后退", "Left")
+        self.forward_button = self._create_icon_button("seek-forward.svg", "前进", "Right")
         self.refresh_button = self._create_icon_button("refresh.svg", "重新播放")
-        self.mute_button = self._create_icon_button("volume-on.svg", "静音")
+        self.mute_button = self._create_icon_button("volume-on.svg", "静音", "M")
         self.wide_button = self._create_icon_button("grid.svg", "宽屏")
-        self.fullscreen_button = self._create_icon_button("maximize.svg", "全屏")
+        self.fullscreen_button = self._create_icon_button("maximize.svg", "全屏", "Enter")
         self.wide_button.setCheckable(True)
         self.toggle_playlist_button = self._create_icon_button("queue.svg", "播放列表")
         self.toggle_details_button = self._create_icon_button("info.svg", "详情")
@@ -240,11 +240,17 @@ class PlayerWindow(QWidget):
         self._update_play_button_icon()
         self._apply_visibility_state()
 
-    def _create_icon_button(self, icon_name: str, tooltip: str) -> QPushButton:
+    def _format_tooltip(self, label: str, shortcut: str | None = None) -> str:
+        if shortcut is None:
+            return label
+        return f"{label} ({shortcut})"
+
+    def _create_icon_button(self, icon_name: str, tooltip: str, shortcut: str | None = None) -> QPushButton:
         button = QPushButton("")
-        button.setToolTip(tooltip)
+        button.setToolTip(self._format_tooltip(tooltip, shortcut))
         button.setIcon(QIcon(str(self._icons_dir / icon_name)))
         button.setIconSize(button.iconSize())
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setFixedHeight(28)
         return button
 
