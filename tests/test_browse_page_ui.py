@@ -295,3 +295,18 @@ def test_history_page_delete_reloads_previous_page_when_last_page_becomes_empty(
 
     assert controller.calls[-1] == (1, 50)
     assert page.current_page == 1
+
+
+def test_browse_page_refresh_reuses_current_page_state(qtbot) -> None:
+    controller = FakeBrowseController(total=120)
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+
+    page.page_size_combo.setCurrentText("30")
+    page.load_path("/电影")
+    page.next_page()
+    controller.load_calls.clear()
+
+    page.reload()
+
+    assert controller.load_calls == [("/电影", 2, 30)]
