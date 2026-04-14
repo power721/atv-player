@@ -68,6 +68,8 @@ class ClickableSlider(QSlider):
 
 class PlayerWindow(QWidget):
     closed_to_main = Signal()
+    _SEEK_SHORTCUT_SECONDS = 15
+    _VOLUME_SHORTCUT_STEP = 5
 
     def __init__(self, controller, config=None, save_config=None) -> None:
         super().__init__()
@@ -231,6 +233,8 @@ class PlayerWindow(QWidget):
         self.escape_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
         self.escape_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         self.escape_shortcut.activated.connect(self._handle_escape)
+        self._shortcut_bindings: list[QShortcut] = []
+        self._register_shortcuts()
         self._update_play_button_icon()
         self._apply_visibility_state()
 
@@ -250,6 +254,10 @@ class PlayerWindow(QWidget):
         self.session = session
         self.current_index = session.start_index
         self.current_speed = session.speed
+        speed_text = self._speed_text(session.speed)
+        speed_index = self.speed_combo.findText(speed_text)
+        if speed_index >= 0:
+            self.speed_combo.setCurrentIndex(speed_index)
         self.is_playing = True
         self._update_play_button_icon()
         self.playlist.clear()
@@ -349,6 +357,61 @@ class PlayerWindow(QWidget):
             self.video.set_volume(value)
         except Exception as exc:
             self.details.append(f"\n音量设置失败: {exc}")
+
+    def _step_volume(self, delta: int) -> None:
+        value = max(self.volume_slider.minimum(), min(self.volume_slider.value() + delta, self.volume_slider.maximum()))
+        self.volume_slider.setValue(value)
+
+    def _speed_text(self, speed: float) -> str:
+        return f"{speed:.2f}".rstrip("0").rstrip(".") + "x"
+
+    def _current_speed_index(self) -> int:
+        speeds = [float(self.speed_combo.itemText(index).rstrip("x")) for index in range(self.speed_combo.count())]
+        return min(
+            range(len(speeds)),
+            key=lambda index: abs(speeds[index] - self.current_speed),
+        )
+
+    def _step_speed(self, delta: int) -> None:
+        if self.speed_combo.count() == 0:
+            return
+        current_index = self._current_speed_index()
+        new_index = max(0, min(current_index + delta, self.speed_combo.count() - 1))
+        if new_index == self.speed_combo.currentIndex():
+            self._change_speed(self.speed_combo.itemText(new_index))
+            return
+        self.speed_combo.setCurrentIndex(new_index)
+
+    def _reset_speed(self) -> None:
+        speed_index = self.speed_combo.findText("1.0x")
+        if speed_index < 0:
+            return
+        if speed_index == self.speed_combo.currentIndex():
+            self._change_speed("1.0x")
+            return
+        self.speed_combo.setCurrentIndex(speed_index)
+
+    def _register_shortcuts(self) -> None:
+        bindings = [
+            (QKeySequence(Qt.Key.Key_Space), self.toggle_playback),
+            (QKeySequence(Qt.Key.Key_Return), self.toggle_fullscreen),
+            (QKeySequence(Qt.Key.Key_Enter), self.toggle_fullscreen),
+            (QKeySequence("M"), self._toggle_mute),
+            (QKeySequence("-"), lambda: self._step_speed(-1)),
+            (QKeySequence("+"), lambda: self._step_speed(1)),
+            (QKeySequence("="), self._reset_speed),
+            (QKeySequence(Qt.Key.Key_Down), lambda: self._step_volume(-self._VOLUME_SHORTCUT_STEP)),
+            (QKeySequence(Qt.Key.Key_Up), lambda: self._step_volume(self._VOLUME_SHORTCUT_STEP)),
+            (QKeySequence(Qt.Key.Key_Left), lambda: self._seek_relative(-self._SEEK_SHORTCUT_SECONDS)),
+            (QKeySequence(Qt.Key.Key_Right), lambda: self._seek_relative(self._SEEK_SHORTCUT_SECONDS)),
+            (QKeySequence(Qt.Key.Key_PageUp), self.play_previous),
+            (QKeySequence(Qt.Key.Key_PageDown), self.play_next),
+        ]
+        for sequence, handler in bindings:
+            shortcut = QShortcut(sequence, self)
+            shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+            shortcut.activated.connect(handler)
+            self._shortcut_bindings.append(shortcut)
 
     def _handle_slider_pressed(self) -> None:
         self._slider_dragging = True
@@ -482,6 +545,62 @@ class PlayerWindow(QWidget):
             return
         if event.key() == Qt.Key.Key_P and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self._return_to_main()
+            event.accept()
+            return
+        if event.modifiers() & (
+            Qt.KeyboardModifier.ControlModifier
+            | Qt.KeyboardModifier.AltModifier
+            | Qt.KeyboardModifier.MetaModifier
+        ):
+            super().keyPressEvent(event)
+            return
+        if event.key() == Qt.Key.Key_Space:
+            self.toggle_playback()
+            event.accept()
+            return
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.toggle_fullscreen()
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Down:
+            self._step_volume(-self._VOLUME_SHORTCUT_STEP)
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Up:
+            self._step_volume(self._VOLUME_SHORTCUT_STEP)
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Left:
+            self._seek_relative(-self._SEEK_SHORTCUT_SECONDS)
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Right:
+            self._seek_relative(self._SEEK_SHORTCUT_SECONDS)
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_PageUp:
+            self.play_previous()
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_PageDown:
+            self.play_next()
+            event.accept()
+            return
+        key_text = event.text().lower()
+        if key_text == "m":
+            self._toggle_mute()
+            event.accept()
+            return
+        if key_text == "-":
+            self._step_speed(-1)
+            event.accept()
+            return
+        if key_text == "+":
+            self._step_speed(1)
+            event.accept()
+            return
+        if key_text == "=":
+            self._reset_speed()
             event.accept()
             return
         super().keyPressEvent(event)

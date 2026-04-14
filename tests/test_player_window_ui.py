@@ -1,4 +1,5 @@
-from PySide6.QtCore import QByteArray, Qt
+from PySide6.QtCore import QByteArray, QEvent, Qt
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication, QComboBox
 from PySide6.QtWidgets import QSplitter
 from atv_player.controllers.player_controller import PlayerSession
@@ -11,6 +12,71 @@ from atv_player.ui.player_window import PlayerWindow
 class FakePlayerController:
     def report_progress(self, session, current_index: int, position_seconds: int, speed: float) -> None:
         return None
+
+
+class RecordingPlayerController(FakePlayerController):
+    def __init__(self) -> None:
+        self.progress_calls: list[tuple[int, int, float]] = []
+
+    def report_progress(self, session, current_index: int, position_seconds: int, speed: float) -> None:
+        self.progress_calls.append((current_index, position_seconds, speed))
+
+
+class RecordingVideo:
+    def __init__(self) -> None:
+        self.load_calls: list[tuple[str, int]] = []
+        self.pause_calls = 0
+        self.resume_calls = 0
+        self.toggle_mute_calls = 0
+        self.seek_relative_calls: list[int] = []
+        self.set_speed_calls: list[float] = []
+        self.set_volume_calls: list[int] = []
+
+    def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+        self.load_calls.append((url, start_seconds))
+
+    def set_speed(self, value: float) -> None:
+        self.set_speed_calls.append(value)
+
+    def set_volume(self, value: int) -> None:
+        self.set_volume_calls.append(value)
+
+    def pause(self) -> None:
+        self.pause_calls += 1
+
+    def resume(self) -> None:
+        self.resume_calls += 1
+
+    def toggle_mute(self) -> None:
+        self.toggle_mute_calls += 1
+
+    def seek_relative(self, seconds: int) -> None:
+        self.seek_relative_calls.append(seconds)
+
+    def position_seconds(self) -> int:
+        return 30
+
+    def duration_seconds(self) -> int:
+        return 120
+
+
+def make_player_session(start_index: int = 1, speed: float = 1.0) -> PlayerSession:
+    return PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(title="Episode 1", url="http://m/1.m3u8"),
+            PlayItem(title="Episode 2", url="http://m/2.m3u8"),
+            PlayItem(title="Episode 3", url="http://m/3.m3u8"),
+        ],
+        start_index=start_index,
+        start_position_seconds=0,
+        speed=speed,
+    )
+
+
+def send_key(window: PlayerWindow, key: int, modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier, text: str = "") -> None:
+    QApplication.sendEvent(window, QKeyEvent(QEvent.Type.KeyPress, key, modifiers, text))
+    QApplication.sendEvent(window, QKeyEvent(QEvent.Type.KeyRelease, key, modifiers, text))
 
 
 def test_player_window_has_reasonable_default_size_and_horizontal_progress(qtbot) -> None:
@@ -343,3 +409,86 @@ def test_player_window_ctrl_q_quits_application(qtbot, monkeypatch) -> None:
 
     assert called["count"] == 1
     assert config.last_active_window == "player"
+
+
+def test_player_window_keyboard_shortcuts_control_playback_navigation_and_view(qtbot) -> None:
+    controller = RecordingPlayerController()
+    video = RecordingVideo()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(make_player_session())
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+
+    send_key(window, Qt.Key.Key_Space, text=" ")
+    assert video.pause_calls == 1
+    assert window.is_playing is False
+
+    send_key(window, Qt.Key.Key_Space, text=" ")
+    assert video.resume_calls == 1
+    assert window.is_playing is True
+
+    send_key(window, Qt.Key.Key_Return, text="\r")
+    assert window.isFullScreen() is True
+
+    send_key(window, Qt.Key.Key_Escape)
+    assert window.isFullScreen() is False
+
+    send_key(window, Qt.Key.Key_M, text="m")
+    assert video.toggle_mute_calls == 1
+
+    send_key(window, Qt.Key.Key_Minus, text="-")
+    assert window.current_speed == 0.5
+
+    send_key(window, Qt.Key.Key_Equal, Qt.KeyboardModifier.ShiftModifier, text="+")
+    assert window.current_speed == 1.0
+
+    send_key(window, Qt.Key.Key_Equal, text="=")
+    assert window.current_speed == 1.0
+
+    send_key(window, Qt.Key.Key_Down)
+    assert window.volume_slider.value() == 95
+
+    send_key(window, Qt.Key.Key_Up)
+    assert window.volume_slider.value() == 100
+
+    send_key(window, Qt.Key.Key_Left)
+    send_key(window, Qt.Key.Key_Right)
+    assert video.seek_relative_calls == [-15, 15]
+
+    send_key(window, Qt.Key.Key_PageUp)
+    assert window.current_index == 0
+    assert window.playlist.currentRow() == 0
+
+    send_key(window, Qt.Key.Key_PageDown)
+    assert window.current_index == 1
+    assert window.playlist.currentRow() == 1
+    assert controller.progress_calls == [(1, 30, 1.0), (0, 30, 1.0)]
+
+
+def test_player_window_escape_shortcut_returns_to_main_when_not_fullscreen(qtbot) -> None:
+    emitted = {"count": 0}
+    config = AppConfig(last_active_window="player")
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+    pauses = {"count": 0}
+
+    class FakeVideo:
+        def pause(self) -> None:
+            pauses["count"] += 1
+
+    window.video = FakeVideo()
+    window.session = object()
+    window.closed_to_main.connect(lambda: emitted.__setitem__("count", emitted["count"] + 1))
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+
+    send_key(window, Qt.Key.Key_Escape)
+
+    assert window.isHidden() is True
+    assert emitted["count"] == 1
+    assert pauses["count"] == 1
+    assert config.last_active_window == "main"
