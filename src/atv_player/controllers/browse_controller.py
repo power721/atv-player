@@ -7,7 +7,7 @@ from atv_player.models import OpenPlayerRequest, PlayItem, VodItem
 
 def encode_vod_path(path: str) -> str:
     normalized = path or "/"
-    return f"1${quote(normalized)}$1"
+    return f"1${quote(normalized, safe='')}$1"
 
 
 def _map_play_item(payload: dict, index: int) -> PlayItem:

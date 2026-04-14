@@ -1,4 +1,4 @@
-from atv_player.controllers.browse_controller import BrowseController, filter_search_results
+from atv_player.controllers.browse_controller import BrowseController, encode_vod_path, filter_search_results
 from atv_player.models import VodItem
 
 
@@ -71,3 +71,7 @@ def test_build_request_from_detail_maps_playlist_items() -> None:
     assert request.vod.vod_id == "detail-1"
     assert [item.title for item in request.playlist] == ["Episode 1", "Episode 2"]
     assert request.clicked_index == 0
+
+
+def test_encode_vod_path_encodes_root_slash() -> None:
+    assert encode_vod_path("/") == "1$%2F$1"

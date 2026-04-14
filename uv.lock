@@ -35,7 +35,7 @@ dev = [
 requires-dist = [
     { name = "httpx", specifier = ">=0.28" },
     { name = "mpv", specifier = ">=1.0.6" },
-    { name = "pyside6", specifier = ">=6.8" },
+    { name = "pyside6", specifier = ">=6.11.0" },
 ]
 
 [package.metadata.requires-dev]

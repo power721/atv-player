@@ -60,3 +60,32 @@ def test_history_controller_deletes_one_or_many() -> None:
     assert api.deleted_one == [9]
     assert api.deleted_many == [[9, 10]]
     assert api.cleared is True
+
+
+def test_history_controller_tolerates_missing_optional_fields() -> None:
+    class MissingFieldApiClient(FakeApiClient):
+        def list_history(self, page: int, size: int) -> dict:
+            return {
+                "content": [
+                    {
+                        "id": 10,
+                        "key": "movie-2",
+                        "vodName": "Movie 2",
+                        "vodRemarks": "Episode 1",
+                        "episode": 0,
+                        "position": 3000,
+                        "createTime": 999,
+                    }
+                ],
+                "totalElements": 1,
+            }
+
+    controller = HistoryController(MissingFieldApiClient())
+
+    records, total = controller.load_page(page=1, size=20)
+
+    assert total == 1
+    assert records[0].id == 10
+    assert records[0].vod_pic == ""
+    assert records[0].episode_url == ""
+    assert records[0].speed == 1.0
