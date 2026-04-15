@@ -22,6 +22,7 @@ class BuildTarget:
     archive_ext: str
     data_separator: str
     windowed: bool
+    onefile: bool
 
 
 def normalize_target_platform(value: str | None) -> str:
@@ -54,10 +55,28 @@ def normalize_arch(value: str | None = None) -> str:
 def build_target(value: str | None) -> BuildTarget:
     platform_id = normalize_target_platform(value)
     if platform_id == "linux":
-        return BuildTarget(platform_id="linux", archive_ext="tar.gz", data_separator=":", windowed=False)
+        return BuildTarget(
+            platform_id="linux",
+            archive_ext="tar.gz",
+            data_separator=":",
+            windowed=False,
+            onefile=False,
+        )
     if platform_id == "macos":
-        return BuildTarget(platform_id="macos", archive_ext="zip", data_separator=":", windowed=True)
-    return BuildTarget(platform_id="windows", archive_ext="zip", data_separator=";", windowed=True)
+        return BuildTarget(
+            platform_id="macos",
+            archive_ext="zip",
+            data_separator=":",
+            windowed=True,
+            onefile=False,
+        )
+    return BuildTarget(
+        platform_id="windows",
+        archive_ext="exe",
+        data_separator=";",
+        windowed=True,
+        onefile=True,
+    )
 
 
 def build_archive_name(target_platform: str, arch: str | None = None) -> str:
@@ -118,7 +137,7 @@ def build_pyinstaller_command(target_platform: str) -> list[str]:
         "PyInstaller",
         "--noconfirm",
         "--clean",
-        "--onedir",
+        "--onefile" if target.onefile else "--onedir",
         "--name",
         APP_NAME,
         "--paths",
@@ -138,6 +157,8 @@ def bundle_path_for_target(target_platform: str) -> Path:
     target = build_target(target_platform)
     if target.platform_id == "macos":
         return DIST_DIR / f"{APP_NAME}.app"
+    if target.platform_id == "windows":
+        return DIST_DIR / f"{APP_NAME}.exe"
     return DIST_DIR / APP_NAME
 
 

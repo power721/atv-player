@@ -103,7 +103,7 @@ jobs:
           if (!(Test-Path $env:BUNDLE_PATH)) {
             throw "Missing bundle path: $env:BUNDLE_PATH"
           }
-          Compress-Archive -Path "$env:BUNDLE_PATH\*" -DestinationPath "dist\$env:ARCHIVE_NAME" -Force
+          Copy-Item $env:BUNDLE_PATH "dist\$env:ARCHIVE_NAME" -Force
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -129,7 +129,7 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release-assets/ \;
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.exe" \) -exec cp {} release-assets/ \;
           ls -la release-assets
 
       - name: Create GitHub Release

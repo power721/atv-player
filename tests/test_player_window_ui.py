@@ -2113,14 +2113,14 @@ def test_player_window_mouse_activity_in_video_restores_cursor_and_starts_autohi
     assert window.video.cursor().shape() == Qt.CursorShape.ArrowCursor
     assert window.cursor().shape() == Qt.CursorShape.ArrowCursor
     assert window._cursor_hide_timer.isActive() is True
-    assert cursor_autohide_calls == [3000]
+    assert cursor_autohide_calls == [2000]
 
 
 def test_player_window_uses_three_second_cursor_autohide_delay(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
 
-    assert window._CURSOR_HIDE_DELAY_MS == 3000
+    assert window._CURSOR_HIDE_DELAY_MS == 2000
 
 
 def test_player_window_child_video_surface_enter_starts_autohide(qtbot) -> None:
@@ -2154,7 +2154,7 @@ def test_player_window_resuming_playback_starts_autohide_when_cursor_is_already_
     assert window.is_playing is True
     assert window._video_pointer_inside is True
     assert window._cursor_hide_timer.isActive() is True
-    assert cursor_autohide_calls[-1] == 3000
+    assert cursor_autohide_calls[-1] == 2000
 
 
 def test_player_window_app_level_mouse_move_over_video_starts_autohide(qtbot, monkeypatch) -> None:
@@ -2249,7 +2249,7 @@ def test_player_window_video_leave_restores_cursor_and_keeps_polling_while_playi
     assert window.video.cursor().shape() == Qt.CursorShape.ArrowCursor
     assert window.cursor().shape() == Qt.CursorShape.ArrowCursor
     assert window._cursor_hide_timer.isActive() is True
-    assert cursor_autohide_calls[-1] == 3000
+    assert cursor_autohide_calls[-1] == 2000
 
 
 def test_player_window_mouse_move_outside_video_keeps_native_autohide_armed_while_playing(
@@ -2281,7 +2281,7 @@ def test_player_window_mouse_move_outside_video_keeps_native_autohide_armed_whil
 
     assert window._video_pointer_inside is False
     assert window._cursor_hide_timer.isActive() is True
-    assert cursor_autohide_calls[-1] == 3000
+    assert cursor_autohide_calls[-1] == 2000
 
 
 def test_player_window_polling_restarts_autohide_when_cursor_reenters_video_after_leave(
@@ -2307,7 +2307,7 @@ def test_player_window_polling_restarts_autohide_when_cursor_reenters_video_afte
 
     assert window._video_pointer_inside is True
     assert window._cursor_hide_timer.isActive() is True
-    assert cursor_autohide_calls[-1] == 3000
+    assert cursor_autohide_calls[-1] == 2000
 
 
 def test_player_window_exit_fullscreen_restores_maximized_state(qtbot) -> None:

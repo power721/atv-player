@@ -19,7 +19,17 @@ def test_normalize_target_platform_maps_runtime_names(monkeypatch) -> None:
 def test_build_archive_name_uses_normalized_architecture() -> None:
     assert build.build_archive_name("linux", "x86_64") == "atv-player-linux-x64.tar.gz"
     assert build.build_archive_name("Darwin", "aarch64") == "atv-player-macos-arm64.zip"
-    assert build.build_archive_name("windows", "AMD64") == "atv-player-windows-x64.zip"
+    assert build.build_archive_name("windows", "AMD64") == "atv-player-windows-x64.exe"
+
+
+def test_build_target_windows_uses_onefile_mode() -> None:
+    target = build.build_target("windows")
+
+    assert target.platform_id == "windows"
+    assert target.archive_ext == "exe"
+    assert target.data_separator == ";"
+    assert target.windowed is True
+    assert target.onefile is True
 
 
 def test_data_mapping_uses_platform_specific_separator() -> None:
@@ -63,6 +73,7 @@ def test_build_pyinstaller_command_collects_icons_and_libmpv(monkeypatch, tmp_pa
     assert "--noconfirm" in command
     assert "--clean" in command
     assert "--onedir" in command
+    assert "--onefile" not in command
     assert "--paths" in command
     assert "src" in command
     assert "--windowed" not in command
@@ -73,7 +84,7 @@ def test_build_pyinstaller_command_collects_icons_and_libmpv(monkeypatch, tmp_pa
     assert command[-1] == str(build.ENTRYPOINT)
 
 
-def test_build_pyinstaller_command_windows_uses_windowed_mode(monkeypatch, tmp_path) -> None:
+def test_build_pyinstaller_command_windows_uses_onefile_mode(monkeypatch, tmp_path) -> None:
     dll_path = tmp_path / "libmpv-2.dll"
     dll_path.write_bytes(b"dll")
     monkeypatch.setattr(build, "find_libmpv", lambda target_platform: [(dll_path, ".")])
@@ -81,13 +92,15 @@ def test_build_pyinstaller_command_windows_uses_windowed_mode(monkeypatch, tmp_p
     command = build.build_pyinstaller_command("windows")
 
     assert "--windowed" in command
+    assert "--onefile" in command
+    assert "--onedir" not in command
     assert f"{build.ICONS_DIR};atv_player/icons" in command
 
 
 def test_bundle_path_for_target_matches_platform_output() -> None:
     assert build.bundle_path_for_target("linux") == build.DIST_DIR / "atv-player"
     assert build.bundle_path_for_target("macos") == build.DIST_DIR / "atv-player.app"
-    assert build.bundle_path_for_target("windows") == build.DIST_DIR / "atv-player"
+    assert build.bundle_path_for_target("windows") == build.DIST_DIR / "atv-player.exe"
 
 
 def test_unknown_platform_is_rejected() -> None:
@@ -112,3 +125,12 @@ def test_github_workflow_releases_only_for_version_tags() -> None:
     assert "- 'v*'" in workflow
     assert "if: startsWith(github.ref, 'refs/tags/v')" in workflow
     assert "softprops/action-gh-release@v2" in workflow
+
+
+def test_github_workflow_uploads_windows_exe_and_releases_it() -> None:
+    workflow = Path(".github/workflows/build.yml").read_text(encoding="utf-8")
+
+    assert "Copy-Item $env:BUNDLE_PATH \"dist\\$env:ARCHIVE_NAME\" -Force" in workflow
+    assert "path: dist/${{ env.ARCHIVE_NAME }}" in workflow
+    assert '-name "*.exe"' in workflow
+    assert 'Compress-Archive -Path "$env:BUNDLE_PATH\\*"' not in workflow
