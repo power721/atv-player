@@ -2558,6 +2558,30 @@ def test_player_window_pausing_playback_restores_application_title(qtbot) -> Non
     assert window.windowTitle() == "alist-tvbox 播放器"
 
 
+def test_player_window_opening_session_paused_keeps_application_title(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(make_player_session(start_index=1), start_paused=True)
+
+    assert window.is_playing is False
+    assert window.windowTitle() == "alist-tvbox 播放器"
+
+
+def test_player_window_play_next_updates_window_title_to_new_item(qtbot) -> None:
+    controller = RecordingPlayerController()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session(start_index=0))
+
+    window.play_next()
+
+    assert window.current_index == 1
+    assert window.windowTitle() == "Movie - Episode 2"
+
+
 def test_player_window_escape_shortcut_returns_to_main_when_not_fullscreen(qtbot) -> None:
     emitted = {"count": 0}
     config = AppConfig(last_active_window="player")
@@ -2598,3 +2622,15 @@ def test_player_window_return_to_main_persists_paused_restore_state(qtbot) -> No
     window._return_to_main()
 
     assert config.last_player_paused is True
+
+
+def test_player_window_return_to_main_restores_application_title(qtbot) -> None:
+    config = AppConfig(last_active_window="player")
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session(start_index=0))
+
+    window._return_to_main()
+
+    assert window.windowTitle() == "alist-tvbox 播放器"

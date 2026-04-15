@@ -599,9 +599,11 @@ class PlayerWindow(QWidget):
         try:
             self.playlist.setCurrentRow(self.current_index)
             self._load_current_item(start_position_seconds=start_position_seconds, pause=pause)
+            self._refresh_window_title()
         except Exception:
             self.current_index = previous_index
             self.playlist.setCurrentRow(previous_index)
+            self._refresh_window_title()
             raise
 
     def _clear_poster(self) -> None:
@@ -1210,6 +1212,7 @@ class PlayerWindow(QWidget):
         except Exception:
             pass
         self.is_playing = False
+        self._refresh_window_title()
         self._restore_video_cursor()
         self._set_last_player_paused(True)
         self._update_play_button_icon()
