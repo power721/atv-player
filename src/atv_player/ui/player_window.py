@@ -152,7 +152,13 @@ class PlayerWindow(QWidget):
         self.progress.setFixedHeight(24)
         self.volume_slider = ClickableSlider(Qt.Orientation.Horizontal)
         self.volume_slider.setRange(0, 100)
-        self.volume_slider.setValue(100)
+        initial_volume = 100
+        if self.config is not None:
+            initial_volume = max(
+                self.volume_slider.minimum(),
+                min(getattr(self.config, "player_volume", 100), self.volume_slider.maximum()),
+            )
+        self.volume_slider.setValue(initial_volume)
         self.volume_slider.setMaximumWidth(180)
         self.poster_label = QLabel()
         self.poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -741,6 +747,10 @@ class PlayerWindow(QWidget):
             self.video.set_volume(value)
         except Exception as exc:
             self._append_log(f"音量设置失败: {exc}")
+            return
+        if self.config is not None and self.config.player_volume != value:
+            self.config.player_volume = value
+            self._save_config()
 
     def _step_volume(self, delta: int) -> None:
         value = max(self.volume_slider.minimum(), min(self.volume_slider.value() + delta, self.volume_slider.maximum()))

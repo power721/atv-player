@@ -50,6 +50,23 @@ def test_main_window_logout_button_emits_logout_requested(qtbot) -> None:
         window.logout_button.click()
 
 
+def test_main_window_passes_config_and_save_callback_to_browse_page(qtbot) -> None:
+    saved = {"count": 0}
+    config = AppConfig()
+    window = MainWindow(
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("count", saved["count"] + 1),
+    )
+
+    qtbot.addWidget(window)
+
+    assert window.browse_page.config is config
+    assert callable(window.browse_page._save_config)
+
+
 def test_decide_start_view_prefers_login_without_token() -> None:
     assert decide_start_view(AppConfig(token="")) == "login"
 

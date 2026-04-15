@@ -30,9 +30,11 @@ class SettingsRepository:
                     last_playback_vod_id TEXT NOT NULL DEFAULT '',
                     last_playback_clicked_vod_id TEXT NOT NULL DEFAULT '',
                     last_player_paused INTEGER NOT NULL DEFAULT 0,
+                    player_volume INTEGER NOT NULL DEFAULT 100,
                     main_window_geometry BLOB,
                     player_window_geometry BLOB,
-                    player_main_splitter_state BLOB
+                    player_main_splitter_state BLOB,
+                    browse_content_splitter_state BLOB
                 )
                 """
             )
@@ -68,9 +70,17 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN last_player_paused INTEGER NOT NULL DEFAULT 0"
                 )
+            if "player_volume" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN player_volume INTEGER NOT NULL DEFAULT 100"
+                )
             if "player_main_splitter_state" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN player_main_splitter_state BLOB"
+                )
+            if "browse_content_splitter_state" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN browse_content_splitter_state BLOB"
                 )
             conn.execute(
                 """
@@ -87,11 +97,13 @@ class SettingsRepository:
                     last_playback_vod_id,
                     last_playback_clicked_vod_id,
                     last_player_paused,
+                    player_volume,
                     main_window_geometry,
                     player_window_geometry,
-                    player_main_splitter_state
+                    player_main_splitter_state,
+                    browse_content_splitter_state
                 )
-                VALUES (1, 'http://127.0.0.1:4567', '', '', '', '/', 'main', '', '', '', '', 0, NULL, NULL, NULL)
+                VALUES (1, 'http://127.0.0.1:4567', '', '', '', '/', 'main', '', '', '', '', 0, 100, NULL, NULL, NULL, NULL)
                 ON CONFLICT(id) DO NOTHING
                 """
             )
@@ -112,9 +124,11 @@ class SettingsRepository:
                     last_playback_vod_id,
                     last_playback_clicked_vod_id,
                     last_player_paused,
+                    player_volume,
                     main_window_geometry,
                     player_window_geometry,
-                    player_main_splitter_state
+                    player_main_splitter_state,
+                    browse_content_splitter_state
                 FROM app_config
                 WHERE id = 1
                 """
@@ -141,9 +155,11 @@ class SettingsRepository:
                     last_playback_vod_id = ?,
                     last_playback_clicked_vod_id = ?,
                     last_player_paused = ?,
+                    player_volume = ?,
                     main_window_geometry = ?,
                     player_window_geometry = ?,
-                    player_main_splitter_state = ?
+                    player_main_splitter_state = ?,
+                    browse_content_splitter_state = ?
                 WHERE id = 1
                 """,
                 (
@@ -158,9 +174,11 @@ class SettingsRepository:
                     config.last_playback_vod_id,
                     config.last_playback_clicked_vod_id,
                     int(config.last_player_paused),
+                    config.player_volume,
                     config.main_window_geometry,
                     config.player_window_geometry,
                     config.player_main_splitter_state,
+                    config.browse_content_splitter_state,
                 ),
             )
 

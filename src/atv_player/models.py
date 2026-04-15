@@ -14,9 +14,11 @@ class AppConfig:
     last_playback_vod_id: str = ""
     last_playback_clicked_vod_id: str = ""
     last_player_paused: bool = False
+    player_volume: int = 100
     main_window_geometry: bytes | None = None
     player_window_geometry: bytes | None = None
     player_main_splitter_state: bytes | None = None
+    browse_content_splitter_state: bytes | None = None
 
 
 @dataclass(slots=True)
@@ -33,6 +35,7 @@ class VodItem:
     vod_id: str
     vod_name: str
     path: str = ""
+    share_type: str = ""
     vod_pic: str = ""
     vod_tag: str = ""
     vod_time: str = ""

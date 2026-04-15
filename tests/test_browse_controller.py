@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from atv_player.controllers.browse_controller import BrowseController, build_vod_list_path, filter_search_results
 from atv_player.models import VodItem
 
@@ -6,6 +8,8 @@ class FakeApiClient:
     def __init__(self) -> None:
         self.resolved_links: list[str] = []
         self.list_vod_calls: list[tuple[str, int, int]] = []
+        self.search_keywords: list[str] = []
+        self.search_payload: list[dict] = []
         self.detail_payload = {
             "list": [
                 {
@@ -31,16 +35,60 @@ class FakeApiClient:
         self.list_vod_calls.append((path_id, page, size))
         return {"list": [], "total": 0}
 
+    def telegram_search(self, keyword: str) -> list[dict]:
+        self.search_keywords.append(keyword)
+        return self.search_payload
+
 
 def test_filter_search_results_by_drive_type() -> None:
     items = [
-        VodItem(vod_id="1", vod_name="One", type_name="阿里云盘"),
-        VodItem(vod_id="2", vod_name="Two", type_name="夸克网盘"),
+        VodItem(vod_id="1", vod_name="One", type_name="阿里", share_type="0"),
+        VodItem(vod_id="2", vod_name="Two", type_name="夸克", share_type="5"),
     ]
 
-    filtered = filter_search_results(items, "阿里")
+    filtered = filter_search_results(items, "0")
 
     assert [item.vod_id for item in filtered] == ["1"]
+
+
+def test_search_maps_share_type_id_to_pure_name() -> None:
+    api = FakeApiClient()
+    api.search_payload = [
+        {
+            "id": "s1",
+            "name": "Movie",
+            "time": "2026-04-15",
+            "type": "0",
+            "channel": "TG",
+            "link": "https://t.me/share",
+        }
+    ]
+    controller = BrowseController(api)
+
+    results = controller.search("")
+
+    assert api.search_keywords == [""]
+    assert results[0].type_name == "阿里"
+    assert results[0].share_type == "0"
+
+
+def test_search_formats_timestamp_to_local_time() -> None:
+    api = FakeApiClient()
+    api.search_payload = [
+        {
+            "id": "s1",
+            "name": "Movie",
+            "time": "1713168000000",
+            "type": "0",
+            "channel": "TG",
+            "link": "https://t.me/share",
+        }
+    ]
+    controller = BrowseController(api)
+
+    results = controller.search("")
+
+    assert results[0].vod_time == datetime.fromtimestamp(1713168000000 / 1000).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def test_build_playlist_from_folder_starts_at_clicked_video() -> None:

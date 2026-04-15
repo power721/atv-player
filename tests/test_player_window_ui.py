@@ -1134,6 +1134,37 @@ def test_player_window_refresh_button_replays_current_item(qtbot) -> None:
     assert window.video.set_volume_calls == [35]
 
 
+def test_player_window_restores_saved_volume_for_new_session(qtbot) -> None:
+    config = AppConfig(player_volume=35)
+    window = PlayerWindow(FakePlayerController(), config=config)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    assert window.volume_slider.value() == 35
+
+    window.open_session(make_player_session(start_index=0))
+
+    assert window.video.set_volume_calls[-1] == 35
+
+
+def test_player_window_volume_changes_persist_to_config(qtbot) -> None:
+    config = AppConfig(player_volume=35)
+    saved = {"count": 0}
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("count", saved["count"] + 1),
+    )
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.volume_slider.setValue(60)
+
+    assert config.player_volume == 60
+    assert window.video.set_volume_calls == [60]
+    assert saved["count"] >= 1
+
+
 def test_player_window_advances_to_next_item_when_playback_finishes(qtbot) -> None:
     controller = RecordingPlayerController()
     video = RecordingVideo()

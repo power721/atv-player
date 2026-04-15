@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from atv_player.models import OpenPlayerRequest, PlayItem, VodItem
+from atv_player.share_types import get_share_type_name
+from atv_player.time_utils import format_local_datetime
 
 
 def build_vod_list_path(path: str) -> str:
@@ -48,7 +50,11 @@ def _map_vod_item(payload: dict) -> VodItem:
 def filter_search_results(results: list[VodItem], drive_type: str) -> list[VodItem]:
     if not drive_type:
         return list(results)
-    return [item for item in results if drive_type in item.type_name]
+    return [
+        item
+        for item in results
+        if item.share_type == drive_type or drive_type in item.type_name
+    ]
 
 
 class BrowseController:
@@ -66,9 +72,10 @@ class BrowseController:
             VodItem(
                 vod_id=str(item.get("id", "")),
                 vod_name=str(item.get("name", "")),
+                share_type=str(item.get("type", "")),
                 vod_tag="folder",
-                vod_time=str(item.get("time", "")),
-                type_name=str(item.get("type", "")),
+                vod_time=format_local_datetime(str(item.get("time", ""))),
+                type_name=get_share_type_name(str(item.get("type", ""))) or str(item.get("type", "")),
                 vod_play_from=str(item.get("channel", "")),
                 vod_play_url=str(item.get("link", "")),
             )

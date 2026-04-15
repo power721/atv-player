@@ -26,14 +26,14 @@ class MainWindow(QMainWindow):
         self._save_config = save_config or (lambda: None)
         self.nav_tabs = QTabWidget()
         self.logout_button = QPushButton("退出登录")
-        self.browse_page = BrowsePage(browse_controller)
+        self.browse_page = BrowsePage(browse_controller, config=config, save_config=self._save_config)
         self.history_page = HistoryPage(history_controller)
         self.browse_controller = browse_controller
         self.player_controller = player_controller
         self.player_window: PlayerWindow | None = None
         self.config = config
 
-        self.nav_tabs.addTab(self.browse_page, "浏览")
+        self.nav_tabs.addTab(self.browse_page, "文件浏览")
         self.nav_tabs.addTab(self.history_page, "播放记录")
         self.logout_button.clicked.connect(self.logout_requested.emit)
         header_layout = QHBoxLayout()
