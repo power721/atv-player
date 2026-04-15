@@ -74,6 +74,8 @@ class PlayerController:
         opening_seconds: int,
         ending_seconds: int,
     ) -> None:
+        if not (0 <= current_index < len(session.playlist)):
+            return
         current_item = session.playlist[current_index]
         self._api_client.save_history(
             {
