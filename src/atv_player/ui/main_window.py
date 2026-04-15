@@ -150,15 +150,18 @@ class MainWindow(QMainWindow):
 
     def restore_last_player(self):
         mode = self.config.last_playback_mode
-        if mode == "detail" and self.config.last_playback_vod_id:
-            request = self.browse_controller.build_request_from_detail(self.config.last_playback_vod_id)
-        elif mode == "folder" and self.config.last_playback_path and self.config.last_playback_clicked_vod_id:
-            items, _ = self.browse_controller.load_folder(self.config.last_playback_path)
-            clicked = next((item for item in items if item.vod_id == self.config.last_playback_clicked_vod_id), None)
-            if clicked is None:
+        try:
+            if mode == "detail" and self.config.last_playback_vod_id:
+                request = self.browse_controller.build_request_from_detail(self.config.last_playback_vod_id)
+            elif mode == "folder" and self.config.last_playback_path and self.config.last_playback_clicked_vod_id:
+                items, _ = self.browse_controller.load_folder(self.config.last_playback_path)
+                clicked = next((item for item in items if item.vod_id == self.config.last_playback_clicked_vod_id), None)
+                if clicked is None:
+                    return None
+                request = self.browse_controller.build_request_from_folder_item(clicked, items)
+            else:
                 return None
-            request = self.browse_controller.build_request_from_folder_item(clicked, items)
-        else:
+        except Exception:
             return None
         self.open_player(request, restore_paused_state=True)
         return self.player_window
