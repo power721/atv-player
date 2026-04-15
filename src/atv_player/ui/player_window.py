@@ -813,6 +813,7 @@ class PlayerWindow(QWidget):
         self.report_progress()
         self.is_playing = True
         self._update_play_button_icon()
+        self._refresh_window_title()
         self.playlist.setCurrentRow(self.current_index)
         self._load_current_item(start_position_seconds=0)
 

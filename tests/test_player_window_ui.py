@@ -1902,6 +1902,21 @@ def test_player_window_refresh_button_replays_current_item(qtbot) -> None:
     assert window.video.set_volume_calls == [35]
 
 
+def test_player_window_refresh_button_restores_active_playback_title(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session(start_index=1))
+
+    window.toggle_playback()
+
+    assert window.windowTitle() == "alist-tvbox 播放器"
+
+    window.refresh_button.click()
+
+    assert window.windowTitle() == "Movie - Episode 2"
+
+
 def test_player_window_restores_saved_volume_for_new_session(qtbot) -> None:
     config = AppConfig(player_volume=35)
     window = PlayerWindow(FakePlayerController(), config=config)
