@@ -717,3 +717,76 @@ def test_main_window_restore_last_player_rebuilds_folder_request_with_detail_res
 
     assert restored is window.player_window
     assert window.player_window.opened_session["detail_resolver"] is not None
+
+
+def test_main_window_restore_last_player_searches_later_folder_pages(qtbot) -> None:
+    class RestoreBrowseController:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, int, int]] = []
+            self.request_calls: list[str] = []
+
+        def load_folder(self, path: str, page: int = 1, size: int = 50):
+            self.load_calls.append((path, page, size))
+            if page == 1:
+                return [VodItem(vod_id="page-1", vod_name="Episode 1", path="/TV/Ep1.mkv", type=2)], 51
+            if page == 2:
+                return [VodItem(vod_id="page-2-target", vod_name="Episode 51", path="/TV/Ep51.mkv", type=2)], 51
+            return [], 51
+
+        def build_request_from_folder_item(self, clicked, items):
+            self.request_calls.append(clicked.vod_id)
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=clicked.vod_id, vod_name=clicked.vod_name),
+                playlist=[PlayItem(title=clicked.vod_name, url="", vod_id=clicked.vod_id)],
+                clicked_index=0,
+                source_mode="folder",
+                source_path="/TV",
+                source_vod_id=clicked.vod_id,
+                source_clicked_vod_id=clicked.vod_id,
+            )
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    config = AppConfig(
+        last_active_window="player",
+        last_playback_mode="folder",
+        last_playback_path="/TV",
+        last_playback_clicked_vod_id="page-2-target",
+        last_player_paused=True,
+    )
+    controller = RestoreBrowseController()
+    window = MainWindow(
+        browse_controller=controller,
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    controller.load_calls.clear()
+
+    original = main_window_module.PlayerWindow
+    main_window_module.PlayerWindow = RecordingPlayerWindow
+    try:
+        restored = window.restore_last_player()
+    finally:
+        main_window_module.PlayerWindow = original
+
+    assert restored is window.player_window
+    assert controller.load_calls == [("/TV", 1, 50), ("/TV", 2, 50)]
+    assert controller.request_calls == ["page-2-target"]
+    assert window.player_window.opened[0][1] is True

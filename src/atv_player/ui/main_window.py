@@ -154,8 +154,10 @@ class MainWindow(QMainWindow):
             if mode == "detail" and self.config.last_playback_vod_id:
                 request = self.browse_controller.build_request_from_detail(self.config.last_playback_vod_id)
             elif mode == "folder" and self.config.last_playback_path and self.config.last_playback_clicked_vod_id:
-                items, _ = self.browse_controller.load_folder(self.config.last_playback_path)
-                clicked = next((item for item in items if item.vod_id == self.config.last_playback_clicked_vod_id), None)
+                clicked, items = self._find_restorable_folder_item(
+                    self.config.last_playback_path,
+                    self.config.last_playback_clicked_vod_id,
+                )
                 if clicked is None:
                     return None
                 request = self.browse_controller.build_request_from_folder_item(clicked, items)
@@ -165,6 +167,23 @@ class MainWindow(QMainWindow):
             return None
         self.open_player(request, restore_paused_state=True)
         return self.player_window
+
+    def _find_restorable_folder_item(
+        self,
+        path: str,
+        clicked_vod_id: str,
+        page_size: int = 50,
+    ):
+        page = 1
+        total_pages = 1
+        while page <= total_pages:
+            items, total = self.browse_controller.load_folder(path, page=page, size=page_size)
+            clicked = next((item for item in items if item.vod_id == clicked_vod_id), None)
+            if clicked is not None:
+                return clicked, items
+            total_pages = max(1, (total + page_size - 1) // page_size)
+            page += 1
+        return None, []
 
     def show_error(self, message: str) -> None:
         QMessageBox.critical(self, "错误", message)
