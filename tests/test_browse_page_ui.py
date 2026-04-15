@@ -378,3 +378,132 @@ def test_browse_page_refresh_reuses_current_page_state(qtbot) -> None:
     page.reload()
 
     assert controller.load_calls == [("/电影", 2, 30)]
+
+
+def test_browse_page_sorts_current_rows_by_name_from_header_click(qtbot) -> None:
+    page = BrowsePage(FakeBrowseController())
+    qtbot.addWidget(page)
+
+    page._populate_table(
+        [
+            type("Item", (), {
+                "type": 2,
+                "vod_tag": "file",
+                "vod_name": "Zulu",
+                "vod_time": "2026-04-14 12:00",
+                "vod_remarks": "2 GB",
+                "dbid": 2,
+            })(),
+            type("Item", (), {
+                "type": 2,
+                "vod_tag": "file",
+                "vod_name": "Alpha",
+                "vod_time": "2026-04-13 12:00",
+                "vod_remarks": "10 GB",
+                "dbid": 1,
+            })(),
+        ]
+    )
+
+    page.table.sortItems(1)
+
+    assert [page.table.item(row, 1).text() for row in range(page.table.rowCount())] == ["Alpha", "Zulu"]
+
+    page.table.sortItems(1, Qt.SortOrder.DescendingOrder)
+
+    assert [page.table.item(row, 1).text() for row in range(page.table.rowCount())] == ["Zulu", "Alpha"]
+
+
+def test_browse_page_sorts_size_by_numeric_value_not_text(qtbot) -> None:
+    page = BrowsePage(FakeBrowseController())
+    qtbot.addWidget(page)
+
+    page._populate_table(
+        [
+            type("Item", (), {
+                "type": 2,
+                "vod_tag": "file",
+                "vod_name": "Ten",
+                "vod_time": "2026-04-14",
+                "vod_remarks": "10 GB",
+                "dbid": 10,
+            })(),
+            type("Item", (), {
+                "type": 2,
+                "vod_tag": "file",
+                "vod_name": "Two",
+                "vod_time": "2026-04-14",
+                "vod_remarks": "2 GB",
+                "dbid": 20,
+            })(),
+        ]
+    )
+
+    page.table.sortItems(2)
+
+    assert [page.table.item(row, 1).text() for row in range(page.table.rowCount())] == ["Two", "Ten"]
+
+
+def test_browse_page_sorting_does_not_reload_folder_data(qtbot) -> None:
+    controller = FakeBrowseController()
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+
+    page._populate_table(
+        [
+            type("Item", (), {
+                "type": 2,
+                "vod_tag": "file",
+                "vod_name": "Beta",
+                "vod_time": "2026-04-14",
+                "vod_remarks": "1 GB",
+                "dbid": 0,
+            })(),
+            type("Item", (), {
+                "type": 2,
+                "vod_tag": "file",
+                "vod_name": "Alpha",
+                "vod_time": "2026-04-14",
+                "vod_remarks": "2 GB",
+                "dbid": 0,
+            })(),
+        ]
+    )
+
+    controller.load_calls.clear()
+    page.table.sortItems(1)
+
+    assert controller.load_calls == []
+
+
+def test_browse_page_sorts_rows_with_empty_sortable_values_without_crashing(qtbot) -> None:
+    page = BrowsePage(FakeBrowseController())
+    qtbot.addWidget(page)
+
+    page._populate_table(
+        [
+            type("Item", (), {
+                "type": 1,
+                "vod_tag": "folder",
+                "vod_name": "Folder",
+                "vod_time": "",
+                "vod_remarks": "8.6",
+                "dbid": 0,
+            })(),
+            type("Item", (), {
+                "type": 2,
+                "vod_tag": "file",
+                "vod_name": "Movie",
+                "vod_time": "2026-04-14 08:00",
+                "vod_remarks": "1.4 GB",
+                "dbid": 123456,
+            })(),
+        ]
+    )
+
+    page.table.sortItems(2)
+    page.table.sortItems(4)
+    page.table.sortItems(5)
+
+    assert page.table.rowCount() == 2
+    assert {page.table.item(row, 1).text() for row in range(page.table.rowCount())} == {"Folder", "Movie"}
