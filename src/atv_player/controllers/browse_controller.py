@@ -126,6 +126,7 @@ class BrowseController:
     ) -> tuple[list[PlayItem], int]:
         playlist: list[PlayItem] = []
         start_index = 0
+        _matched = False
         for item in folder_items:
             if item.type != 2:
                 continue
@@ -139,8 +140,9 @@ class BrowseController:
                 vod_id=item.vod_id,
             )
             playlist.append(playlist_item)
-            if item.vod_id == clicked_vod_id:
+            if item.vod_id == clicked_vod_id and not _matched:
                 start_index = index
+                _matched = True
         return playlist, start_index
 
     def resolve_search_result(self, item: VodItem) -> str:
