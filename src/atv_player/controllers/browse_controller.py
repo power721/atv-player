@@ -160,6 +160,8 @@ class BrowseController:
         folder_items: list[VodItem],
     ) -> OpenPlayerRequest:
         playlist, clicked_index = self.build_playlist_from_folder(folder_items, clicked_item.vod_id)
+        if not playlist:
+            raise ValueError(f"没有可播放的项目: {clicked_item.vod_name}")
         clicked_playlist_item = playlist[clicked_index]
         resolved_vod = self._merge_vod_metadata(self.resolve_folder_play_item(clicked_playlist_item), clicked_item)
         resolved_vod.vod_id = clicked_item.vod_id
