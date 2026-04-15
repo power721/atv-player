@@ -1045,7 +1045,9 @@ class PlayerWindow(QWidget):
             self._subtitle_preference = SubtitlePreference(mode="off")
             self.video.apply_subtitle_mode("off")
             return
-        track = next(track for track in self._subtitle_tracks if track.id == track_id)
+        track = next((track for track in self._subtitle_tracks if track.id == track_id), None)
+        if track is None:
+            return
         self._remember_track_preference(track)
         self.video.apply_subtitle_mode("track", track_id=track_id)
 
@@ -1060,7 +1062,9 @@ class PlayerWindow(QWidget):
             self._audio_preference = AudioPreference()
             self.video.apply_audio_mode("auto")
             return
-        track = next(track for track in self._audio_tracks if track.id == track_id)
+        track = next((track for track in self._audio_tracks if track.id == track_id), None)
+        if track is None:
+            return
         self._remember_audio_track_preference(track)
         self.video.apply_audio_mode("track", track_id=track_id)
 
