@@ -151,6 +151,7 @@ class PlayerWindow(QWidget):
         self._last_cursor_activity_ms = 0
         self._poster_request_id = 0
         self._video_surface_ready = False
+        self._auto_advance_locked = False
         self._poster_load_signals = _PosterLoadSignals()
         self._poster_load_signals.loaded.connect(self._handle_poster_load_finished)
         self.setWindowTitle(self._default_window_title())
@@ -578,6 +579,7 @@ class PlayerWindow(QWidget):
         self._append_log(f"URL: {current_item.url}")
         effective_start_seconds = max(start_position_seconds, self.opening_spin.value())
         self.video.load(current_item.url, pause=pause, start_seconds=effective_start_seconds)
+        self._auto_advance_locked = False
         self.video.set_speed(self.current_speed)
         self.video.set_volume(self.volume_slider.value())
         self._refresh_subtitle_state()
@@ -1155,12 +1157,14 @@ class PlayerWindow(QWidget):
             self._video_surface_ready = True
             self.video_poster_overlay.hide()
         if (
-            self.session is not None
+            not self._auto_advance_locked
+            and self.session is not None
             and self.current_index + 1 < len(self.session.playlist)
             and duration > self.opening_spin.value() + self.ending_spin.value()
             and position < duration
             and position + self.ending_spin.value() >= duration
         ):
+            self._auto_advance_locked = True
             self.play_next()
             return
         self.progress.setMaximum(max(duration, 0))
