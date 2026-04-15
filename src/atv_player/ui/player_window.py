@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from atv_player.player.mpv_widget import MpvWidget, SubtitleTrack
+from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
 from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url
 
 
@@ -79,6 +79,15 @@ class _PosterLoadSignals(QObject):
 
 @dataclass(slots=True)
 class SubtitlePreference:
+    mode: str = "auto"
+    title: str = ""
+    lang: str = ""
+    is_default: bool = False
+    is_forced: bool = False
+
+
+@dataclass(slots=True)
+class AudioPreference:
     mode: str = "auto"
     title: str = ""
     lang: str = ""
@@ -153,6 +162,11 @@ class PlayerWindow(QWidget):
         self.subtitle_combo = QComboBox()
         self.subtitle_combo.addItem("自动选择", ("auto", None))
         self.subtitle_combo.setEnabled(False)
+        self._audio_tracks: list[AudioTrack] = []
+        self._audio_preference = AudioPreference()
+        self.audio_combo = QComboBox()
+        self.audio_combo.addItem("自动选择", ("auto", None))
+        self.audio_combo.setEnabled(False)
         self.opening_spin = self._create_skip_spinbox("片头 ")
         self.ending_spin = self._create_skip_spinbox("片尾 ")
 
@@ -244,6 +258,7 @@ class PlayerWindow(QWidget):
         control_group_layout.addWidget(self.fullscreen_button)
         control_group_layout.addWidget(self.speed_combo)
         control_group_layout.addWidget(self.subtitle_combo)
+        control_group_layout.addWidget(self.audio_combo)
         control_group_layout.addWidget(self.opening_spin)
         control_group_layout.addWidget(self.ending_spin)
         controls.addWidget(control_group, 0, Qt.AlignmentFlag.AlignCenter)
@@ -303,6 +318,7 @@ class PlayerWindow(QWidget):
         self.fullscreen_button.clicked.connect(self.toggle_fullscreen)
         self.speed_combo.currentTextChanged.connect(self._change_speed)
         self.subtitle_combo.currentIndexChanged.connect(self._change_subtitle_selection)
+        self.audio_combo.currentIndexChanged.connect(self._change_audio_selection)
         self.opening_spin.valueChanged.connect(self._change_opening_seconds)
         self.ending_spin.valueChanged.connect(self._change_ending_seconds)
         self.volume_slider.valueChanged.connect(self._change_volume)
@@ -312,6 +328,7 @@ class PlayerWindow(QWidget):
         self.video_widget.double_clicked.connect(self.toggle_fullscreen)
         self.video_widget.playback_finished.connect(self._handle_playback_finished)
         self.video_widget.subtitle_tracks_changed.connect(self._refresh_subtitle_state)
+        self.video_widget.audio_tracks_changed.connect(self._refresh_audio_state)
         self.progress.sliderPressed.connect(self._handle_slider_pressed)
         self.progress.sliderReleased.connect(self._seek_from_slider)
         self.progress.clicked_value.connect(self._seek_to_position)
@@ -490,6 +507,7 @@ class PlayerWindow(QWidget):
         self.playlist.setCurrentRow(self.current_index)
         self.progress.setValue(0)
         self._reset_subtitle_combo()
+        self._reset_audio_combo()
         try:
             self._play_item_at_index(self.current_index, start_position_seconds=session.start_position_seconds, pause=start_paused)
         except Exception as exc:
@@ -510,6 +528,7 @@ class PlayerWindow(QWidget):
         self.video.set_speed(self.current_speed)
         self.video.set_volume(self.volume_slider.value())
         self._refresh_subtitle_state()
+        self._refresh_audio_state()
 
     def _format_metadata_text(self, vod) -> str:
         rows = [
@@ -771,6 +790,14 @@ class PlayerWindow(QWidget):
         self.subtitle_combo.setEnabled(False)
         self.subtitle_combo.blockSignals(False)
 
+    def _reset_audio_combo(self) -> None:
+        self.audio_combo.blockSignals(True)
+        self.audio_combo.clear()
+        self.audio_combo.addItem("自动选择", ("auto", None))
+        self.audio_combo.setCurrentIndex(0)
+        self.audio_combo.setEnabled(False)
+        self.audio_combo.blockSignals(False)
+
     def _remember_track_preference(self, track: SubtitleTrack) -> None:
         self._subtitle_preference = SubtitlePreference(
             mode="track",
@@ -791,6 +818,17 @@ class PlayerWindow(QWidget):
         self.subtitle_combo.setEnabled(bool(tracks))
         self.subtitle_combo.setCurrentIndex(0)
         self.subtitle_combo.blockSignals(False)
+
+    def _populate_audio_combo(self, tracks: list[AudioTrack]) -> None:
+        self.audio_combo.blockSignals(True)
+        self.audio_combo.clear()
+        self.audio_combo.addItem("自动选择", ("auto", None))
+        if len(tracks) > 1:
+            for track in tracks:
+                self.audio_combo.addItem(track.label, ("track", track.id))
+        self.audio_combo.setEnabled(len(tracks) > 1)
+        self.audio_combo.setCurrentIndex(0)
+        self.audio_combo.blockSignals(False)
 
     def _apply_subtitle_preference(self) -> None:
         self.subtitle_combo.blockSignals(True)
@@ -861,6 +899,35 @@ class PlayerWindow(QWidget):
             self._reset_subtitle_combo()
             self._append_log(f"字幕切换失败: {exc}")
 
+    def _refresh_audio_state(self) -> None:
+        if not hasattr(self.video, "audio_tracks") or not hasattr(self.video, "apply_audio_mode"):
+            self._audio_tracks = []
+            self._audio_preference = AudioPreference()
+            self._reset_audio_combo()
+            return
+        try:
+            self._audio_tracks = self.video.audio_tracks()
+        except Exception as exc:
+            self._audio_tracks = []
+            self._audio_preference = AudioPreference()
+            self._reset_audio_combo()
+            self._append_log(f"音轨加载失败: {exc}")
+            return
+        self._populate_audio_combo(self._audio_tracks)
+        if not self._audio_tracks:
+            self._audio_preference = AudioPreference()
+            return
+        try:
+            self.audio_combo.blockSignals(True)
+            self.video.apply_audio_mode("auto")
+            self.audio_combo.setCurrentIndex(0)
+        except Exception as exc:
+            self._audio_preference = AudioPreference()
+            self._reset_audio_combo()
+            self._append_log(f"音轨切换失败: {exc}")
+        finally:
+            self.audio_combo.blockSignals(False)
+
     def _change_subtitle_selection(self, index: int) -> None:
         if index < 0:
             return
@@ -879,6 +946,27 @@ class PlayerWindow(QWidget):
         track = next(track for track in self._subtitle_tracks if track.id == track_id)
         self._remember_track_preference(track)
         self.video.apply_subtitle_mode("track", track_id=track_id)
+
+    def _change_audio_selection(self, index: int) -> None:
+        if index < 0:
+            return
+        item_data = self.audio_combo.itemData(index)
+        if item_data is None:
+            return
+        mode, track_id = item_data
+        if mode == "auto":
+            self._audio_preference = AudioPreference()
+            self.video.apply_audio_mode("auto")
+            return
+        track = next(track for track in self._audio_tracks if track.id == track_id)
+        self._audio_preference = AudioPreference(
+            mode="track",
+            title=track.title,
+            lang=track.lang,
+            is_default=track.is_default,
+            is_forced=track.is_forced,
+        )
+        self.video.apply_audio_mode("track", track_id=track_id)
 
     def _change_volume(self, value: int) -> None:
         try:

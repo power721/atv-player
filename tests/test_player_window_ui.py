@@ -4,7 +4,7 @@ from PySide6.QtWidgets import QApplication, QComboBox
 from PySide6.QtWidgets import QSplitter
 from atv_player.controllers.player_controller import PlayerSession
 from atv_player.models import AppConfig, PlayItem, VodItem
-from atv_player.player.mpv_widget import SubtitleTrack
+from atv_player.player.mpv_widget import AudioTrack, SubtitleTrack
 
 import atv_player.ui.player_window as player_window_module
 from atv_player.ui.player_window import PlayerWindow
@@ -1109,6 +1109,146 @@ def test_player_window_exposes_subtitle_combo_with_default_auto_entry(qtbot) -> 
     assert window.subtitle_combo.count() == 1
     assert window.subtitle_combo.itemText(0) == "自动选择"
     assert window.subtitle_combo.isEnabled() is False
+
+
+def test_player_window_exposes_audio_combo_with_default_auto_entry(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert isinstance(window.audio_combo, QComboBox)
+    assert window.audio_combo.count() == 1
+    assert window.audio_combo.itemText(0) == "自动选择"
+    assert window.audio_combo.isEnabled() is False
+
+
+def test_player_window_populates_embedded_audio_options_after_open_session(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int]] = []
+            self.audio_apply_calls: list[tuple[str, int | None]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.load_calls.append((url, pause, start_seconds))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return [
+                AudioTrack(id=31, title="", lang="cmn", is_default=True, is_forced=False, label="国语 (默认)"),
+                AudioTrack(id=32, title="English Dub", lang="eng", is_default=False, is_forced=False, label="English Dub"),
+            ]
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.audio_apply_calls.append((mode, track_id))
+            return 31 if mode == "auto" else track_id
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(make_player_session(start_index=0))
+
+    assert [window.audio_combo.itemText(index) for index in range(window.audio_combo.count())] == [
+        "自动选择",
+        "国语 (默认)",
+        "English Dub",
+    ]
+    assert window.audio_combo.isEnabled() is True
+    assert window.video.audio_apply_calls[0] == ("auto", None)
+
+
+def test_player_window_disables_audio_selector_when_current_item_has_no_embedded_audio_options(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(make_player_session(start_index=0))
+
+    assert window.audio_combo.count() == 1
+    assert window.audio_combo.itemText(0) == "自动选择"
+    assert window.audio_combo.isEnabled() is False
+
+
+def test_player_window_user_selection_applies_selected_audio_track(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.audio_apply_calls: list[tuple[str, int | None]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return [
+                AudioTrack(id=31, title="", lang="cmn", is_default=True, is_forced=False, label="国语 (默认)"),
+                AudioTrack(id=32, title="English Dub", lang="eng", is_default=False, is_forced=False, label="English Dub"),
+            ]
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.audio_apply_calls.append((mode, track_id))
+            return track_id
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(make_player_session(start_index=0))
+    window.video.audio_apply_calls.clear()
+
+    window.audio_combo.setCurrentIndex(2)
+
+    assert window.video.audio_apply_calls == [("track", 32)]
 
 
 def test_player_window_populates_embedded_subtitle_options_after_open_session(qtbot) -> None:
