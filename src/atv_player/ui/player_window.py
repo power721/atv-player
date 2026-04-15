@@ -526,11 +526,8 @@ class PlayerWindow(QWidget):
             self._handle_video_mouse_activity()
             return
         if self.is_playing:
-            self._last_cursor_pos = QCursor.pos()
-            self._last_cursor_activity_ms = self._cursor_now_ms()
-            if not self._cursor_hide_timer.isActive():
-                self._cursor_hide_timer.start()
-            self._restore_video_cursor(stop_timer=False, disable_native_autohide=False)
+            self._cursor_hide_timer.stop()
+            self._restore_video_cursor(disable_native_autohide=False)
             return
         self._restore_video_cursor()
 
