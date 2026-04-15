@@ -405,11 +405,12 @@ def test_browse_page_sorts_current_rows_by_name_from_header_click(qtbot) -> None
         ]
     )
 
-    page.table.sortItems(1)
+    header = page.table.horizontalHeader()
+    header.sectionClicked.emit(1)
 
     assert [page.table.item(row, 1).text() for row in range(page.table.rowCount())] == ["Alpha", "Zulu"]
 
-    page.table.sortItems(1, Qt.SortOrder.DescendingOrder)
+    header.sectionClicked.emit(1)
 
     assert [page.table.item(row, 1).text() for row in range(page.table.rowCount())] == ["Zulu", "Alpha"]
 
@@ -471,7 +472,7 @@ def test_browse_page_sorting_does_not_reload_folder_data(qtbot) -> None:
     )
 
     controller.load_calls.clear()
-    page.table.sortItems(1)
+    page.table.horizontalHeader().sectionClicked.emit(1)
 
     assert controller.load_calls == []
 
@@ -507,3 +508,64 @@ def test_browse_page_sorts_rows_with_empty_sortable_values_without_crashing(qtbo
 
     assert page.table.rowCount() == 2
     assert {page.table.item(row, 1).text() for row in range(page.table.rowCount())} == {"Folder", "Movie"}
+
+
+def test_browse_page_opens_item_from_sorted_row_order(qtbot) -> None:
+    class Controller(FakeBrowseController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.requests: list[str] = []
+
+        def build_request_from_folder_item(self, item, folder_items):
+            self.requests.append(item.vod_id)
+            return {"vod_id": item.vod_id, "folder_items": folder_items}
+
+    controller = Controller()
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+
+    first_item = type("Item", (), {
+        "type": 2,
+        "vod_id": "zulu-id",
+        "vod_tag": "file",
+        "vod_name": "Zulu",
+        "vod_time": "2026-04-14",
+        "vod_remarks": "1 GB",
+        "dbid": 0,
+        "path": "/Movies/Zulu.mkv",
+        "vod_pic": "",
+        "type_name": "",
+        "vod_content": "",
+        "vod_year": "",
+        "vod_area": "",
+        "vod_lang": "",
+        "vod_director": "",
+        "vod_actor": "",
+        "vod_play_url": "http://example.com/zulu.m3u8",
+    })()
+    second_item = type("Item", (), {
+        "type": 2,
+        "vod_id": "alpha-id",
+        "vod_tag": "file",
+        "vod_name": "Alpha",
+        "vod_time": "2026-04-14",
+        "vod_remarks": "2 GB",
+        "dbid": 0,
+        "path": "/Movies/Alpha.mkv",
+        "vod_pic": "",
+        "type_name": "",
+        "vod_content": "",
+        "vod_year": "",
+        "vod_area": "",
+        "vod_lang": "",
+        "vod_director": "",
+        "vod_actor": "",
+        "vod_play_url": "http://example.com/alpha.m3u8",
+    })()
+    page.current_items = [first_item, second_item]
+    page._populate_table(page.current_items)
+
+    page.table.horizontalHeader().sectionClicked.emit(1)
+    page._handle_open(0, 0)
+
+    assert controller.requests == ["alpha-id"]

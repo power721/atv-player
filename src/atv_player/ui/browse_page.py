@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from datetime import datetime
+
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -20,6 +22,74 @@ from atv_player.controllers.browse_controller import filter_search_results
 from atv_player.models import VodItem
 from atv_player.ui.filter_options import SEARCH_DRIVE_FILTER_OPTIONS
 from atv_player.ui.table_utils import configure_table_columns
+
+
+class SortableTableWidgetItem(QTableWidgetItem):
+    def __init__(self, text: str, sort_value: object, source_item: VodItem | None = None) -> None:
+        super().__init__(text)
+        self._sort_value = sort_value
+        if source_item is not None:
+            self.setData(Qt.ItemDataRole.UserRole, source_item)
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, SortableTableWidgetItem):
+            return super().__lt__(other)
+        return self._sort_value < other._sort_value
+
+
+def _parse_size_value(text: str) -> tuple[int, float, str]:
+    cleaned = (text or "").strip()
+    if not cleaned or cleaned == "-":
+        return (1, 0.0, "")
+    compact = cleaned.replace(" ", "")
+    number_chars: list[str] = []
+    unit_chars: list[str] = []
+    for char in compact:
+        if char.isdigit() or char == ".":
+            number_chars.append(char)
+        else:
+            unit_chars.append(char)
+    if not number_chars or not unit_chars:
+        return (0, 0.0, cleaned.casefold())
+    try:
+        number = float("".join(number_chars))
+    except ValueError:
+        return (0, 0.0, cleaned.casefold())
+    unit_order = {"B": 0, "KB": 1, "MB": 2, "GB": 3, "TB": 4}
+    unit = "".join(unit_chars).upper()
+    return (0, number * (1024 ** unit_order.get(unit, 0)), cleaned.casefold())
+
+
+def _parse_int_value(text: str) -> tuple[int, int]:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return (1, 0)
+    try:
+        return (0, int(cleaned))
+    except ValueError:
+        return (0, 0)
+
+
+def _parse_float_value(text: str) -> tuple[int, float]:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return (1, 0.0)
+    try:
+        return (0, float(cleaned))
+    except ValueError:
+        return (0, 0.0)
+
+
+def _parse_time_value(text: str) -> tuple[int, str]:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return (1, "")
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return (0, datetime.strptime(cleaned, fmt).isoformat())
+        except ValueError:
+            continue
+    return (0, cleaned.casefold())
 
 
 class BrowsePage(QWidget):
@@ -52,6 +122,7 @@ class BrowsePage(QWidget):
         self.table.setHorizontalHeaderLabels(["类型", "名称", "大小", "豆瓣ID", "评分", "时间"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         configure_table_columns(self.table, stretch_column=1)
+        self.table.setSortingEnabled(False)
         self.current_items: list[VodItem] = []
         self.current_path = "/"
         self.current_page = 1
@@ -60,6 +131,9 @@ class BrowsePage(QWidget):
         self._page_state_by_path: dict[str, tuple[int, int]] = {}
         self._results: list[VodItem] = []
         self._filtered_results: list[VodItem] = []
+        self._sortable_columns = {1, 2, 3, 4, 5}
+        self._sorted_column: int | None = None
+        self._sort_order = Qt.SortOrder.AscendingOrder
 
         for label, value in SEARCH_DRIVE_FILTER_OPTIONS:
             self.filter_combo.addItem(label, value)
@@ -115,6 +189,10 @@ class BrowsePage(QWidget):
         self.results_table.cellDoubleClicked.connect(self._open_search_result)
         self.refresh_button.clicked.connect(self.reload)
         self.table.cellDoubleClicked.connect(self._handle_open)
+        header = self.table.horizontalHeader()
+        header.setSectionsClickable(True)
+        header.setSortIndicatorShown(False)
+        header.sectionClicked.connect(self._sort_file_table)
         self.prev_page_button.clicked.connect(self.previous_page)
         self.next_page_button.clicked.connect(self.next_page)
         self.page_size_combo.currentIndexChanged.connect(self._change_page_size)
@@ -301,14 +379,43 @@ class BrowsePage(QWidget):
         self.breadcrumb_layout.addStretch(1)
 
     def _populate_table(self, items: list[VodItem]) -> None:
+        self._sorted_column = None
+        self._sort_order = Qt.SortOrder.AscendingOrder
+        self.table.horizontalHeader().setSortIndicatorShown(False)
         self.table.setRowCount(len(items))
         for row, item in enumerate(items):
-            self.table.setItem(row, 0, QTableWidgetItem(self._item_kind(item)))
-            self.table.setItem(row, 1, QTableWidgetItem(item.vod_name))
-            self.table.setItem(row, 2, QTableWidgetItem(self._item_size(item)))
-            self.table.setItem(row, 3, QTableWidgetItem(self._item_dbid(item)))
-            self.table.setItem(row, 4, QTableWidgetItem(self._item_rating(item)))
-            self.table.setItem(row, 5, QTableWidgetItem(item.vod_time))
+            kind_text = self._item_kind(item)
+            name_text = item.vod_name
+            size_text = self._item_size(item)
+            dbid_text = self._item_dbid(item)
+            rating_text = self._item_rating(item)
+            time_text = item.vod_time
+
+            kind_item = QTableWidgetItem(kind_text)
+            kind_item.setData(Qt.ItemDataRole.UserRole, item)
+            self.table.setItem(row, 0, kind_item)
+            self.table.setItem(row, 1, SortableTableWidgetItem(name_text, name_text.casefold(), item))
+            self.table.setItem(row, 2, SortableTableWidgetItem(size_text, _parse_size_value(size_text), item))
+            self.table.setItem(row, 3, SortableTableWidgetItem(dbid_text, _parse_int_value(dbid_text), item))
+            self.table.setItem(row, 4, SortableTableWidgetItem(rating_text, _parse_float_value(rating_text), item))
+            self.table.setItem(row, 5, SortableTableWidgetItem(time_text, _parse_time_value(time_text), item))
+
+    def _sort_file_table(self, column: int) -> None:
+        if column not in self._sortable_columns:
+            return
+        if self._sorted_column == column:
+            self._sort_order = (
+                Qt.SortOrder.DescendingOrder
+                if self._sort_order == Qt.SortOrder.AscendingOrder
+                else Qt.SortOrder.AscendingOrder
+            )
+        else:
+            self._sorted_column = column
+            self._sort_order = Qt.SortOrder.AscendingOrder
+        header = self.table.horizontalHeader()
+        header.setSortIndicatorShown(True)
+        header.setSortIndicator(column, self._sort_order)
+        self.table.sortItems(column, self._sort_order)
 
     def _item_kind(self, item: VodItem) -> str:
         if item.type == 1:
@@ -330,9 +437,12 @@ class BrowsePage(QWidget):
         return item.vod_remarks if getattr(item, "vod_tag", "") == "folder" else ""
 
     def _handle_open(self, row: int, _column: int) -> None:
-        if not (0 <= row < len(self.current_items)):
+        row_item = self.table.item(row, 1)
+        item = row_item.data(Qt.ItemDataRole.UserRole) if row_item is not None else None
+        if item is None and 0 <= row < len(self.current_items):
+            item = self.current_items[row]
+        if item is None:
             return
-        item = self.current_items[row]
         if item.type == 1:
             self.load_path(item.path)
             return
