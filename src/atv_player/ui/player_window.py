@@ -152,7 +152,7 @@ class PlayerWindow(QWidget):
         self._poster_request_id = 0
         self._video_surface_ready = False
         self._auto_advance_locked = False
-        self._poster_load_signals = _PosterLoadSignals()
+        self._poster_load_signals = _PosterLoadSignals(self)
         self._poster_load_signals.loaded.connect(self._handle_poster_load_finished)
         self.setWindowTitle(self._default_window_title())
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)

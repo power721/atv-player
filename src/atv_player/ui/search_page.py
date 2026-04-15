@@ -52,7 +52,7 @@ class SearchPage(QWidget):
         self._results: list[VodItem] = []
         self._filtered_results: list[VodItem] = []
         self._search_request_id = 0
-        self._search_signals = _SearchSignals()
+        self._search_signals = _SearchSignals(self)
         self._search_signals.succeeded.connect(self._handle_search_succeeded)
         self._search_signals.failed.connect(self._handle_search_failed)
         self._search_signals.unauthorized.connect(self._handle_search_unauthorized)

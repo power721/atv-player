@@ -64,7 +64,7 @@ class DoubanPage(QWidget):
         self._current_card_columns = self._MIN_CARD_COLUMNS
         self._categories_request_id = 0
         self._items_request_id = 0
-        self._signals = _DoubanSignals()
+        self._signals = _DoubanSignals(self)
         self._signals.categories_loaded.connect(self._handle_categories_loaded)
         self._signals.items_loaded.connect(self._handle_items_loaded)
         self._signals.failed.connect(self._handle_failed)
