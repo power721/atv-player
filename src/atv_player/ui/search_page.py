@@ -4,6 +4,7 @@ import threading
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QHBoxLayout,
     QLineEdit,
@@ -41,6 +42,9 @@ class SearchPage(QWidget):
         self.clear_button = QPushButton("清空")
         self.results_table = QTableWidget(0, 2)
         self.results_table.setHorizontalHeaderLabels(["来源", "名称"])
+        self.results_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.results_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.results_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         configure_table_columns(self.results_table, stretch_column=1)
         self.status_label = QLineEdit()
         self.status_label.setReadOnly(True)
