@@ -529,8 +529,9 @@ class BrowsePage(QWidget):
     def _handle_open(self, row: int, _column: int) -> None:
         row_item = self.table.item(row, 1)
         item = row_item.data(Qt.ItemDataRole.UserRole) if row_item is not None else None
-        if item is None and 0 <= row < len(self.current_items):
-            item = self.current_items[row]
+        if item is None:
+            row_item = self.table.item(row, 0)
+            item = row_item.data(Qt.ItemDataRole.UserRole) if row_item is not None else None
         if item is None:
             return
         if item.type == 1:
