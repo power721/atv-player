@@ -1,8 +1,20 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+
+
+@dataclass(frozen=True, slots=True)
+class SubtitleTrack:
+    id: int
+    title: str
+    lang: str
+    is_default: bool
+    is_forced: bool
+    label: str
 
 
 class MpvWidget(QWidget):
@@ -176,6 +188,84 @@ class MpvWidget(QWidget):
             return int(self._player.duration or 0)
         except Exception:
             return 0
+
+    def _subtitle_language_label(self, lang: str) -> str:
+        normalized = lang.strip().lower()
+        return {
+            "zh": "中文",
+            "chi": "中文",
+            "zho": "中文",
+            "en": "English",
+            "eng": "English",
+            "ja": "日本語",
+            "jpn": "日本語",
+        }.get(normalized, normalized or "")
+
+    def _subtitle_track_label(self, title: str, lang: str, is_default: bool, is_forced: bool, index: int) -> str:
+        base = title.strip() or self._subtitle_language_label(lang) or f"字幕 {index}"
+        suffixes = []
+        if is_default:
+            suffixes.append("默认")
+        if is_forced:
+            suffixes.append("强制")
+        if not suffixes:
+            return base
+        return f"{base} ({'/'.join(suffixes)})"
+
+    def _is_chinese_subtitle_track(self, track: SubtitleTrack) -> bool:
+        if track.lang in {"zh", "chi", "zho"}:
+            return True
+        lowered_title = track.title.casefold()
+        return any(token in lowered_title for token in ("中文", "简中", "繁中", "中字", "chinese"))
+
+    def subtitle_tracks(self) -> list[SubtitleTrack]:
+        if self._player is None:
+            return []
+        try:
+            raw_tracks = getattr(self._player, "track_list", None) or []
+        except Exception:
+            return []
+
+        tracks: list[SubtitleTrack] = []
+        for raw_track in raw_tracks:
+            if raw_track.get("type") != "sub" or raw_track.get("external"):
+                continue
+            title = str(raw_track.get("title") or "").strip()
+            lang = str(raw_track.get("lang") or "").strip().lower()
+            is_default = bool(raw_track.get("default"))
+            is_forced = bool(raw_track.get("forced"))
+            tracks.append(
+                SubtitleTrack(
+                    id=int(raw_track["id"]),
+                    title=title,
+                    lang=lang,
+                    is_default=is_default,
+                    is_forced=is_forced,
+                    label=self._subtitle_track_label(title, lang, is_default, is_forced, len(tracks) + 1),
+                )
+            )
+        return tracks
+
+    def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+        if self._player is None:
+            return None
+        try:
+            if mode == "off":
+                self._player.sid = "no"
+                return None
+            if mode == "track" and track_id is not None:
+                self._player.sid = track_id
+                return track_id
+            preferred_track = next((track for track in self.subtitle_tracks() if self._is_chinese_subtitle_track(track)), None)
+            if preferred_track is not None:
+                self._player.sid = preferred_track.id
+                return preferred_track.id
+            self._player.sid = "auto"
+            return None
+        except Exception:
+            if getattr(self._player, "core_shutdown", False):
+                return None
+            raise
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         self.double_clicked.emit()
