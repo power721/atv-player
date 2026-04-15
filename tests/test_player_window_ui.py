@@ -2481,7 +2481,9 @@ def test_player_window_keyboard_shortcuts_control_playback_navigation_and_view(q
 
     send_key(window, Qt.Key.Key_Left)
     send_key(window, Qt.Key.Key_Right)
-    assert video.seek_relative_calls == [-15, 15]
+    send_key(window, Qt.Key.Key_Left, Qt.KeyboardModifier.ControlModifier)
+    send_key(window, Qt.Key.Key_Right, Qt.KeyboardModifier.ControlModifier)
+    assert video.seek_relative_calls == [-15, 15, -60, 60]
 
     send_key(window, Qt.Key.Key_PageUp)
     assert window.current_index == 0

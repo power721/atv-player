@@ -99,6 +99,7 @@ class AudioPreference:
 class PlayerWindow(QWidget):
     closed_to_main = Signal()
     _SEEK_SHORTCUT_SECONDS = 15
+    _MODIFIED_SEEK_SHORTCUT_SECONDS = 60
     _VOLUME_SHORTCUT_STEP = 5
     _CURSOR_HIDE_DELAY_MS = 3000
     _POSTER_SIZE = QSize(180, 260)
@@ -786,7 +787,7 @@ class PlayerWindow(QWidget):
     def _reset_subtitle_combo(self) -> None:
         self.subtitle_combo.blockSignals(True)
         self.subtitle_combo.clear()
-        self.subtitle_combo.addItem("自动选择", ("auto", None))
+        self.subtitle_combo.addItem("字幕", ("auto", None))
         self.subtitle_combo.setCurrentIndex(0)
         self.subtitle_combo.setEnabled(False)
         self.subtitle_combo.blockSignals(False)
@@ -794,7 +795,7 @@ class PlayerWindow(QWidget):
     def _reset_audio_combo(self) -> None:
         self.audio_combo.blockSignals(True)
         self.audio_combo.clear()
-        self.audio_combo.addItem("自动选择", ("auto", None))
+        self.audio_combo.addItem("音轨", ("auto", None))
         self.audio_combo.setCurrentIndex(0)
         self.audio_combo.setEnabled(False)
         self.audio_combo.blockSignals(False)
@@ -811,7 +812,7 @@ class PlayerWindow(QWidget):
     def _populate_subtitle_combo(self, tracks: list[SubtitleTrack]) -> None:
         self.subtitle_combo.blockSignals(True)
         self.subtitle_combo.clear()
-        self.subtitle_combo.addItem("自动选择", ("auto", None))
+        self.subtitle_combo.addItem("字幕", ("auto", None))
         if tracks:
             self.subtitle_combo.addItem("关闭字幕", ("off", None))
             for track in tracks:
@@ -823,7 +824,7 @@ class PlayerWindow(QWidget):
     def _populate_audio_combo(self, tracks: list[AudioTrack]) -> None:
         self.audio_combo.blockSignals(True)
         self.audio_combo.clear()
-        self.audio_combo.addItem("自动选择", ("auto", None))
+        self.audio_combo.addItem("音轨", ("auto", None))
         if len(tracks) > 1:
             for track in tracks:
                 self.audio_combo.addItem(track.label, ("track", track.id))
@@ -1062,6 +1063,14 @@ class PlayerWindow(QWidget):
             (QKeySequence(Qt.Key.Key_Up), lambda: self._step_volume(self._VOLUME_SHORTCUT_STEP)),
             (QKeySequence(Qt.Key.Key_Left), lambda: self._seek_relative(-self._SEEK_SHORTCUT_SECONDS)),
             (QKeySequence(Qt.Key.Key_Right), lambda: self._seek_relative(self._SEEK_SHORTCUT_SECONDS)),
+            (
+                QKeySequence("Ctrl+Left"),
+                lambda: self._seek_relative(-self._MODIFIED_SEEK_SHORTCUT_SECONDS),
+            ),
+            (
+                QKeySequence("Ctrl+Right"),
+                lambda: self._seek_relative(self._MODIFIED_SEEK_SHORTCUT_SECONDS),
+            ),
             (QKeySequence(Qt.Key.Key_PageUp), self.play_previous),
             (QKeySequence(Qt.Key.Key_PageDown), self.play_next),
         ]
@@ -1291,6 +1300,14 @@ class PlayerWindow(QWidget):
             return
         if event.key() == Qt.Key.Key_P and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self._return_to_main()
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Left and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self._seek_relative(-self._MODIFIED_SEEK_SHORTCUT_SECONDS)
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Right and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self._seek_relative(self._MODIFIED_SEEK_SHORTCUT_SECONDS)
             event.accept()
             return
         if event.modifiers() & (
