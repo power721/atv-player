@@ -813,6 +813,7 @@ class PlayerWindow(QWidget):
     def _replay_current_item(self) -> None:
         if self.session is None:
             return
+        self.report_progress()
         self.is_playing = True
         self._update_play_button_icon()
         self.playlist.setCurrentRow(self.current_index)
