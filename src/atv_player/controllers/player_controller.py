@@ -52,10 +52,16 @@ class PlayerController:
             return None
         if play_item.vod_id in session.resolved_vod_by_id:
             resolved_vod = session.resolved_vod_by_id[play_item.vod_id]
+            if resolved_vod is None:
+                return None
         else:
             resolved_vod = session.detail_resolver(play_item)
-            session.resolved_vod_by_id[play_item.vod_id] = resolved_vod
-        play_item.url = resolved_vod.items[0].url if resolved_vod.items else resolved_vod.vod_play_url
+            if resolved_vod is not None:
+                session.resolved_vod_by_id[play_item.vod_id] = resolved_vod
+        url = resolved_vod.items[0].url if resolved_vod.items else resolved_vod.vod_play_url
+        if not url:
+            return None
+        play_item.url = url
         return resolved_vod
 
     def report_progress(
