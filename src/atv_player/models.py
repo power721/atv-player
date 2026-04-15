@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 
@@ -28,6 +29,7 @@ class PlayItem:
     path: str = ""
     index: int = 0
     size: int = 0
+    vod_id: str = ""
 
 
 @dataclass(slots=True)
@@ -85,3 +87,5 @@ class OpenPlayerRequest:
     source_path: str = ""
     source_vod_id: str = ""
     source_clicked_vod_id: str = ""
+    detail_resolver: Callable[[PlayItem], VodItem] | None = None
+    resolved_vod_by_id: dict[str, VodItem] = field(default_factory=dict)

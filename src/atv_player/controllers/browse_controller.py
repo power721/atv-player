@@ -17,6 +17,7 @@ def _map_play_item(payload: dict, index: int) -> PlayItem:
         path=str(payload.get("path") or ""),
         index=index,
         size=int(payload.get("size") or 0),
+        vod_id=str(payload.get("vod_id") or ""),
     )
 
 
@@ -61,6 +62,15 @@ class BrowseController:
     def __init__(self, api_client) -> None:
         self._api_client = api_client
 
+    def _first_play_url(self, vod: VodItem) -> str:
+        if vod.items:
+            return vod.items[0].url
+        return vod.vod_play_url
+
+    def resolve_folder_play_item(self, item: PlayItem) -> VodItem:
+        payload = self._api_client.get_detail(item.vod_id)
+        return _map_vod_item(payload["list"][0])
+
     def load_folder(self, path: str, page: int = 1, size: int = 50) -> tuple[list[VodItem], int]:
         payload = self._api_client.list_vod(build_vod_list_path(path), page=page, size=size)
         items = [_map_vod_item(item) for item in payload.get("list", [])]
@@ -99,6 +109,7 @@ class BrowseController:
                 path=item.path,
                 index=index,
                 size=0,
+                vod_id=item.vod_id,
             )
             playlist.append(playlist_item)
             if item.vod_id == clicked_vod_id:
@@ -125,28 +136,17 @@ class BrowseController:
         folder_items: list[VodItem],
     ) -> OpenPlayerRequest:
         playlist, clicked_index = self.build_playlist_from_folder(folder_items, clicked_item.vod_id)
-        vod = VodItem(
-            vod_id=clicked_item.vod_id,
-            vod_name=clicked_item.vod_name,
-            vod_pic=clicked_item.vod_pic,
-            path=clicked_item.path,
-            vod_remarks=clicked_item.vod_remarks,
-            type_name=clicked_item.type_name,
-            vod_content=clicked_item.vod_content,
-            vod_year=clicked_item.vod_year,
-            vod_area=clicked_item.vod_area,
-            vod_lang=clicked_item.vod_lang,
-            vod_director=clicked_item.vod_director,
-            vod_actor=clicked_item.vod_actor,
-            dbid=clicked_item.dbid,
-            type=clicked_item.type,
-        )
+        clicked_playlist_item = playlist[clicked_index]
+        resolved_vod = self.resolve_folder_play_item(clicked_playlist_item)
+        clicked_playlist_item.url = self._first_play_url(resolved_vod)
         return OpenPlayerRequest(
-            vod=vod,
+            vod=resolved_vod,
             playlist=playlist,
             clicked_index=clicked_index,
             source_mode="folder",
             source_path=clicked_item.path.rsplit("/", 1)[0] or "/",
             source_vod_id=clicked_item.vod_id,
             source_clicked_vod_id=clicked_item.vod_id,
+            detail_resolver=self.resolve_folder_play_item,
+            resolved_vod_by_id={resolved_vod.vod_id: resolved_vod},
         )
