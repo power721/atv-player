@@ -32,10 +32,11 @@ class _DoubanSignals(QObject):
 class DoubanPage(QWidget):
     search_requested = Signal(str)
     unauthorized = Signal()
-    _CARD_WIDTH = 180
-    _CARD_HEIGHT = 320
+    _CARD_WIDTH = 220
+    _CARD_HEIGHT = 360
+    _CARD_POSTER_SIZE = QSize(190, 285)
     _CARD_SPACING = 16
-    _MIN_CARD_COLUMNS = 5
+    _MIN_CARD_COLUMNS = 1
     _MAX_CARD_COLUMNS = 6
 
     def __init__(self, controller) -> None:
@@ -234,8 +235,9 @@ class DoubanPage(QWidget):
         button.setText(text)
         button.setFixedSize(self._CARD_WIDTH, self._CARD_HEIGHT)
         button.setToolTip(item.vod_name)
-        button.setIconSize(QSize(160, 240))
+        button.setIconSize(self._CARD_POSTER_SIZE)
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setStyleSheet("padding: 10px;")
         button.clicked.connect(lambda _checked=False, keyword=item.vod_name: self.search_requested.emit(keyword))
         return button
@@ -246,7 +248,7 @@ class DoubanPage(QWidget):
             return
 
         def load() -> None:
-            image = load_remote_poster_image(image_url, QSize(160, 240))
+            image = load_remote_poster_image(image_url, self._CARD_POSTER_SIZE)
             if image is not None:
                 self._signals.poster_loaded.emit(button, image)
 
@@ -257,7 +259,7 @@ class DoubanPage(QWidget):
             return
         pixmap = QPixmap.fromImage(image)
         button.setIcon(QIcon(pixmap))
-        button.setIconSize(QSize(160, 240))
+        button.setIconSize(self._CARD_POSTER_SIZE)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

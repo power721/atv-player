@@ -1,5 +1,7 @@
 import threading
 
+from PySide6.QtCore import Qt
+
 from atv_player.api import ApiError
 from atv_player.models import DoubanCategory, VodItem
 import atv_player.ui.douban_page as douban_page_module
@@ -154,7 +156,21 @@ def test_douban_page_renders_loaded_poster_icon_on_card(qtbot, monkeypatch) -> N
     assert page.card_buttons[0].icon().isNull() is False
 
 
-def test_douban_page_uses_five_then_six_columns_based_on_width(qtbot) -> None:
+def test_douban_page_cards_use_wider_size_and_pointing_cursor(qtbot) -> None:
+    page = DoubanPage(FakeDoubanController())
+    qtbot.addWidget(page)
+    page.show()
+
+    qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
+    button = page.card_buttons[0]
+
+    assert button.width() == DoubanPage._CARD_WIDTH
+    assert button.height() == DoubanPage._CARD_HEIGHT
+    assert button.iconSize() == DoubanPage._CARD_POSTER_SIZE
+    assert button.cursor().shape() == Qt.CursorShape.PointingHandCursor
+
+
+def test_douban_page_reduces_columns_when_width_is_tighter(qtbot) -> None:
     controller = FakeDoubanController()
     controller.items_by_category["suggestion"] = (
         [
@@ -169,13 +185,15 @@ def test_douban_page_uses_five_then_six_columns_based_on_width(qtbot) -> None:
     page.show()
 
     qtbot.waitUntil(lambda: len(page.card_buttons) == 6)
-    qtbot.waitUntil(lambda: page._current_card_columns == 5)
+    narrow_columns = page._current_card_columns
 
-    assert page.cards_layout.getItemPosition(5)[:2] == (1, 0)
+    assert narrow_columns < 6
+    assert page.cards_layout.getItemPosition(5)[:2] == (1, 1)
 
-    page.resize(1600, 900)
-    qtbot.waitUntil(lambda: page._current_card_columns == 6)
+    page.resize(2200, 900)
+    qtbot.waitUntil(lambda: page._current_card_columns > narrow_columns)
 
+    assert page._current_card_columns == 6
     assert page.cards_layout.getItemPosition(5)[:2] == (0, 5)
 
 
