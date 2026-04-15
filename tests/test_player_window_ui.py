@@ -22,6 +22,9 @@ class FakePlayerController:
     ) -> None:
         return None
 
+    def resolve_play_item_detail(self, session, play_item):
+        return None
+
 
 class RecordingPlayerController(FakePlayerController):
     def __init__(self) -> None:
@@ -37,6 +40,17 @@ class RecordingPlayerController(FakePlayerController):
         ending_seconds: int,
     ) -> None:
         self.progress_calls.append((current_index, position_seconds, speed, opening_seconds, ending_seconds))
+
+    def resolve_play_item_detail(self, session, play_item):
+        if not play_item.vod_id or session.detail_resolver is None:
+            return None
+        if play_item.vod_id in session.resolved_vod_by_id:
+            resolved_vod = session.resolved_vod_by_id[play_item.vod_id]
+        else:
+            resolved_vod = session.detail_resolver(play_item)
+            session.resolved_vod_by_id[play_item.vod_id] = resolved_vod
+        play_item.url = resolved_vod.items[0].url if resolved_vod.items else resolved_vod.vod_play_url
+        return resolved_vod
 
 
 class RecordingVideo:
@@ -1438,6 +1452,196 @@ def test_player_window_advances_to_next_item_when_playback_finishes(qtbot) -> No
     assert window.playlist.currentRow() == 1
     assert video.load_calls == [("http://m/2.m3u8", 0)]
     assert controller.progress_calls == [(0, 30, 1.0, 0, 0)]
+
+
+def test_player_window_play_next_resolves_target_episode_before_loading(qtbot) -> None:
+    controller = RecordingPlayerController()
+    resolved_vod = VodItem(
+        vod_id="ep-2",
+        vod_name="Resolved Episode 2",
+        vod_content="resolved episode content",
+        items=[PlayItem(title="Episode 2", url="http://resolved/2.m3u8", vod_id="ep-2")],
+    )
+
+    class FakeVideo(RecordingVideo):
+        pass
+
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    session = make_player_session(start_index=0)
+    session.playlist = [
+        PlayItem(title="Episode 1", url="http://m/1.m3u8", vod_id="ep-1"),
+        PlayItem(title="Episode 2", url="", vod_id="ep-2"),
+    ]
+    session.detail_resolver = lambda item: resolved_vod
+    window.open_session(session)
+    window.video.load_calls.clear()
+
+    window.play_next()
+
+    assert window.current_index == 1
+    assert window.video.load_calls == [("http://resolved/2.m3u8", 0)]
+    assert "resolved episode content" in window.metadata_view.toPlainText()
+
+
+def test_player_window_reuses_cached_detail_when_returning_to_same_episode(qtbot) -> None:
+    controller = RecordingPlayerController()
+    detail_calls: list[str] = []
+
+    def detail_resolver(item: PlayItem) -> VodItem:
+        detail_calls.append(item.vod_id)
+        return VodItem(
+            vod_id=item.vod_id,
+            vod_name=f"Resolved {item.title}",
+            items=[PlayItem(title=item.title, url=f"http://resolved/{item.vod_id}.m3u8", vod_id=item.vod_id)],
+        )
+
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = make_player_session(start_index=0)
+    session.playlist = [
+        PlayItem(title="Episode 1", url="", vod_id="ep-1"),
+        PlayItem(title="Episode 2", url="", vod_id="ep-2"),
+    ]
+    session.detail_resolver = detail_resolver
+    window.open_session(session)
+    detail_calls.clear()
+    window.video.load_calls.clear()
+
+    window.play_next()
+    window.play_previous()
+    window.play_next()
+
+    assert detail_calls == ["ep-2"]
+    assert ("http://resolved/ep-2.m3u8", 0) in window.video.load_calls
+
+
+def test_player_window_keeps_current_index_when_next_episode_detail_resolution_fails(qtbot) -> None:
+    controller = RecordingPlayerController()
+
+    def detail_resolver(item: PlayItem) -> VodItem:
+        if item.vod_id == "ep-2":
+            raise RuntimeError("detail failed")
+        return VodItem(
+            vod_id=item.vod_id,
+            vod_name=item.title,
+            items=[PlayItem(title=item.title, url=f"http://resolved/{item.vod_id}.m3u8", vod_id=item.vod_id)],
+        )
+
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = make_player_session(start_index=0)
+    session.playlist = [
+        PlayItem(title="Episode 1", url="", vod_id="ep-1"),
+        PlayItem(title="Episode 2", url="", vod_id="ep-2"),
+    ]
+    session.detail_resolver = detail_resolver
+    window.open_session(session)
+    window.video.load_calls.clear()
+
+    window.play_next()
+
+    assert window.current_index == 0
+    assert window.video.load_calls == []
+    assert "播放失败: detail failed" in window.log_view.toPlainText()
+
+
+def test_player_window_play_next_resolves_target_episode_before_loading(qtbot) -> None:
+    controller = RecordingPlayerController()
+    resolved_vod = VodItem(
+        vod_id="ep-2",
+        vod_name="Resolved Episode 2",
+        vod_content="resolved episode content",
+        items=[PlayItem(title="Episode 2", url="http://resolved/2.m3u8", vod_id="ep-2")],
+    )
+
+    class FakeVideo(RecordingVideo):
+        pass
+
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    session = make_player_session(start_index=0)
+    session.playlist = [
+        PlayItem(title="Episode 1", url="http://m/1.m3u8", vod_id="ep-1"),
+        PlayItem(title="Episode 2", url="", vod_id="ep-2"),
+    ]
+    session.detail_resolver = lambda item: resolved_vod
+    window.open_session(session)
+    window.video.load_calls.clear()
+
+    window.play_next()
+
+    assert window.current_index == 1
+    assert window.video.load_calls == [("http://resolved/2.m3u8", 0)]
+    assert "resolved episode content" in window.metadata_view.toPlainText()
+
+
+def test_player_window_reuses_cached_detail_when_returning_to_same_episode(qtbot) -> None:
+    controller = RecordingPlayerController()
+    detail_calls: list[str] = []
+
+    def detail_resolver(item: PlayItem) -> VodItem:
+        detail_calls.append(item.vod_id)
+        return VodItem(
+            vod_id=item.vod_id,
+            vod_name=f"Resolved {item.title}",
+            items=[PlayItem(title=item.title, url=f"http://resolved/{item.vod_id}.m3u8", vod_id=item.vod_id)],
+        )
+
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = make_player_session(start_index=0)
+    session.playlist = [
+        PlayItem(title="Episode 1", url="", vod_id="ep-1"),
+        PlayItem(title="Episode 2", url="", vod_id="ep-2"),
+    ]
+    session.detail_resolver = detail_resolver
+    window.open_session(session)
+    detail_calls.clear()
+    window.video.load_calls.clear()
+
+    window.play_next()
+    window.play_previous()
+    window.play_next()
+
+    assert detail_calls == ["ep-2"]
+    assert ("http://resolved/ep-2.m3u8", 0) in window.video.load_calls
+
+
+def test_player_window_keeps_current_index_when_next_episode_detail_resolution_fails(qtbot) -> None:
+    controller = RecordingPlayerController()
+
+    def detail_resolver(item: PlayItem) -> VodItem:
+        if item.vod_id == "ep-2":
+            raise RuntimeError("detail failed")
+        return VodItem(
+            vod_id=item.vod_id,
+            vod_name=item.title,
+            items=[PlayItem(title=item.title, url=f"http://resolved/{item.vod_id}.m3u8", vod_id=item.vod_id)],
+        )
+
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = make_player_session(start_index=0)
+    session.playlist = [
+        PlayItem(title="Episode 1", url="", vod_id="ep-1"),
+        PlayItem(title="Episode 2", url="", vod_id="ep-2"),
+    ]
+    session.detail_resolver = detail_resolver
+    window.open_session(session)
+    window.video.load_calls.clear()
+
+    window.play_next()
+
+    assert window.current_index == 0
+    assert window.video.load_calls == []
+    assert "播放失败: detail failed" in window.log_view.toPlainText()
 
 
 def test_player_window_playback_controls_show_shortcuts_and_pointing_cursor(qtbot) -> None:

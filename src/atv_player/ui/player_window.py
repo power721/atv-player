@@ -480,7 +480,10 @@ class PlayerWindow(QWidget):
         self.playlist.setCurrentRow(self.current_index)
         self.progress.setValue(0)
         self._reset_subtitle_combo()
-        self._load_current_item(session.start_position_seconds, pause=start_paused)
+        try:
+            self._play_item_at_index(self.current_index, start_position_seconds=session.start_position_seconds, pause=start_paused)
+        except Exception as exc:
+            self._append_log(f"播放失败: {exc}")
         self.report_timer.start()
         self.progress_timer.start()
         self._sync_video_cursor_autohide()
@@ -488,17 +491,15 @@ class PlayerWindow(QWidget):
     def _load_current_item(self, start_position_seconds: int = 0, pause: bool = False) -> None:
         if self.session is None:
             return
+        self._resolve_current_play_item()
         current_item = self.session.playlist[self.current_index]
         self._append_log(f"当前: {current_item.title}")
         self._append_log(f"URL: {current_item.url}")
         effective_start_seconds = max(start_position_seconds, self.opening_spin.value())
-        try:
-            self.video.load(current_item.url, pause=pause, start_seconds=effective_start_seconds)
-            self.video.set_speed(self.current_speed)
-            self.video.set_volume(self.volume_slider.value())
-            self._refresh_subtitle_state()
-        except Exception as exc:
-            self._append_log(f"播放失败: {exc}")
+        self.video.load(current_item.url, pause=pause, start_seconds=effective_start_seconds)
+        self.video.set_speed(self.current_speed)
+        self.video.set_volume(self.volume_slider.value())
+        self._refresh_subtitle_state()
 
     def _format_metadata_text(self, vod) -> str:
         rows = [
@@ -523,6 +524,34 @@ class PlayerWindow(QWidget):
             self.metadata_view.clear()
             return
         self.metadata_view.setPlainText(self._format_metadata_text(self.session.vod))
+
+    def _apply_resolved_vod(self, resolved_vod: VodItem) -> None:
+        if self.session is None:
+            return
+        self.session.vod = resolved_vod
+        self._render_poster()
+        self._render_metadata()
+
+    def _resolve_current_play_item(self) -> None:
+        if self.session is None:
+            return
+        current_item = self.session.playlist[self.current_index]
+        resolved_vod = self.controller.resolve_play_item_detail(self.session, current_item)
+        if resolved_vod is not None:
+            self._apply_resolved_vod(resolved_vod)
+
+    def _play_item_at_index(self, index: int, start_position_seconds: int = 0, pause: bool = False) -> None:
+        if self.session is None:
+            return
+        previous_index = self.current_index
+        self.current_index = index
+        try:
+            self.playlist.setCurrentRow(self.current_index)
+            self._load_current_item(start_position_seconds=start_position_seconds, pause=pause)
+        except Exception:
+            self.current_index = previous_index
+            self.playlist.setCurrentRow(previous_index)
+            raise
 
     def _clear_poster(self) -> None:
         self.poster_label.clear()
@@ -1031,17 +1060,21 @@ class PlayerWindow(QWidget):
         if self.session is None or self.current_index <= 0:
             return
         self.report_progress()
-        self.current_index -= 1
-        self.playlist.setCurrentRow(self.current_index)
-        self._load_current_item()
+        target_index = self.current_index - 1
+        try:
+            self._play_item_at_index(target_index)
+        except Exception as exc:
+            self._append_log(f"播放失败: {exc}")
 
     def play_next(self) -> None:
         if self.session is None or self.current_index + 1 >= len(self.session.playlist):
             return
         self.report_progress()
-        self.current_index += 1
-        self.playlist.setCurrentRow(self.current_index)
-        self._load_current_item()
+        target_index = self.current_index + 1
+        try:
+            self._play_item_at_index(target_index)
+        except Exception as exc:
+            self._append_log(f"播放失败: {exc}")
 
     def _handle_playback_finished(self) -> None:
         if self.session is None or self.current_index + 1 >= len(self.session.playlist):
@@ -1053,8 +1086,10 @@ class PlayerWindow(QWidget):
         if row == self.current_index or self.session is None:
             return
         self.report_progress()
-        self.current_index = row
-        self._load_current_item()
+        try:
+            self._play_item_at_index(row)
+        except Exception as exc:
+            self._append_log(f"播放失败: {exc}")
 
     def closeEvent(self, event: QCloseEvent) -> None:
         try:

@@ -62,6 +62,30 @@ class BrowseController:
     def __init__(self, api_client) -> None:
         self._api_client = api_client
 
+    def _merge_vod_metadata(self, resolved_vod: VodItem, fallback_vod: VodItem) -> VodItem:
+        return VodItem(
+            vod_id=resolved_vod.vod_id or fallback_vod.vod_id,
+            vod_name=resolved_vod.vod_name or fallback_vod.vod_name,
+            path=resolved_vod.path or fallback_vod.path,
+            share_type=resolved_vod.share_type or fallback_vod.share_type,
+            vod_pic=resolved_vod.vod_pic or fallback_vod.vod_pic,
+            vod_tag=resolved_vod.vod_tag or fallback_vod.vod_tag,
+            vod_time=resolved_vod.vod_time or fallback_vod.vod_time,
+            vod_remarks=resolved_vod.vod_remarks or fallback_vod.vod_remarks,
+            vod_play_from=resolved_vod.vod_play_from or fallback_vod.vod_play_from,
+            vod_play_url=resolved_vod.vod_play_url or fallback_vod.vod_play_url,
+            type_name=resolved_vod.type_name or fallback_vod.type_name,
+            vod_content=resolved_vod.vod_content or fallback_vod.vod_content,
+            vod_year=resolved_vod.vod_year or fallback_vod.vod_year,
+            vod_area=resolved_vod.vod_area or fallback_vod.vod_area,
+            vod_lang=resolved_vod.vod_lang or fallback_vod.vod_lang,
+            vod_director=resolved_vod.vod_director or fallback_vod.vod_director,
+            vod_actor=resolved_vod.vod_actor or fallback_vod.vod_actor,
+            dbid=resolved_vod.dbid or fallback_vod.dbid,
+            type=resolved_vod.type or fallback_vod.type,
+            items=resolved_vod.items or fallback_vod.items,
+        )
+
     def _first_play_url(self, vod: VodItem) -> str:
         if vod.items:
             return vod.items[0].url
@@ -137,7 +161,7 @@ class BrowseController:
     ) -> OpenPlayerRequest:
         playlist, clicked_index = self.build_playlist_from_folder(folder_items, clicked_item.vod_id)
         clicked_playlist_item = playlist[clicked_index]
-        resolved_vod = self.resolve_folder_play_item(clicked_playlist_item)
+        resolved_vod = self._merge_vod_metadata(self.resolve_folder_play_item(clicked_playlist_item), clicked_item)
         clicked_playlist_item.url = self._first_play_url(resolved_vod)
         return OpenPlayerRequest(
             vod=resolved_vod,
