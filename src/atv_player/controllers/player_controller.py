@@ -15,7 +15,7 @@ class PlayerSession:
     speed: float
     opening_seconds: int = 0
     ending_seconds: int = 0
-    detail_resolver: Callable[[PlayItem], VodItem] | None = None
+    detail_resolver: Callable[[PlayItem], VodItem | None] | None = None
     resolved_vod_by_id: dict[str, VodItem] = field(default_factory=dict)
 
 
@@ -28,7 +28,7 @@ class PlayerController:
         vod: VodItem,
         playlist: list[PlayItem],
         clicked_index: int,
-        detail_resolver: Callable[[PlayItem], VodItem] | None = None,
+        detail_resolver: Callable[[PlayItem], VodItem | None] | None = None,
         resolved_vod_by_id: dict[str, VodItem] | None = None,
     ) -> PlayerSession:
         history = self._api_client.get_history(vod.vod_id)
@@ -59,6 +59,8 @@ class PlayerController:
             resolved_vod = session.detail_resolver(play_item)
             if resolved_vod is not None:
                 session.resolved_vod_by_id[play_item.vod_id] = resolved_vod
+        if resolved_vod is None:
+            return None
         url = resolved_vod.items[0].url if resolved_vod.items else resolved_vod.vod_play_url
         if not url:
             return None

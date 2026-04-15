@@ -62,7 +62,9 @@ class BrowseController:
     def __init__(self, api_client) -> None:
         self._api_client = api_client
 
-    def _merge_vod_metadata(self, resolved_vod: VodItem, fallback_vod: VodItem) -> VodItem:
+    def _merge_vod_metadata(self, resolved_vod: VodItem | None, fallback_vod: VodItem) -> VodItem:
+        if resolved_vod is None:
+            return fallback_vod
         return VodItem(
             vod_id=resolved_vod.vod_id or fallback_vod.vod_id,
             vod_name=resolved_vod.vod_name or fallback_vod.vod_name,

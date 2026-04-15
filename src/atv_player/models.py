@@ -87,5 +87,5 @@ class OpenPlayerRequest:
     source_path: str = ""
     source_vod_id: str = ""
     source_clicked_vod_id: str = ""
-    detail_resolver: Callable[[PlayItem], VodItem] | None = None
+    detail_resolver: Callable[[PlayItem], VodItem | None] | None = None
     resolved_vod_by_id: dict[str, VodItem] = field(default_factory=dict)

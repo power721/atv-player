@@ -120,3 +120,23 @@ def test_player_controller_resolve_play_item_detail_uses_session_cache() -> None
     assert first.vod_name == "Resolved Episode"
     assert second.vod_name == "Resolved Episode"
     assert playlist[0].url == "http://m/1.m3u8"
+
+
+def test_player_controller_resolve_play_item_detail_handles_missing_detail() -> None:
+    controller = PlayerController(FakeApiClient())
+    vod = VodItem(vod_id="movie-1", vod_name="Movie")
+    playlist = [PlayItem(title="Episode 1", url="http://m/existing.m3u8", vod_id="1$91483$1")]
+    calls: list[str] = []
+
+    def detail_resolver(item: PlayItem) -> None:
+        calls.append(item.vod_id)
+        return None
+
+    session = controller.create_session(vod, playlist, clicked_index=0, detail_resolver=detail_resolver)
+
+    resolved = controller.resolve_play_item_detail(session, playlist[0])
+
+    assert calls == ["1$91483$1"]
+    assert resolved is None
+    assert playlist[0].url == "http://m/existing.m3u8"
+    assert session.resolved_vod_by_id == {}

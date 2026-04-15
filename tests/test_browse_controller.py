@@ -257,6 +257,28 @@ def test_build_request_from_folder_item_resolves_clicked_item_detail_before_play
     assert request.resolved_vod_by_id["1$91483$1"].vod_name == "Resolved Episode"
 
 
+def test_build_request_from_folder_item_falls_back_to_clicked_item_when_detail_is_missing() -> None:
+    api = FakeApiClient()
+    api.detail_payload = {"list": []}
+    controller = BrowseController(api)
+    clicked_item = VodItem(
+        vod_id="v1",
+        vod_name="Folder Episode",
+        path="/TV/Ep1.mkv",
+        type=2,
+        vod_play_url="http://m/fallback.m3u8",
+        vod_content="folder content",
+    )
+
+    request = controller.build_request_from_folder_item(clicked_item, [clicked_item])
+
+    assert request.vod.vod_id == "v1"
+    assert request.vod.vod_name == "Folder Episode"
+    assert request.vod.vod_content == "folder content"
+    assert request.playlist[0].url == "http://m/fallback.m3u8"
+    assert request.resolved_vod_by_id["v1"].vod_name == "Folder Episode"
+
+
 def test_build_vod_list_path_wraps_root_without_encoding() -> None:
     assert build_vod_list_path("/") == "1$/$1"
 
