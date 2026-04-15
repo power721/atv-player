@@ -81,3 +81,22 @@ def test_bundle_path_for_target_matches_platform_output() -> None:
 def test_unknown_platform_is_rejected() -> None:
     with pytest.raises(ValueError, match="Unsupported target platform"):
         build.normalize_target_platform("plan9")
+
+
+def test_github_workflow_builds_all_target_platforms() -> None:
+    workflow = Path(".github/workflows/build.yml").read_text(encoding="utf-8")
+
+    assert "ubuntu-latest" in workflow
+    assert "macos-latest" in workflow
+    assert "windows-latest" in workflow
+    assert "uv run python build.py ${{ matrix.platform }}" in workflow
+    assert "actions/upload-artifact@v4" in workflow
+
+
+def test_github_workflow_releases_only_for_version_tags() -> None:
+    workflow = Path(".github/workflows/build.yml").read_text(encoding="utf-8")
+
+    assert "tags:" in workflow
+    assert "- 'v*'" in workflow
+    assert "if: startsWith(github.ref, 'refs/tags/v')" in workflow
+    assert "softprops/action-gh-release@v2" in workflow
