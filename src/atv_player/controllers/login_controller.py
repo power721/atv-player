@@ -1,8 +1,27 @@
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from typing import Protocol
+
 from atv_player.models import AppConfig
 
 
+class SettingsRepositoryLike(Protocol):
+    def load_config(self) -> AppConfig: ...
+
+    def save_config(self, config: AppConfig) -> None: ...
+
+
+class LoginApiLike(Protocol):
+    def login(self, username: str, password: str) -> Mapping[str, str]: ...
+
+
 class LoginController:
-    def __init__(self, repo, api_client) -> None:
+    def __init__(
+        self,
+        repo: SettingsRepositoryLike,
+        api_client: LoginApiLike | Callable[[str], LoginApiLike],
+    ) -> None:
         self._repo = repo
         self._api_client = api_client
 

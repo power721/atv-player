@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from threading import BoundedSemaphore
+from typing import cast
 
 from PySide6.QtCore import QObject, QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QPixmap
@@ -194,7 +195,9 @@ class DoubanPage(QWidget):
         self._poster_generation += 1
         while self.cards_layout.count():
             item = self.cards_layout.takeAt(0)
-            widget = item.widget()
+            if item is None:
+                continue
+            widget = cast(QWidget | None, item.widget())
             if widget is not None:
                 widget.deleteLater()
         self.card_buttons = []
@@ -207,7 +210,9 @@ class DoubanPage(QWidget):
     def _relayout_cards(self) -> None:
         while self.cards_layout.count():
             item = self.cards_layout.takeAt(0)
-            widget = item.widget()
+            if item is None:
+                continue
+            widget = cast(QWidget | None, item.widget())
             if widget is not None:
                 self.cards_layout.removeWidget(widget)
         columns = self._column_count_for_width(self.cards_scroll.viewport().width())

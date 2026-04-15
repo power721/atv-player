@@ -5,6 +5,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import httpx
 from PySide6.QtCore import QByteArray, QEvent, QObject, QSize, QTimer, Qt, Signal
@@ -29,6 +30,7 @@ from PySide6.QtWidgets import (
 from atv_player.models import VodItem
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
 from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url
+from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
 
 
 class ClickableSlider(QSlider):
@@ -40,14 +42,14 @@ class ClickableSlider(QSlider):
         super().__init__(orientation, parent)
         self._hover_tooltip_formatter: Callable[[int], str] | None = None
 
-    def mousePressEvent(self, event: QMouseEvent):
-        if event.button() == Qt.LeftButton:
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
             option = QStyleOptionSlider()
             self.initStyleOption(option)
             handle_rect = self.style().subControlRect(
-                QStyle.CC_Slider,
+                QStyle.ComplexControl.CC_Slider,
                 option,
-                QStyle.SC_SliderHandle,
+                QStyle.SubControl.SC_SliderHandle,
                 self,
             )
 
@@ -55,7 +57,7 @@ class ClickableSlider(QSlider):
                 super().mousePressEvent(event)
                 return
 
-            value = self._pixel_pos_to_value(event.position().x())
+            value = self._pixel_pos_to_value(int(event.position().x()))
             self.setValue(value)
             self.clicked_value.emit(value)
             event.accept()
@@ -161,7 +163,7 @@ class PlayerWindow(QWidget):
         self.setMinimumSize(1000, 700)
         self._icons_dir = Path(__file__).resolve().parent.parent / "icons"
         if self.config and self.config.player_window_geometry:
-            self.restoreGeometry(QByteArray(self.config.player_window_geometry))
+            self.restoreGeometry(to_qbytearray(self.config.player_window_geometry))
 
         self.video_widget = MpvWidget(self)
         self._configure_video_surface_widgets()
@@ -1214,7 +1216,7 @@ class PlayerWindow(QWidget):
         if self.config is None or not self.config.player_main_splitter_state:
             self.main_splitter.setSizes(self._DEFAULT_MAIN_SPLITTER_SIZES)
             return
-        restored = self.main_splitter.restoreState(QByteArray(self.config.player_main_splitter_state))
+        restored = self.main_splitter.restoreState(to_qbytearray(self.config.player_main_splitter_state))
         if not restored or self._has_collapsed_main_splitter_sizes():
             self.main_splitter.setSizes(self._DEFAULT_MAIN_SPLITTER_SIZES)
 
@@ -1224,18 +1226,18 @@ class PlayerWindow(QWidget):
 
     def _main_splitter_state_for_persistence(self) -> bytes:
         if not self.wide_button.isChecked() or not hasattr(self, "_sidebar_sizes"):
-            return bytes(self.main_splitter.saveState())
+            return qbytearray_to_bytes(self.main_splitter.saveState())
         current_sizes = self.main_splitter.sizes()
         try:
             self.main_splitter.setSizes(self._sidebar_sizes)
-            return bytes(self.main_splitter.saveState())
+            return qbytearray_to_bytes(self.main_splitter.saveState())
         finally:
             self.main_splitter.setSizes(current_sizes)
 
     def _persist_geometry(self) -> None:
         if self.config is None:
             return
-        self.config.player_window_geometry = bytes(self.saveGeometry())
+        self.config.player_window_geometry = qbytearray_to_bytes(self.saveGeometry())
         self.config.player_main_splitter_state = self._main_splitter_state_for_persistence()
         self._save_config()
 
@@ -1359,7 +1361,9 @@ class PlayerWindow(QWidget):
                 self._handle_video_mouse_activity()
             elif event.type() == QEvent.Type.Leave:
                 self._handle_video_leave()
-        return super().eventFilter(watched, event)
+        if not isinstance(watched, QObject):
+            return False
+        return super().eventFilter(cast(QObject, watched), event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Escape:

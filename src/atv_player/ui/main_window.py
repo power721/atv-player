@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from PySide6.QtCore import QByteArray, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -17,6 +19,7 @@ from atv_player.ui.browse_page import BrowsePage
 from atv_player.ui.douban_page import DoubanPage
 from atv_player.ui.history_page import HistoryPage
 from atv_player.ui.player_window import PlayerWindow
+from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
 
 
 class _EmptyDoubanController:
@@ -65,7 +68,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(container)
         self.setWindowTitle("alist-tvbox Desktop Player")
         if self.config.main_window_geometry:
-            self.restoreGeometry(QByteArray(self.config.main_window_geometry))
+            self.restoreGeometry(to_qbytearray(self.config.main_window_geometry))
 
         self.browse_page.open_requested.connect(self.open_player)
         self.history_page.open_detail_requested.connect(self.open_history_detail)
@@ -122,7 +125,7 @@ class MainWindow(QMainWindow):
         start_paused = self.config.last_player_paused if restore_paused_state else False
         if not restore_paused_state:
             self.config.last_player_paused = False
-        self.config.main_window_geometry = bytes(self.saveGeometry())
+        self.config.main_window_geometry = qbytearray_to_bytes(self.saveGeometry())
         self._save_config()
         self.player_window.open_session(session, start_paused=start_paused)
         self.player_window.show()
@@ -137,7 +140,7 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
-    def show_or_restore_player(self) -> None:
+    def show_or_restore_player(self) -> PlayerWindow | None:
         if self.player_window is not None and getattr(self.player_window, "session", None) is not None:
             self.config.last_active_window = "player"
             self._save_config()
@@ -148,7 +151,7 @@ class MainWindow(QMainWindow):
             return self.player_window
         return self.restore_last_player()
 
-    def restore_last_player(self):
+    def restore_last_player(self) -> PlayerWindow | None:
         mode = self.config.last_playback_mode
         try:
             if mode == "detail" and self.config.last_playback_vod_id:
@@ -173,7 +176,7 @@ class MainWindow(QMainWindow):
         path: str,
         clicked_vod_id: str,
         page_size: int = 50,
-    ):
+    ) -> tuple[Any | None, list[Any]]:
         page = 1
         total_pages = 1
         while page <= total_pages:
@@ -190,14 +193,14 @@ class MainWindow(QMainWindow):
 
     def _quit_application(self) -> None:
         self.config.last_active_window = "main"
-        self.config.main_window_geometry = bytes(self.saveGeometry())
+        self.config.main_window_geometry = qbytearray_to_bytes(self.saveGeometry())
         self._save_config()
         app = QApplication.instance()
         if app is not None:
             app.quit()
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        self.config.main_window_geometry = bytes(self.saveGeometry())
+        self.config.main_window_geometry = qbytearray_to_bytes(self.saveGeometry())
         if self.isVisible():
             self.config.last_active_window = "main"
         self._save_config()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QCloseEvent, QMouseEvent
@@ -36,7 +37,7 @@ class MpvWidget(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
-        self._player = None
+        self._player: Any | None = None
         self._placeholder = QLabel("mpv surface")
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._placeholder.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -104,22 +105,26 @@ class MpvWidget(QWidget):
 
     def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
         self._ensure_player()
+        player = self._player
+        if player is None:
+            return
         try:
             if start_seconds > 0:
-                self._player.loadfile(url, start=str(start_seconds))
+                player.loadfile(url, start=str(start_seconds))
             else:
-                self._player.play(url)
+                player.play(url)
         except Exception:
-            if getattr(self._player, "core_shutdown", False):
-                self._player = self._create_player()
+            if getattr(player, "core_shutdown", False):
+                player = self._create_player()
+                self._player = player
                 self._register_player_events()
                 if start_seconds > 0:
-                    self._player.loadfile(url, start=str(start_seconds))
+                    player.loadfile(url, start=str(start_seconds))
                 else:
-                    self._player.play(url)
+                    player.play(url)
             else:
                 raise
-        self._player.pause = pause
+        player.pause = pause
 
     def seek(self, seconds: int) -> None:
         if self._player is None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import threading
+from typing import Any, cast
 
 from PySide6.QtCore import QByteArray, QObject, Qt, Signal
 from PySide6.QtWidgets import (
@@ -23,20 +24,23 @@ from atv_player.api import ApiError, UnauthorizedError
 from atv_player.controllers.browse_controller import filter_search_results
 from atv_player.models import VodItem
 from atv_player.ui.filter_options import SEARCH_DRIVE_FILTER_OPTIONS
+from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
 from atv_player.ui.table_utils import configure_table_columns
 
 
 class SortableTableWidgetItem(QTableWidgetItem):
-    def __init__(self, text: str, sort_value: object, source_item: VodItem | None = None) -> None:
+    def __init__(self, text: str, sort_value: Any, source_item: VodItem | None = None) -> None:
         super().__init__(text)
         self._sort_value = sort_value
         if source_item is not None:
             self.setData(Qt.ItemDataRole.UserRole, source_item)
 
     def __lt__(self, other: object) -> bool:
-        if not isinstance(other, SortableTableWidgetItem):
-            return super().__lt__(other)
-        return self._sort_value < other._sort_value
+        if isinstance(other, SortableTableWidgetItem):
+            return self._sort_value < other._sort_value
+        if not isinstance(other, QTableWidgetItem):
+            return False
+        return super().__lt__(other)
 
 
 def _parse_size_value(text: str) -> tuple[int, float, str]:
@@ -367,7 +371,7 @@ class BrowsePage(QWidget):
     def _restore_content_splitter_state(self) -> bool:
         if self.config is None or not self.config.browse_content_splitter_state:
             return False
-        return self.content_splitter.restoreState(QByteArray(self.config.browse_content_splitter_state))
+        return self.content_splitter.restoreState(to_qbytearray(self.config.browse_content_splitter_state))
 
     def _persist_content_splitter_state(self, *_args) -> None:
         if self.config is None or self.search_panel.isHidden():
@@ -375,7 +379,7 @@ class BrowsePage(QWidget):
         left, right = self.content_splitter.sizes()
         if left <= 0 or right <= 0:
             return
-        self.config.browse_content_splitter_state = bytes(self.content_splitter.saveState())
+        self.config.browse_content_splitter_state = qbytearray_to_bytes(self.content_splitter.saveState())
         self._save_config()
 
     def _set_search_loading(self, loading: bool) -> None:
@@ -417,7 +421,9 @@ class BrowsePage(QWidget):
     def _clear_breadcrumbs(self) -> None:
         while self.breadcrumb_layout.count():
             item = self.breadcrumb_layout.takeAt(0)
-            widget = item.widget()
+            if item is None:
+                continue
+            widget = cast(QWidget | None, item.widget())
             if widget is not None:
                 widget.deleteLater()
         self.breadcrumb_buttons = []
