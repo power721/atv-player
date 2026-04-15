@@ -35,7 +35,10 @@ class DoubanController:
     def load_items(self, category_id: str, page: int) -> tuple[list[VodItem], int]:
         payload = self._api_client.list_douban_items(category_id, page=page, size=self._PAGE_SIZE)
         items = [_map_item(item) for item in payload.get("list", [])]
-        total = int(payload.get("total") or 0)
-        if total <= 0:
-            total = int(payload.get("pagecount") or 0) * self._PAGE_SIZE
+        total_raw = payload.get("total")
+        if total_raw is not None and int(total_raw) > 0:
+            total = int(total_raw)
+        else:
+            pagecount = int(payload.get("pagecount") or 0)
+            total = pagecount * self._PAGE_SIZE
         return items, total
