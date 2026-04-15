@@ -1162,7 +1162,7 @@ def test_player_window_populates_embedded_audio_options_after_open_session(qtbot
     window.open_session(make_player_session(start_index=0))
 
     assert [window.audio_combo.itemText(index) for index in range(window.audio_combo.count())] == [
-        "自动选择",
+        "音轨",
         "国语 (默认)",
         "English Dub",
     ]
@@ -1203,7 +1203,7 @@ def test_player_window_disables_audio_selector_when_current_item_has_no_embedded
     window.open_session(make_player_session(start_index=0))
 
     assert window.audio_combo.count() == 1
-    assert window.audio_combo.itemText(0) == "自动选择"
+    assert window.audio_combo.itemText(0) == "音轨"
     assert window.audio_combo.isEnabled() is False
 
 
@@ -1361,7 +1361,7 @@ def test_player_window_falls_back_to_auto_when_previous_audio_track_cannot_be_ma
     window.play_next()
 
     assert ("http://m/2.m3u8", "auto", None) in window.video.audio_apply_calls
-    assert window.audio_combo.currentText() == "自动选择"
+    assert window.audio_combo.currentText() == "音轨"
     assert window.audio_combo.isEnabled() is False
 
 
@@ -1399,7 +1399,7 @@ def test_player_window_logs_and_resets_when_audio_refresh_fails(qtbot) -> None:
 
     assert "音轨加载失败: boom" in window.log_view.toPlainText()
     assert window.audio_combo.count() == 1
-    assert window.audio_combo.itemText(0) == "自动选择"
+    assert window.audio_combo.itemText(0) == "音轨"
     assert window.audio_combo.isEnabled() is False
 
 
@@ -1439,7 +1439,7 @@ def test_player_window_refreshes_audio_options_when_mpv_reports_tracks_after_loa
     window.video_widget.audio_tracks_changed.emit()
 
     assert [window.audio_combo.itemText(index) for index in range(window.audio_combo.count())] == [
-        "自动选择",
+        "音轨",
         "国语 (默认)",
         "English Dub",
     ]
@@ -1482,7 +1482,7 @@ def test_player_window_populates_embedded_subtitle_options_after_open_session(qt
     window.open_session(make_player_session(start_index=0))
 
     assert [window.subtitle_combo.itemText(index) for index in range(window.subtitle_combo.count())] == [
-        "自动选择",
+        "字幕",
         "关闭字幕",
         "中文 (默认)",
         "English",
@@ -1518,7 +1518,7 @@ def test_player_window_disables_subtitle_selector_when_current_item_has_no_embed
     window.open_session(make_player_session(start_index=0))
 
     assert window.subtitle_combo.count() == 1
-    assert window.subtitle_combo.itemText(0) == "自动选择"
+    assert window.subtitle_combo.itemText(0) == "字幕"
     assert window.subtitle_combo.isEnabled() is False
 
 
@@ -1658,7 +1658,7 @@ def test_player_window_falls_back_to_auto_when_previous_track_cannot_be_matched(
     window.play_next()
 
     assert ("http://m/2.m3u8", "auto", None) in window.video.subtitle_apply_calls
-    assert window.subtitle_combo.currentText() == "自动选择"
+    assert window.subtitle_combo.currentText() == "字幕"
 
 
 def test_player_window_logs_and_resets_when_subtitle_refresh_fails(qtbot) -> None:
@@ -1689,7 +1689,7 @@ def test_player_window_logs_and_resets_when_subtitle_refresh_fails(qtbot) -> Non
 
     assert "字幕加载失败: boom" in window.log_view.toPlainText()
     assert window.subtitle_combo.count() == 1
-    assert window.subtitle_combo.itemText(0) == "自动选择"
+    assert window.subtitle_combo.itemText(0) == "字幕"
     assert window.subtitle_combo.isEnabled() is False
 
 
@@ -1724,7 +1724,7 @@ def test_player_window_refreshes_subtitle_options_when_mpv_reports_tracks_after_
     window.video_widget.subtitle_tracks_changed.emit()
 
     assert [window.subtitle_combo.itemText(index) for index in range(window.subtitle_combo.count())] == [
-        "自动选择",
+        "字幕",
         "关闭字幕",
         "中文 (默认)",
     ]
