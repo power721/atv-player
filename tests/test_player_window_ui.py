@@ -1,5 +1,5 @@
 from PySide6.QtCore import QByteArray, QEvent, Qt
-from PySide6.QtGui import QColor, QCursor, QKeyEvent, QMouseEvent, QPixmap
+from PySide6.QtGui import QColor, QCursor, QImage, QKeyEvent, QMouseEvent, QPixmap
 from PySide6.QtWidgets import QApplication, QComboBox
 from PySide6.QtWidgets import QSplitter
 from atv_player.controllers.player_controller import PlayerSession
@@ -224,13 +224,202 @@ def test_player_window_keeps_empty_reserved_poster_area_without_placeholder_text
     assert window.poster_label.minimumHeight() > 0
 
 
-def test_player_window_renders_remote_poster_via_backend_image_proxy(qtbot, monkeypatch, tmp_path) -> None:
+def test_player_window_starts_remote_poster_load_without_blocking_open_session(qtbot, monkeypatch) -> None:
+    started: list[str] = []
+
+    def fake_start(self, source: str, request_id: int) -> None:
+        started.append(source)
+
+    monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.load_calls.append((url, pause, start_seconds))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="九寨沟", vod_pic="https://img3.doubanio.com/view/photo/s_ratio_poster/public/p123.jpg"),
+        playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    rendered = window.poster_label.pixmap()
+    assert started == ["https://img3.doubanio.com/view/photo/s_ratio_poster/public/p123.jpg"]
+    assert rendered is None or rendered.isNull() is True
+    assert window.video.load_calls == [("http://m/1.m3u8", False, 0)]
+
+
+def test_player_window_ignores_stale_async_poster_results(qtbot, monkeypatch) -> None:
+    started_request_ids: list[int] = []
+
+    def fake_start(self, source: str, request_id: int) -> None:
+        started_request_ids.append(request_id)
+
+    monkeypatch.setattr(PlayerWindow, "_start_poster_load", fake_start)
+
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    first_image = QImage(20, 30, QImage.Format.Format_RGB32)
+    first_image.fill(QColor("red"))
+    second_image = QImage(20, 30, QImage.Format.Format_RGB32)
+    second_image.fill(QColor("blue"))
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="movie-1", vod_name="First", vod_pic="https://img3.doubanio.com/view/photo/s_ratio_poster/public/first.jpg"),
+            playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+        )
+    )
+    first_request_id = started_request_ids[-1]
+
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="movie-2", vod_name="Second", vod_pic="https://img3.doubanio.com/view/photo/s_ratio_poster/public/second.jpg"),
+            playlist=[PlayItem(title="正片", url="http://m/2.m3u8")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+        )
+    )
+    second_request_id = started_request_ids[-1]
+
+    window._handle_poster_load_finished(first_request_id, first_image)
+    stale_rendered = window.poster_label.pixmap()
+    assert stale_rendered is None or stale_rendered.isNull() is True
+
+    window._handle_poster_load_finished(second_request_id, second_image)
+
+    rendered = window.poster_label.pixmap()
+    assert rendered is not None
+    assert rendered.isNull() is False
+    assert rendered.toImage().pixelColor(0, 0) == QColor("blue")
+
+
+def test_player_window_shows_loaded_poster_over_video_until_playback_progress_appears(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self._duration = 0
+            self._position = 0
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def duration_seconds(self) -> int:
+            return self._duration
+
+        def position_seconds(self) -> int:
+            return self._position
+
+    image = QImage(20, 30, QImage.Format.Format_RGB32)
+    image.fill(QColor("green"))
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="movie-1", vod_name="Movie", vod_pic="https://img3.doubanio.com/view/photo/s_ratio_poster/public/p123.jpg"),
+            playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+        )
+    )
+
+    window._handle_poster_load_finished(window._poster_request_id, image)
+
+    assert window.video_poster_overlay.isHidden() is False
+    assert window.video_poster_overlay.pixmap() is not None
+    assert window.video_poster_overlay.pixmap().isNull() is False
+
+    window.video._duration = 120
+    window._sync_progress_slider()
+
+    assert window.video_poster_overlay.isHidden() is True
+
+
+def test_player_window_keeps_video_poster_overlay_hidden_when_no_poster_is_loaded(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def duration_seconds(self) -> int:
+            return 0
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="movie-1", vod_name="Movie", vod_pic=""),
+            playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+        )
+    )
+
+    assert window.video_poster_overlay.isHidden() is True
+
+
+def test_player_window_renders_remote_poster_via_direct_request_headers(qtbot, monkeypatch, tmp_path) -> None:
     poster_path = tmp_path / "poster.png"
     pixmap = QPixmap(20, 30)
     pixmap.fill(QColor("blue"))
     assert pixmap.save(str(poster_path)) is True
     poster_bytes = poster_path.read_bytes()
-    requested: list[str] = []
+    requests: list[tuple[str, dict[str, str], float]] = []
 
     class FakeResponse:
         def __init__(self, content: bytes) -> None:
@@ -239,8 +428,8 @@ def test_player_window_renders_remote_poster_via_backend_image_proxy(qtbot, monk
         def raise_for_status(self) -> None:
             return None
 
-    def fake_get(url: str, timeout: float) -> FakeResponse:
-        requested.append(url)
+    def fake_get(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+        requests.append((url, headers, timeout))
         return FakeResponse(poster_bytes)
 
     monkeypatch.setattr(
@@ -274,21 +463,190 @@ def test_player_window_renders_remote_poster_via_backend_image_proxy(qtbot, monk
         start_position_seconds=0,
         speed=1.0,
     )
-    window = PlayerWindow(
-        FakePlayerController(),
-        config=AppConfig(base_url="http://127.0.0.1:4567"),
-        save_config=lambda: None,
-    )
+    window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     window.video = FakeVideo()
 
     window.open_session(session)
+    qtbot.waitUntil(lambda: len(requests) == 1)
+    qtbot.waitUntil(lambda: (window.poster_label.pixmap() is not None and not window.poster_label.pixmap().isNull()))
 
     rendered = window.poster_label.pixmap()
     assert rendered is not None
     assert rendered.isNull() is False
-    assert requested == [
-        "http://127.0.0.1:4567/images?url=https%3A%2F%2Fimg3.doubanio.com%2Fview%2Fphoto%2Fm%2Fpublic%2Fp123.jpg"
+    assert requests == [
+        (
+            "https://img3.doubanio.com/view/photo/m/public/p123.jpg",
+            {
+                "Referer": "https://movie.douban.com/",
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+            },
+            3.0,
+        )
+    ]
+
+
+def test_player_window_uses_short_timeout_for_remote_poster_requests(qtbot, monkeypatch) -> None:
+    requested_timeouts: list[float] = []
+
+    class FakeResponse:
+        content = b""
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+        requested_timeouts.append(timeout)
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        player_window_module,
+        "httpx",
+        type("FakeHttpx", (), {"get": staticmethod(fake_get)}),
+        raising=False,
+    )
+
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="movie-1",
+            vod_name="九寨沟",
+            vod_pic="https://img3.doubanio.com/view/photo/s_ratio_poster/public/p123.jpg",
+        ),
+        playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+    qtbot.waitUntil(lambda: requested_timeouts == [3.0])
+
+    assert requested_timeouts == [3.0]
+
+
+def test_player_window_uses_youtube_referer_for_ytimg_posters(qtbot, monkeypatch) -> None:
+    requested_headers: list[dict[str, str]] = []
+
+    class FakeResponse:
+        content = b""
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+        requested_headers.append(headers)
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        player_window_module,
+        "httpx",
+        type("FakeHttpx", (), {"get": staticmethod(fake_get)}),
+        raising=False,
+    )
+
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Trailer", vod_pic="https://i.ytimg.com/vi/demo/maxresdefault.jpg"),
+        playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+    qtbot.waitUntil(lambda: len(requested_headers) == 1)
+
+    assert requested_headers == [
+        {
+            "Referer": "https://www.youtube.com/",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+        }
+    ]
+
+
+def test_player_window_uses_netease_referer_for_netease_posters(qtbot, monkeypatch) -> None:
+    requested_headers: list[dict[str, str]] = []
+
+    class FakeResponse:
+        content = b""
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+        requested_headers.append(headers)
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        player_window_module,
+        "httpx",
+        type("FakeHttpx", (), {"get": staticmethod(fake_get)}),
+        raising=False,
+    )
+
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Live", vod_pic="https://p1.cc.163.com/demo/poster.jpg"),
+        playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+    qtbot.waitUntil(lambda: len(requested_headers) == 1)
+
+    assert requested_headers == [
+        {
+            "Referer": "https://cc.163.com/",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+        }
     ]
 
 

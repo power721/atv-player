@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
-from urllib.parse import quote
 
 import httpx
-from PySide6.QtCore import QByteArray, QEvent, QSize, QTimer, Qt, Signal
-from PySide6.QtGui import QCloseEvent, QCursor, QIcon, QKeyEvent, QKeySequence, QMouseEvent, QPixmap, QShortcut
+from PySide6.QtCore import QByteArray, QEvent, QObject, QSize, QTimer, Qt, Signal
+from PySide6.QtGui import QCloseEvent, QCursor, QIcon, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPixmap, QShortcut
 from PySide6.QtWidgets import QApplication, QStyle, QStyleOptionSlider
 from PySide6.QtWidgets import (
     QComboBox,
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QSlider,
     QSpinBox,
     QSplitter,
+    QStackedLayout,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -70,12 +71,22 @@ class ClickableSlider(QSlider):
         return value
 
 
+class _PosterLoadSignals(QObject):
+    loaded = Signal(int, object)
+
+
 class PlayerWindow(QWidget):
     closed_to_main = Signal()
     _SEEK_SHORTCUT_SECONDS = 15
     _VOLUME_SHORTCUT_STEP = 5
     _CURSOR_HIDE_DELAY_MS = 3000
     _POSTER_SIZE = QSize(180, 260)
+    _POSTER_REQUEST_TIMEOUT_SECONDS = 10.0
+    _POSTER_USER_AGENT = (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
+    )
+    _DEFAULT_POSTER_REFERER = "https://movie.douban.com/"
 
     def __init__(self, controller, config=None, save_config=None) -> None:
         super().__init__()
@@ -93,6 +104,10 @@ class PlayerWindow(QWidget):
         self._app_event_filter_installed = False
         self._last_cursor_pos = None
         self._last_cursor_activity_ms = 0
+        self._poster_request_id = 0
+        self._video_surface_ready = False
+        self._poster_load_signals = _PosterLoadSignals()
+        self._poster_load_signals.loaded.connect(self._handle_poster_load_finished)
         self.setWindowTitle("alist-tvbox 播放器")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
@@ -144,6 +159,10 @@ class PlayerWindow(QWidget):
         self.poster_label.setMinimumSize(self._POSTER_SIZE)
         self.poster_label.setMaximumSize(self._POSTER_SIZE)
         self.poster_label.setText("")
+        self.video_poster_overlay = QLabel()
+        self.video_poster_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.video_poster_overlay.setText("")
+        self.video_poster_overlay.hide()
         self.metadata_view = QTextEdit()
         self.metadata_view.setReadOnly(True)
         self.log_view = QTextEdit()
@@ -222,7 +241,13 @@ class PlayerWindow(QWidget):
         video_container = QWidget()
         video_layout = QVBoxLayout(video_container)
         video_layout.setContentsMargins(0, 0, 0, 0)
-        video_layout.addWidget(self.video_widget)
+        self.video_stack = QWidget()
+        self.video_stack_layout = QStackedLayout(self.video_stack)
+        self.video_stack_layout.setContentsMargins(0, 0, 0, 0)
+        self.video_stack_layout.setStackingMode(QStackedLayout.StackingMode.StackAll)
+        self.video_stack_layout.addWidget(self.video_widget)
+        self.video_stack_layout.addWidget(self.video_poster_overlay)
+        video_layout.addWidget(self.video_stack)
 
         self.sidebar_splitter = QSplitter(Qt.Orientation.Vertical)
         self.sidebar_splitter.addWidget(self.playlist)
@@ -482,23 +507,38 @@ class PlayerWindow(QWidget):
         self.poster_label.clear()
         self.poster_label.setText("")
         self.poster_label.setPixmap(QPixmap())
+        self._clear_video_poster_overlay()
+
+    def _clear_video_poster_overlay(self) -> None:
+        self.video_poster_overlay.clear()
+        self.video_poster_overlay.setText("")
+        self.video_poster_overlay.setPixmap(QPixmap())
+        self.video_poster_overlay.hide()
+
+    def _show_video_poster_overlay(self, pixmap: QPixmap) -> None:
+        if pixmap.isNull() or self._video_surface_ready:
+            self.video_poster_overlay.hide()
+            return
+        target_size = self.video_stack.size()
+        if target_size.width() <= 0 or target_size.height() <= 0:
+            target_size = self._POSTER_SIZE
+        self.video_poster_overlay.setText("")
+        self.video_poster_overlay.setPixmap(
+            pixmap.scaled(
+                target_size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+        self.video_poster_overlay.show()
 
     def _load_poster_pixmap(self, source: str) -> QPixmap:
         if not source:
             return QPixmap()
-        pixmap = QPixmap()
         source_path = Path(source)
-        if source_path.is_file():
-            pixmap = QPixmap(str(source_path))
-        else:
-            image_url = self._image_proxy_url(source)
-            if image_url:
-                try:
-                    response = httpx.get(image_url, timeout=30.0)
-                    response.raise_for_status()
-                except Exception:
-                    return QPixmap()
-                pixmap.loadFromData(response.content)
+        if not source_path.is_file():
+            return QPixmap()
+        pixmap = QPixmap(str(source_path))
         if pixmap.isNull():
             return QPixmap()
         return pixmap.scaled(
@@ -507,24 +547,84 @@ class PlayerWindow(QWidget):
             Qt.TransformationMode.SmoothTransformation,
         )
 
-    def _image_proxy_url(self, source: str) -> str:
-        if not source or self.config is None or not self.config.base_url:
-            return ""
+    def _normalize_poster_url(self, source: str) -> str:
         normalized = source
         if "doubanio.com" in normalized:
             normalized = normalized.replace("s_ratio_poster", "m")
-        return f"{self.config.base_url.rstrip('/')}/images?url={quote(normalized, safe='')}"
+        return normalized
+
+    def _poster_request_headers(self, image_url: str) -> dict[str, str]:
+        referer = self._DEFAULT_POSTER_REFERER
+        if "ytimg.com" in image_url:
+            referer = "https://www.youtube.com/"
+        elif "netease.com" in image_url or "163.com" in image_url:
+            referer = "https://cc.163.com/"
+        return {
+            "Referer": referer,
+            "User-Agent": self._POSTER_USER_AGENT,
+        }
+
+    def _start_poster_load(self, source: str, request_id: int) -> None:
+        image_url = self._normalize_poster_url(source)
+        if not image_url:
+            return
+        headers = self._poster_request_headers(image_url)
+
+        def load() -> None:
+            image = self._load_remote_poster_image(image_url, headers)
+            self._poster_load_signals.loaded.emit(request_id, image)
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def _load_remote_poster_image(self, image_url: str, headers: dict[str, str]) -> QImage | None:
+        try:
+            response = httpx.get(
+                image_url,
+                headers=headers,
+                timeout=self._POSTER_REQUEST_TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+        except Exception:
+            return None
+        image = QImage()
+        image.loadFromData(response.content)
+        if image.isNull():
+            return None
+        return image.scaled(
+            self._POSTER_SIZE,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+
+    def _handle_poster_load_finished(self, request_id: int, image: QImage | None) -> None:
+        if request_id != self._poster_request_id:
+            return
+        if image is None or image.isNull():
+            self._clear_poster()
+            return
+        pixmap = QPixmap.fromImage(image)
+        self.poster_label.setText("")
+        self.poster_label.setPixmap(pixmap)
+        self._show_video_poster_overlay(pixmap)
 
     def _render_poster(self) -> None:
+        self._poster_request_id += 1
+        self._video_surface_ready = False
         if self.session is None:
             self._clear_poster()
             return
-        pixmap = self._load_poster_pixmap(self.session.vod.vod_pic)
-        if pixmap.isNull():
+        source = self.session.vod.vod_pic
+        if not source:
             self._clear_poster()
             return
-        self.poster_label.setText("")
-        self.poster_label.setPixmap(pixmap)
+        pixmap = self._load_poster_pixmap(source)
+        if not pixmap.isNull():
+            self.poster_label.setText("")
+            self.poster_label.setPixmap(pixmap)
+            self._show_video_poster_overlay(pixmap)
+            return
+        self._clear_poster()
+        self._start_poster_load(source, self._poster_request_id)
 
     def _reset_log(self) -> None:
         self.log_view.clear()
@@ -715,6 +815,9 @@ class PlayerWindow(QWidget):
             return
         duration = self.video.duration_seconds() if hasattr(self.video, "duration_seconds") else 0
         position = self.video.position_seconds()
+        if duration > 0 or position > 0:
+            self._video_surface_ready = True
+            self.video_poster_overlay.hide()
         if (
             self.session is not None
             and self.current_index + 1 < len(self.session.playlist)
@@ -846,6 +949,8 @@ class PlayerWindow(QWidget):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         try:
+            self._poster_request_id += 1
+            self._video_surface_ready = False
             self.report_progress()
         finally:
             self.report_timer.stop()
