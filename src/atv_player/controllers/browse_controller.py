@@ -169,6 +169,8 @@ class BrowseController:
         resolved_vod = self._merge_vod_metadata(self.resolve_folder_play_item(clicked_playlist_item), clicked_item)
         resolved_vod.vod_id = clicked_item.vod_id
         clicked_playlist_item.url = self._first_play_url(resolved_vod)
+        if not clicked_playlist_item.url:
+            raise ValueError(f"没有可用的播放地址: {clicked_item.vod_name}")
         return OpenPlayerRequest(
             vod=resolved_vod,
             playlist=playlist,
