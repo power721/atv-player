@@ -91,9 +91,12 @@ class BrowseController:
             return vod.items[0].url
         return vod.vod_play_url
 
-    def resolve_folder_play_item(self, item: PlayItem) -> VodItem:
-        payload = self._api_client.get_detail(item.vod_id)
-        return _map_vod_item(payload["list"][0])
+    def resolve_folder_play_item(self, item: PlayItem) -> VodItem | None:
+        try:
+            payload = self._api_client.get_detail(item.vod_id)
+            return _map_vod_item(payload["list"][0])
+        except (KeyError, IndexError):
+            return None
 
     def load_folder(self, path: str, page: int = 1, size: int = 50) -> tuple[list[VodItem], int]:
         payload = self._api_client.list_vod(build_vod_list_path(path), page=page, size=size)
