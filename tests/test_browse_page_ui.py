@@ -140,6 +140,13 @@ def test_history_page_centers_content_container(qtbot) -> None:
     assert abs(container_center - page_center) <= 5
 
 
+def test_history_page_exposes_refresh_button(qtbot) -> None:
+    page = HistoryPage(FakeHistoryController())
+    qtbot.addWidget(page)
+
+    assert page.refresh_button.text() == "刷新"
+
+
 def test_browse_page_persists_and_restores_content_splitter_state(qtbot) -> None:
     saved = {"count": 0}
     config = AppConfig()
@@ -615,6 +622,29 @@ def test_history_page_delete_reloads_previous_page_when_last_page_becomes_empty(
 
     assert controller.calls[-1] == (1, 50)
     assert page.current_page == 1
+
+
+def test_history_page_refresh_reuses_current_page_state(qtbot) -> None:
+    class Controller:
+        def __init__(self) -> None:
+            self.calls: list[tuple[int, int]] = []
+
+        def load_page(self, page: int, size: int):
+            self.calls.append((page, size))
+            return [], 120
+
+    controller = Controller()
+    page = HistoryPage(controller)
+    qtbot.addWidget(page)
+
+    page.page_size_combo.setCurrentText("30")
+    page.load_history()
+    page.next_page()
+    controller.calls.clear()
+
+    page.refresh_button.click()
+
+    assert controller.calls == [(2, 30)]
 
 
 def test_browse_page_refresh_reuses_current_page_state(qtbot) -> None:

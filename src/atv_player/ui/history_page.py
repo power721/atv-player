@@ -30,6 +30,7 @@ class HistoryPage(QWidget):
         self.controller = controller
         self.delete_button = QPushButton("删除")
         self.clear_button = QPushButton("清空")
+        self.refresh_button = QPushButton("刷新")
         self.prev_page_button = QPushButton("上一页")
         self.next_page_button = QPushButton("下一页")
         self.page_label = QLabel("第 1 / 1 页")
@@ -51,6 +52,7 @@ class HistoryPage(QWidget):
         actions = QHBoxLayout()
         actions.addWidget(self.delete_button)
         actions.addWidget(self.clear_button)
+        actions.addWidget(self.refresh_button)
         actions.addStretch(1)
         actions.addWidget(self.prev_page_button)
         actions.addWidget(self.page_label)
@@ -76,6 +78,7 @@ class HistoryPage(QWidget):
 
         self.delete_button.clicked.connect(self.delete_selected)
         self.clear_button.clicked.connect(self.clear_all)
+        self.refresh_button.clicked.connect(self.load_history)
         self.table.cellDoubleClicked.connect(self._open_selected)
         self.prev_page_button.clicked.connect(self.previous_page)
         self.next_page_button.clicked.connect(self.next_page)
