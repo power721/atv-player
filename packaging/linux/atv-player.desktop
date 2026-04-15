@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=atv-player
+Exec=atv-player
+Icon=atv-player
+Terminal=false
+Categories=AudioVideo;Player;

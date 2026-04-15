@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import os
 import platform
+import shutil
+import stat
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -57,7 +59,7 @@ def build_target(value: str | None) -> BuildTarget:
     if platform_id == "linux":
         return BuildTarget(
             platform_id="linux",
-            archive_ext="tar.gz",
+            archive_ext="AppImage",
             data_separator=":",
             windowed=False,
             onefile=False,
@@ -82,6 +84,10 @@ def build_target(value: str | None) -> BuildTarget:
 def build_archive_name(target_platform: str, arch: str | None = None) -> str:
     target = build_target(target_platform)
     return f"{APP_NAME}-{target.platform_id}-{normalize_arch(arch)}.{target.archive_ext}"
+
+
+def release_artifact_path_for_target(target_platform: str, arch: str | None = None) -> Path:
+    return DIST_DIR / build_archive_name(target_platform, arch)
 
 
 def data_mapping(source: Path, destination: str, target_platform: str) -> str:
@@ -129,6 +135,69 @@ def find_libmpv(target_platform: str) -> list[tuple[Path, str]]:
     raise FileNotFoundError("libmpv was not found on Windows")
 
 
+def linux_appdir_path(arch: str | None = None) -> Path:
+    return BUILD_DIR / "appimage" / f"{APP_NAME}-{normalize_arch(arch)}.AppDir"
+
+
+def linux_appimage_arch(arch: str | None = None) -> str:
+    normalized = normalize_arch(arch)
+    return {"x64": "x86_64", "arm64": "aarch64"}.get(normalized, normalized)
+
+
+def appimage_tool_path() -> Path:
+    explicit = os.environ.get("APPIMAGE_TOOL")
+    if explicit:
+        path = Path(explicit)
+        if path.exists():
+            return path
+        raise FileNotFoundError(f"AppImage tool was not found: {path}")
+    tool = shutil.which("appimagetool")
+    if tool:
+        return Path(tool)
+    raise FileNotFoundError("appimagetool was not found. Set APPIMAGE_TOOL or install appimagetool.")
+
+
+def prepare_linux_appdir(bundle_path: Path, arch: str | None = None) -> Path:
+    if not bundle_path.exists():
+        raise FileNotFoundError(f"Missing Linux bundle directory: {bundle_path}")
+
+    appdir_path = linux_appdir_path(arch)
+    if appdir_path.exists():
+        shutil.rmtree(appdir_path)
+    appdir_path.mkdir(parents=True)
+
+    packaging_dir = PROJECT_ROOT / "packaging" / "linux"
+    app_run_source = packaging_dir / "AppRun"
+    desktop_source = packaging_dir / f"{APP_NAME}.desktop"
+    icon_source = ICONS_DIR / "app.svg"
+    for required_path in (app_run_source, desktop_source, icon_source):
+        if not required_path.exists():
+            raise FileNotFoundError(f"Missing Linux packaging asset: {required_path}")
+
+    app_run_target = appdir_path / "AppRun"
+    shutil.copy2(app_run_source, app_run_target)
+    app_run_target.chmod(app_run_target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    shutil.copy2(desktop_source, appdir_path / f"{APP_NAME}.desktop")
+    shutil.copy2(icon_source, appdir_path / f"{APP_NAME}.svg")
+    shutil.copy2(icon_source, appdir_path / ".DirIcon")
+
+    payload_dir = appdir_path / "usr" / "lib" / APP_NAME
+    payload_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(bundle_path, payload_dir)
+    return appdir_path
+
+
+def build_linux_appimage(appdir_path: Path, output_path: Path, arch: str | None = None) -> Path:
+    tool_path = appimage_tool_path()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env["ARCH"] = linux_appimage_arch(arch)
+    subprocess.run([str(tool_path), str(appdir_path), str(output_path)], check=True, cwd=PROJECT_ROOT, env=env)
+    if not output_path.exists():
+        raise FileNotFoundError(f"Missing AppImage output: {output_path}")
+    return output_path
+
+
 def build_pyinstaller_command(target_platform: str) -> list[str]:
     target = build_target(target_platform)
     command = [
@@ -174,6 +243,9 @@ def build(target_platform: str) -> Path:
     bundle_path = bundle_path_for_target(target_platform)
     if not bundle_path.exists():
         raise FileNotFoundError(f"Missing build output: {bundle_path}")
+    if normalize_target_platform(target_platform) == "linux":
+        appdir_path = prepare_linux_appdir(bundle_path)
+        return build_linux_appimage(appdir_path, release_artifact_path_for_target(target_platform))
     return bundle_path
 
 

@@ -44,7 +44,16 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libmpv-dev libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0
+          sudo apt-get install -y curl libmpv-dev libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0
+
+      - name: Install Linux AppImage tool
+        if: matrix.platform == 'linux'
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/appimagetool-x86_64.AppImage" \
+            "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x "$RUNNER_TEMP/appimagetool-x86_64.AppImage"
+          echo "APPIMAGE_TOOL=$RUNNER_TEMP/appimagetool-x86_64.AppImage" >> "$GITHUB_ENV"
+          echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"
 
       - name: Install macOS system dependencies
         if: matrix.platform == 'macos'
@@ -67,13 +76,15 @@ jobs:
       - name: Build application
         run: uv run python build.py ${{ matrix.platform }}
 
-      - name: Resolve archive name (POSIX)
+      - name: Resolve artifact paths (POSIX)
         if: matrix.platform != 'windows'
         run: |
           ARCHIVE_NAME=$(uv run python -c "import build; print(build.build_archive_name('${{ matrix.platform }}'))")
           BUNDLE_PATH=$(uv run python -c "import build; print(build.bundle_path_for_target('${{ matrix.platform }}'))")
+          RELEASE_ASSET_PATH=$(uv run python -c "import build; print(build.release_artifact_path_for_target('${{ matrix.platform }}'))")
           echo "ARCHIVE_NAME=$ARCHIVE_NAME" >> "$GITHUB_ENV"
           echo "BUNDLE_PATH=$BUNDLE_PATH" >> "$GITHUB_ENV"
+          echo "RELEASE_ASSET_PATH=$RELEASE_ASSET_PATH" >> "$GITHUB_ENV"
 
       - name: Resolve archive name (Windows)
         if: matrix.platform == 'windows'
@@ -87,8 +98,7 @@ jobs:
       - name: Archive Linux bundle
         if: matrix.platform == 'linux'
         run: |
-          test -d "$BUNDLE_PATH"
-          tar -C dist -czf "dist/$ARCHIVE_NAME" atv-player
+          test -f "$RELEASE_ASSET_PATH"
 
       - name: Archive macOS bundle
         if: matrix.platform == 'macos'
@@ -129,7 +139,7 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.exe" \) -exec cp {} release-assets/ \;
+          find artifacts -type f \( -name "*.AppImage" -o -name "*.zip" -o -name "*.exe" \) -exec cp {} release-assets/ \;
           ls -la release-assets
 
       - name: Create GitHub Release

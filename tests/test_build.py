@@ -17,9 +17,19 @@ def test_normalize_target_platform_maps_runtime_names(monkeypatch) -> None:
 
 
 def test_build_archive_name_uses_normalized_architecture() -> None:
-    assert build.build_archive_name("linux", "x86_64") == "atv-player-linux-x64.tar.gz"
+    assert build.build_archive_name("linux", "x86_64") == "atv-player-linux-x64.AppImage"
     assert build.build_archive_name("Darwin", "aarch64") == "atv-player-macos-arm64.zip"
     assert build.build_archive_name("windows", "AMD64") == "atv-player-windows-x64.exe"
+
+
+def test_build_target_linux_uses_appimage_release_format() -> None:
+    target = build.build_target("linux")
+
+    assert target.platform_id == "linux"
+    assert target.archive_ext == "AppImage"
+    assert target.data_separator == ":"
+    assert target.windowed is False
+    assert target.onefile is False
 
 
 def test_build_target_windows_uses_onefile_mode() -> None:
@@ -103,6 +113,86 @@ def test_bundle_path_for_target_matches_platform_output() -> None:
     assert build.bundle_path_for_target("windows") == build.DIST_DIR / "atv-player.exe"
 
 
+def test_release_artifact_path_for_target_matches_platform_output() -> None:
+    assert build.release_artifact_path_for_target("linux", "x86_64") == build.DIST_DIR / "atv-player-linux-x64.AppImage"
+    assert build.release_artifact_path_for_target("macos", "arm64") == build.DIST_DIR / "atv-player-macos-arm64.zip"
+    assert build.release_artifact_path_for_target("windows", "AMD64") == build.DIST_DIR / "atv-player-windows-x64.exe"
+
+
+def test_prepare_linux_appdir_copies_bundle_and_launcher_assets(monkeypatch, tmp_path) -> None:
+    project_root = tmp_path / "project"
+    bundle_dir = project_root / "dist" / "atv-player"
+    bundle_dir.mkdir(parents=True)
+    (bundle_dir / "atv-player").write_text("binary", encoding="utf-8")
+    icons_dir = project_root / "src" / "atv_player" / "icons"
+    icons_dir.mkdir(parents=True)
+    (icons_dir / "app.svg").write_text("<svg />", encoding="utf-8")
+    packaging_dir = project_root / "packaging" / "linux"
+    packaging_dir.mkdir(parents=True)
+    (packaging_dir / "AppRun").write_text(
+        "#!/bin/sh\nexec \"$APPDIR/usr/lib/atv-player/atv-player\" \"$@\"\n",
+        encoding="utf-8",
+    )
+    (packaging_dir / "atv-player.desktop").write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=atv-player\n"
+        "Exec=atv-player\n"
+        "Icon=atv-player\n"
+        "Terminal=false\n"
+        "Categories=AudioVideo;Player;\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(build, "PROJECT_ROOT", project_root)
+    monkeypatch.setattr(build, "BUILD_DIR", project_root / "build")
+    monkeypatch.setattr(build, "DIST_DIR", project_root / "dist")
+    monkeypatch.setattr(build, "ICONS_DIR", icons_dir)
+
+    appdir_path = build.prepare_linux_appdir(bundle_dir, "x86_64")
+
+    assert appdir_path == project_root / "build" / "appimage" / "atv-player-x64.AppDir"
+    assert (appdir_path / "AppRun").exists()
+    assert (appdir_path / "atv-player.desktop").exists()
+    assert (appdir_path / ".DirIcon").exists()
+    assert (appdir_path / "atv-player.svg").exists()
+    assert (appdir_path / "usr" / "lib" / "atv-player" / "atv-player").exists()
+
+
+def test_build_linux_appimage_uses_appimagetool_with_normalized_arch(monkeypatch, tmp_path) -> None:
+    appdir_path = tmp_path / "atv-player-x64.AppDir"
+    appdir_path.mkdir()
+    output_path = tmp_path / "atv-player-linux-x64.AppImage"
+    tool_path = tmp_path / "appimagetool"
+    tool_path.write_text("", encoding="utf-8")
+    run_calls: dict[str, object] = {}
+
+    monkeypatch.setattr(build, "appimage_tool_path", lambda: tool_path)
+
+    def fake_run(command, check, cwd, env):
+        run_calls["command"] = command
+        run_calls["check"] = check
+        run_calls["cwd"] = cwd
+        run_calls["env"] = env
+        output_path.write_bytes(b"appimage")
+
+    monkeypatch.setattr(build.subprocess, "run", fake_run)
+
+    build.build_linux_appimage(appdir_path, output_path, "x86_64")
+
+    assert run_calls["command"] == [str(tool_path), str(appdir_path), str(output_path)]
+    assert run_calls["check"] is True
+    assert run_calls["cwd"] == build.PROJECT_ROOT
+    assert run_calls["env"]["ARCH"] == "x86_64"
+
+
+def test_appimage_tool_path_prefers_environment_variable(monkeypatch, tmp_path) -> None:
+    tool_path = tmp_path / "appimagetool"
+    tool_path.write_text("", encoding="utf-8")
+    monkeypatch.setenv("APPIMAGE_TOOL", str(tool_path))
+
+    assert build.appimage_tool_path() == tool_path
+
+
 def test_unknown_platform_is_rejected() -> None:
     with pytest.raises(ValueError, match="Unsupported target platform"):
         build.normalize_target_platform("plan9")
@@ -134,3 +224,13 @@ def test_github_workflow_uploads_windows_exe_and_releases_it() -> None:
     assert "path: dist/${{ env.ARCHIVE_NAME }}" in workflow
     assert '-name "*.exe"' in workflow
     assert 'Compress-Archive -Path "$env:BUNDLE_PATH\\*"' not in workflow
+
+
+def test_github_workflow_uploads_linux_appimage_and_releases_it() -> None:
+    workflow = Path(".github/workflows/build.yml").read_text(encoding="utf-8")
+
+    assert "appimagetool-x86_64.AppImage" in workflow
+    assert "APPIMAGE_EXTRACT_AND_RUN=1" in workflow
+    assert "release_artifact_path_for_target" in workflow
+    assert '-name "*.AppImage"' in workflow
+    assert 'tar -C dist -czf "dist/$ARCHIVE_NAME" atv-player' not in workflow
