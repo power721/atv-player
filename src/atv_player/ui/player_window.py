@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import cast
 
 import httpx
-from PySide6.QtCore import QByteArray, QEvent, QObject, QSize, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QSize, QTimer, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QCursor, QIcon, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPixmap, QShortcut
 from PySide6.QtWidgets import QApplication, QStyle, QStyleOptionSlider, QToolTip
 from PySide6.QtWidgets import (

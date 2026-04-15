@@ -4,7 +4,7 @@ from datetime import datetime
 import threading
 from typing import Any, cast
 
-from PySide6.QtCore import QByteArray, QObject, Qt, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,

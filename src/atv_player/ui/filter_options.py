@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from atv_player.share_types import SHARE_TYPE_NAME_BY_ID
-
 
 SEARCH_DRIVE_FILTER_OPTIONS: list[tuple[str, str]] = [
     ("全部", ""),

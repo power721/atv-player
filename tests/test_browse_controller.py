@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from atv_player.controllers.browse_controller import BrowseController, build_vod_list_path, filter_search_results
-from atv_player.models import PlayItem, VodItem
+from atv_player.models import VodItem
 
 
 class FakeApiClient:
