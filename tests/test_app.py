@@ -22,8 +22,21 @@ class FakeDoubanController:
 
 
 class FakePlayerController:
-    def create_session(self, vod, playlist, clicked_index: int):
-        return {"vod": vod, "playlist": playlist, "clicked_index": clicked_index}
+    def create_session(
+        self,
+        vod,
+        playlist,
+        clicked_index: int,
+        detail_resolver=None,
+        resolved_vod_by_id=None,
+    ):
+        return {
+            "vod": vod,
+            "playlist": playlist,
+            "clicked_index": clicked_index,
+            "detail_resolver": detail_resolver,
+            "resolved_vod_by_id": resolved_vod_by_id or {},
+        }
 
 
 def test_main_window_starts_on_douban_tab(qtbot) -> None:
@@ -496,3 +509,74 @@ def test_main_window_restore_last_player_opens_paused_from_config(qtbot, monkeyp
 
     assert restored is window.player_window
     assert window.player_window.opened[0][1] is True
+
+
+def test_main_window_restore_last_player_rebuilds_folder_request_with_detail_resolver(qtbot) -> None:
+    class RestoreBrowseController:
+        def __init__(self) -> None:
+            self.load_calls: list[str] = []
+            self.request_calls: list[str] = []
+
+        def load_folder(self, path: str, page: int = 1, size: int = 50):
+            self.load_calls.append(path)
+            return [VodItem(vod_id="1$91483$1", vod_name="Episode 1", path="/TV/Ep1.mkv", type=2)], 1
+
+        def build_request_from_folder_item(self, clicked, items):
+            self.request_calls.append(clicked.vod_id)
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=clicked.vod_id, vod_name="Episode 1"),
+                playlist=[PlayItem(title="Episode 1", url="", vod_id=clicked.vod_id)],
+                clicked_index=0,
+                source_mode="folder",
+                source_path="/TV",
+                source_vod_id=clicked.vod_id,
+                source_clicked_vod_id=clicked.vod_id,
+                detail_resolver=lambda item: VodItem(vod_id=item.vod_id, vod_name="Resolved Episode"),
+                resolved_vod_by_id={},
+            )
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.opened: list[tuple[object, bool]] = []
+            self.opened_session = None
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+            self.opened_session = session
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    config = AppConfig(
+        last_active_window="player",
+        last_playback_mode="folder",
+        last_playback_path="/TV",
+        last_playback_clicked_vod_id="1$91483$1",
+        last_player_paused=True,
+    )
+    window = MainWindow(
+        browse_controller=RestoreBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+
+    import atv_player.ui.main_window as main_window_module_local
+
+    original = main_window_module_local.PlayerWindow
+    main_window_module_local.PlayerWindow = RecordingPlayerWindow
+    try:
+        restored = window.restore_last_player()
+    finally:
+        main_window_module_local.PlayerWindow = original
+
+    assert restored is window.player_window
+    assert window.player_window.opened_session["detail_resolver"] is not None

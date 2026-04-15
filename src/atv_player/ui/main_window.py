@@ -107,6 +107,8 @@ class MainWindow(QMainWindow):
             request.vod,
             request.playlist,
             request.clicked_index,
+            detail_resolver=request.detail_resolver,
+            resolved_vod_by_id=request.resolved_vod_by_id,
         )
         if self.player_window is None:
             self.player_window = PlayerWindow(self.player_controller, self.config, self._save_config)

@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from time import time
 
 from atv_player.models import PlayItem, VodItem
@@ -14,6 +15,8 @@ class PlayerSession:
     speed: float
     opening_seconds: int = 0
     ending_seconds: int = 0
+    detail_resolver: Callable[[PlayItem], VodItem] | None = None
+    resolved_vod_by_id: dict[str, VodItem] = field(default_factory=dict)
 
 
 class PlayerController:
@@ -25,6 +28,8 @@ class PlayerController:
         vod: VodItem,
         playlist: list[PlayItem],
         clicked_index: int,
+        detail_resolver: Callable[[PlayItem], VodItem] | None = None,
+        resolved_vod_by_id: dict[str, VodItem] | None = None,
     ) -> PlayerSession:
         history = self._api_client.get_history(vod.vod_id)
         start_index = resolve_resume_index(history, playlist, clicked_index)
@@ -38,7 +43,20 @@ class PlayerController:
             speed=speed,
             opening_seconds=int((history.opening if history else 0) / 1000),
             ending_seconds=int((history.ending if history else 0) / 1000),
+            detail_resolver=detail_resolver,
+            resolved_vod_by_id=dict(resolved_vod_by_id or {}),
         )
+
+    def resolve_play_item_detail(self, session: PlayerSession, play_item: PlayItem) -> VodItem | None:
+        if not play_item.vod_id or session.detail_resolver is None:
+            return None
+        if play_item.vod_id in session.resolved_vod_by_id:
+            resolved_vod = session.resolved_vod_by_id[play_item.vod_id]
+        else:
+            resolved_vod = session.detail_resolver(play_item)
+            session.resolved_vod_by_id[play_item.vod_id] = resolved_vod
+        play_item.url = resolved_vod.items[0].url if resolved_vod.items else resolved_vod.vod_play_url
+        return resolved_vod
 
     def report_progress(
         self,
