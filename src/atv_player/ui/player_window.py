@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.player.mpv_widget import MpvWidget
+from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url
 
 
 class ClickableSlider(QSlider):
@@ -82,11 +83,6 @@ class PlayerWindow(QWidget):
     _CURSOR_HIDE_DELAY_MS = 3000
     _POSTER_SIZE = QSize(180, 260)
     _POSTER_REQUEST_TIMEOUT_SECONDS = 10.0
-    _POSTER_USER_AGENT = (
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
-    )
-    _DEFAULT_POSTER_REFERER = "https://movie.douban.com/"
 
     def __init__(self, controller, config=None, save_config=None) -> None:
         super().__init__()
@@ -547,54 +543,21 @@ class PlayerWindow(QWidget):
             Qt.TransformationMode.SmoothTransformation,
         )
 
-    def _normalize_poster_url(self, source: str) -> str:
-        normalized = source
-        if "doubanio.com" in normalized:
-            normalized = normalized.replace("s_ratio_poster", "m")
-        return normalized
-
-    def _poster_request_headers(self, image_url: str) -> dict[str, str]:
-        referer = self._DEFAULT_POSTER_REFERER
-        if "ytimg.com" in image_url:
-            referer = "https://www.youtube.com/"
-        elif "netease.com" in image_url or "163.com" in image_url:
-            referer = "https://cc.163.com/"
-        return {
-            "Referer": referer,
-            "User-Agent": self._POSTER_USER_AGENT,
-        }
-
     def _start_poster_load(self, source: str, request_id: int) -> None:
-        image_url = self._normalize_poster_url(source)
+        image_url = normalize_poster_url(source)
         if not image_url:
             return
-        headers = self._poster_request_headers(image_url)
 
         def load() -> None:
-            image = self._load_remote_poster_image(image_url, headers)
+            image = load_remote_poster_image(
+                image_url,
+                self._POSTER_SIZE,
+                timeout=self._POSTER_REQUEST_TIMEOUT_SECONDS,
+                get=httpx.get,
+            )
             self._poster_load_signals.loaded.emit(request_id, image)
 
         threading.Thread(target=load, daemon=True).start()
-
-    def _load_remote_poster_image(self, image_url: str, headers: dict[str, str]) -> QImage | None:
-        try:
-            response = httpx.get(
-                image_url,
-                headers=headers,
-                timeout=self._POSTER_REQUEST_TIMEOUT_SECONDS,
-            )
-            response.raise_for_status()
-        except Exception:
-            return None
-        image = QImage()
-        image.loadFromData(response.content)
-        if image.isNull():
-            return None
-        return image.scaled(
-            self._POSTER_SIZE,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
 
     def _handle_poster_load_finished(self, request_id: int, image: QImage | None) -> None:
         if request_id != self._poster_request_id:
