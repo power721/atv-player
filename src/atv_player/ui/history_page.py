@@ -5,7 +5,9 @@ from datetime import datetime
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QHBoxLayout,
+    QLabel,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -27,6 +29,10 @@ class HistoryPage(QWidget):
         self.controller = controller
         self.delete_button = QPushButton("删除")
         self.clear_button = QPushButton("清空")
+        self.prev_page_button = QPushButton("上一页")
+        self.next_page_button = QPushButton("下一页")
+        self.page_label = QLabel("第 1 / 1 页")
+        self.page_size_combo = QComboBox()
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["标题", "集数", "当前播放", "进度", "时间"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -34,10 +40,21 @@ class HistoryPage(QWidget):
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         configure_table_columns(self.table, stretch_column=0)
         self.records: list[HistoryRecord] = []
+        self.current_page = 1
+        self.page_size = 100
+        self.total_items = 0
+        for size in ("20", "30", "50", "100"):
+            self.page_size_combo.addItem(size, int(size))
+        self.page_size_combo.setCurrentText(str(self.page_size))
 
         actions = QHBoxLayout()
         actions.addWidget(self.delete_button)
         actions.addWidget(self.clear_button)
+        actions.addStretch(1)
+        actions.addWidget(self.prev_page_button)
+        actions.addWidget(self.page_label)
+        actions.addWidget(self.next_page_button)
+        actions.addWidget(self.page_size_combo)
 
         layout = QVBoxLayout(self)
         layout.addLayout(actions)
@@ -46,15 +63,20 @@ class HistoryPage(QWidget):
         self.delete_button.clicked.connect(self.delete_selected)
         self.clear_button.clicked.connect(self.clear_all)
         self.table.cellDoubleClicked.connect(self._open_selected)
+        self.prev_page_button.clicked.connect(self.previous_page)
+        self.next_page_button.clicked.connect(self.next_page)
+        self.page_size_combo.currentIndexChanged.connect(self._change_page_size)
+        self._update_pagination_controls()
 
     def load_history(self) -> None:
         try:
-            records, _total = self.controller.load_page(page=1, size=100)
+            records, total = self.controller.load_page(page=self.current_page, size=self.page_size)
         except UnauthorizedError:
             self.unauthorized.emit()
             return
         except ApiError:
             return
+        self.total_items = total
         self.records = records
         self.table.setRowCount(len(records))
         for row, record in enumerate(records):
@@ -63,6 +85,7 @@ class HistoryPage(QWidget):
             self.table.setItem(row, 2, QTableWidgetItem(record.vod_remarks))
             self.table.setItem(row, 3, QTableWidgetItem(self._format_duration(record.position)))
             self.table.setItem(row, 4, QTableWidgetItem(self._format_timestamp(record.create_time)))
+        self._update_pagination_controls()
 
     def delete_selected(self) -> None:
         rows = sorted({index.row() for index in self.table.selectionModel().selectedRows()})
@@ -79,6 +102,8 @@ class HistoryPage(QWidget):
             return
         except ApiError:
             return
+        if len(ids) == len(self.records) and self.current_page > 1:
+            self.current_page -= 1
         self.load_history()
 
     def clear_all(self) -> None:
@@ -109,3 +134,35 @@ class HistoryPage(QWidget):
 
     def _format_timestamp(self, milliseconds: int) -> str:
         return datetime.fromtimestamp(milliseconds / 1000).strftime("%Y-%m-%d %H:%M:%S")
+
+    def previous_page(self) -> None:
+        if self.current_page <= 1:
+            return
+        self.current_page -= 1
+        self.load_history()
+
+    def next_page(self) -> None:
+        if self.current_page >= self._total_pages():
+            return
+        self.current_page += 1
+        self.load_history()
+
+    def _change_page_size(self) -> None:
+        page_size = self.page_size_combo.currentData()
+        if page_size is None:
+            return
+        page_size = int(page_size)
+        if page_size == self.page_size:
+            return
+        self.page_size = page_size
+        self.current_page = 1
+        self.load_history()
+
+    def _total_pages(self) -> int:
+        return max(1, (self.total_items + self.page_size - 1) // self.page_size)
+
+    def _update_pagination_controls(self) -> None:
+        total_pages = self._total_pages()
+        self.page_label.setText(f"第 {self.current_page} / {total_pages} 页")
+        self.prev_page_button.setEnabled(self.current_page > 1)
+        self.next_page_button.setEnabled(self.current_page < total_pages)
