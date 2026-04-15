@@ -122,6 +122,19 @@ def test_browse_page_centers_content_container(qtbot) -> None:
     assert abs(container_center - page_center) <= 5
 
 
+def test_history_page_centers_content_container(qtbot) -> None:
+    page = HistoryPage(FakeHistoryController())
+    qtbot.addWidget(page)
+    page.resize(2200, 1000)
+    page.show()
+    qtbot.wait(50)
+
+    container_center = page.content_container.geometry().center().x()
+    page_center = page.rect().center().x()
+
+    assert abs(container_center - page_center) <= 5
+
+
 def test_browse_page_persists_and_restores_content_splitter_state(qtbot) -> None:
     saved = {"count": 0}
     config = AppConfig()

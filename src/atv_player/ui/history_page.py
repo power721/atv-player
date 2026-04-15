@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -56,9 +57,22 @@ class HistoryPage(QWidget):
         actions.addWidget(self.next_page_button)
         actions.addWidget(self.page_size_combo)
 
-        layout = QVBoxLayout(self)
-        layout.addLayout(actions)
-        layout.addWidget(self.table)
+        self.content_container = QWidget()
+        self.content_container.setMaximumWidth(1800)
+        self.content_container.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
+
+        content_layout = QVBoxLayout(self.content_container)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.addLayout(actions)
+        content_layout.addWidget(self.table)
+
+        layout = QHBoxLayout(self)
+        layout.addStretch(1)
+        layout.addWidget(self.content_container, 100)
+        layout.addStretch(1)
 
         self.delete_button.clicked.connect(self.delete_selected)
         self.clear_button.clicked.connect(self.clear_all)

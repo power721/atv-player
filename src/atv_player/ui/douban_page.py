@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -82,9 +83,22 @@ class DoubanPage(QWidget):
         paging.addWidget(self.next_page_button)
         right.addLayout(paging)
 
+        self.content_container = QWidget()
+        self.content_container.setMaximumWidth(1800)
+        self.content_container.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
+
+        content_layout = QHBoxLayout(self.content_container)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.addWidget(self.category_list, 1)
+        content_layout.addLayout(right, 4)
+
         layout = QHBoxLayout(self)
-        layout.addWidget(self.category_list, 1)
-        layout.addLayout(right, 4)
+        layout.addStretch(1)
+        layout.addWidget(self.content_container, 100)
+        layout.addStretch(1)
 
         self.category_list.currentRowChanged.connect(self._handle_category_row_changed)
         self.prev_page_button.clicked.connect(self.previous_page)

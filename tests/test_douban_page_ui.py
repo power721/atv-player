@@ -177,3 +177,17 @@ def test_douban_page_uses_five_then_six_columns_based_on_width(qtbot) -> None:
     qtbot.waitUntil(lambda: page._current_card_columns == 6)
 
     assert page.cards_layout.getItemPosition(5)[:2] == (0, 5)
+
+
+def test_douban_page_centers_content_container(qtbot) -> None:
+    page = DoubanPage(FakeDoubanController())
+    qtbot.addWidget(page)
+    page.resize(2200, 1000)
+    page.show()
+
+    qtbot.waitUntil(lambda: page.category_list.count() == 2)
+
+    container_center = page.content_container.geometry().center().x()
+    page_center = page.rect().center().x()
+
+    assert abs(container_center - page_center) <= 5
