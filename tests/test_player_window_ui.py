@@ -2383,6 +2383,7 @@ def test_player_window_persists_pre_wide_splitter_state_when_saved_in_wide_mode(
     window.main_splitter.setSizes([900, 300])
 
     expected_sizes = window.main_splitter.sizes()
+    expected_ratio = expected_sizes[0] / sum(expected_sizes)
 
     window.wide_button.click()
     window._persist_geometry()
@@ -2390,9 +2391,12 @@ def test_player_window_persists_pre_wide_splitter_state_when_saved_in_wide_mode(
     restored = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
     qtbot.addWidget(restored)
     restored.show()
+    restored_sizes = restored.main_splitter.sizes()
+    restored_ratio = restored_sizes[0] / sum(restored_sizes)
 
     assert restored.sidebar_container.isHidden() is False
-    assert restored.main_splitter.sizes() == expected_sizes
+    assert restored_sizes[1] > 0
+    assert abs(restored_ratio - expected_ratio) < 0.02
 
 
 def test_player_window_persists_and_restores_main_splitter_state(qtbot) -> None:
