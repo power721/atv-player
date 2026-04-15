@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import threading
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QSize, Qt, Signal
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.api import ApiError, UnauthorizedError
+from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url
 
 
 class _DoubanSignals(QObject):
@@ -22,6 +24,7 @@ class _DoubanSignals(QObject):
     items_loaded = Signal(int, object, int)
     failed = Signal(str, int)
     unauthorized = Signal(int)
+    poster_loaded = Signal(object, object)
 
 
 class DoubanPage(QWidget):
@@ -57,6 +60,10 @@ class DoubanPage(QWidget):
         self._signals.items_loaded.connect(self._handle_items_loaded)
         self._signals.failed.connect(self._handle_failed)
         self._signals.unauthorized.connect(self._handle_unauthorized)
+        self._signals.poster_loaded.connect(self._handle_poster_loaded)
+
+        self.category_list.setMinimumWidth(180)
+        self.status_label.setWordWrap(True)
 
         right = QVBoxLayout()
         right.addWidget(self.status_label)
@@ -158,9 +165,7 @@ class DoubanPage(QWidget):
                 widget.deleteLater()
         self.card_buttons = []
         for index, item in enumerate(self.items):
-            text = item.vod_name if not item.vod_remarks else f"{item.vod_name}\n{item.vod_remarks}"
-            button = QPushButton(text)
-            button.clicked.connect(lambda _checked=False, keyword=item.vod_name: self.search_requested.emit(keyword))
+            button = self._build_card_button(item)
             self.card_buttons.append(button)
             self.cards_layout.addWidget(button, index // 4, index % 4)
 
@@ -182,3 +187,28 @@ class DoubanPage(QWidget):
             return
         self.current_page += 1
         self.load_items(self.selected_category_id, self.current_page)
+
+    def _build_card_button(self, item) -> QPushButton:
+        text = item.vod_name if not item.vod_remarks else f"{item.vod_name}\n{item.vod_remarks}"
+        button = QPushButton(text)
+        button.setFixedSize(180, 320)
+        button.setToolTip(item.vod_name)
+        button.setIconSize(QSize(160, 240))
+        button.setStyleSheet("text-align: left; padding: 10px;")
+        button.clicked.connect(lambda _checked=False, keyword=item.vod_name: self.search_requested.emit(keyword))
+        image_url = normalize_poster_url(item.vod_pic)
+        if image_url:
+            def load() -> None:
+                image = load_remote_poster_image(image_url, QSize(160, 240))
+                if image is not None:
+                    self._signals.poster_loaded.emit(button, image)
+
+            threading.Thread(target=load, daemon=True).start()
+        return button
+
+    def _handle_poster_loaded(self, button: QPushButton, image) -> None:
+        if button not in self.card_buttons:
+            return
+        pixmap = QPixmap.fromImage(image)
+        button.setIcon(QIcon(pixmap))
+        button.setIconSize(QSize(160, 240))

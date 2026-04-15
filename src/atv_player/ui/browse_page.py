@@ -166,6 +166,10 @@ class BrowsePage(QWidget):
         self.current_page += 1
         self.load_path(self.current_path)
 
+    def search_keyword(self, keyword: str) -> None:
+        self.keyword_edit.setText(keyword)
+        self.search()
+
     def search(self) -> None:
         keyword = self.keyword_edit.text().strip()
         if not keyword:

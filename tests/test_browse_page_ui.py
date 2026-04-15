@@ -29,6 +29,16 @@ class FakeSearchController:
     pass
 
 
+class RecordingSearchController(FakeBrowseController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.search_calls: list[str] = []
+
+    def search(self, keyword: str):
+        self.search_calls.append(keyword)
+        return []
+
+
 def test_browse_page_uses_split_view_for_search_and_file_list(qtbot) -> None:
     page = BrowsePage(FakeBrowseController())
     qtbot.addWidget(page)
@@ -62,6 +72,18 @@ def test_browse_page_shows_search_results_panel_at_one_quarter_width(qtbot) -> N
     left, right = page.content_splitter.sizes()
     assert 200 <= left <= 400
     assert right > left
+
+
+def test_browse_page_search_keyword_sets_input_and_starts_search(qtbot) -> None:
+    controller = RecordingSearchController()
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+    page.show()
+
+    page.search_keyword("霸王别姬")
+
+    assert controller.search_calls == ["霸王别姬"]
+    assert page.keyword_edit.text() == "霸王别姬"
 
 
 def test_tables_are_read_only(qtbot) -> None:
