@@ -22,6 +22,11 @@ class FakeBrowseController:
         return [], self.total
 
 
+class ErroringBrowseController(FakeBrowseController):
+    def load_folder(self, path: str, page: int = 1, size: int = 50):
+        raise ApiError("加载文件列表超时")
+
+
 class FakeHistoryController:
     def load_page(self, page: int, size: int):
         return [], 0
@@ -198,6 +203,17 @@ def test_browse_page_breadcrumb_click_loads_target_folder(qtbot) -> None:
 
     assert controller.loaded_paths == ["/电影/国产"]
     assert controller.load_calls == [("/电影/国产", 1, 50)]
+
+
+def test_browse_page_shows_folder_timeout_in_breadcrumb_status(qtbot) -> None:
+    page = BrowsePage(ErroringBrowseController())
+    qtbot.addWidget(page)
+
+    page.load_path("/电影")
+
+    status_widget = page.breadcrumb_layout.itemAt(0).widget()
+    assert status_widget.text() == "/电影 | 加载文件列表超时"
+    assert page.table.rowCount() == 0
 
 
 def test_browse_page_shows_size_dbid_and_rating_columns(qtbot) -> None:
