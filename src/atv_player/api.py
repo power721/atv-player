@@ -85,14 +85,14 @@ class ApiClient:
         return self._request(
             "GET",
             f"/vod/{self._vod_token}",
-            params={"ac": "web", "pg": page, "size": size, "t": path_id},
+            params={"ac": "gui", "pg": page, "size": size, "t": path_id},
         )
 
     def get_detail(self, vod_id: str) -> dict[str, Any]:
         return self._request(
             "GET",
             f"/vod/{self._vod_token}",
-            params={"ac": "web", "ids": vod_id},
+            params={"ac": "gui", "ids": vod_id},
         )
 
     def list_douban_categories(self) -> dict[str, Any]:

@@ -31,13 +31,13 @@ class MainWindow(QMainWindow):
     logout_requested = Signal()
 
     def __init__(
-        self,
-        browse_controller,
-        history_controller,
-        player_controller,
-        config,
-        save_config=None,
-        douban_controller=None,
+            self,
+            browse_controller,
+            history_controller,
+            player_controller,
+            config,
+            save_config=None,
+            douban_controller=None,
     ) -> None:
         super().__init__()
         self._save_config = save_config or (lambda: None)

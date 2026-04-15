@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from atv_player.models import VodItem
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
 from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url
 
