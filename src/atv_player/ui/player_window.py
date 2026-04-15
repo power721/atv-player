@@ -383,12 +383,15 @@ class PlayerWindow(QWidget):
             widget.setCursor(cursor_shape)
         self.setCursor(cursor_shape)
 
-    def _restore_video_cursor(self, stop_timer: bool = True) -> None:
+    def _restore_video_cursor(self, stop_timer: bool = True, disable_native_autohide: bool = True) -> None:
         if stop_timer:
             self._cursor_hide_timer.stop()
         self._set_video_cursor_hidden(False)
         if hasattr(self.video, "set_cursor_autohide"):
-            self.video.set_cursor_autohide(None)
+            if disable_native_autohide:
+                self.video.set_cursor_autohide(None)
+            elif self.is_playing:
+                self.video.set_cursor_autohide(self._CURSOR_HIDE_DELAY_MS)
 
     def _cursor_now_ms(self) -> int:
         return int(time.monotonic() * 1000)
@@ -400,7 +403,7 @@ class PlayerWindow(QWidget):
         self._set_video_cursor_hidden(False)
         if self.is_playing:
             if hasattr(self.video, "set_cursor_autohide"):
-                self.video.set_cursor_autohide(self._CURSOR_HIDE_DELAY_MS if self._video_pointer_inside else None)
+                self.video.set_cursor_autohide(self._CURSOR_HIDE_DELAY_MS)
             if not self._cursor_hide_timer.isActive():
                 self._cursor_hide_timer.start()
             return
@@ -408,6 +411,11 @@ class PlayerWindow(QWidget):
 
     def _handle_video_leave(self) -> None:
         self._video_pointer_inside = False
+        if self.is_playing:
+            self._restore_video_cursor(stop_timer=False, disable_native_autohide=False)
+            if not self._cursor_hide_timer.isActive():
+                self._cursor_hide_timer.start()
+            return
         self._restore_video_cursor()
 
     def _hide_video_cursor_if_idle(self) -> None:
@@ -431,7 +439,7 @@ class PlayerWindow(QWidget):
             self._restore_video_cursor()
             return
         if not self._video_pointer_inside:
-            self._restore_video_cursor(stop_timer=False)
+            self._restore_video_cursor(stop_timer=False, disable_native_autohide=False)
             if not self._cursor_hide_timer.isActive():
                 self._cursor_hide_timer.start()
             return
@@ -450,7 +458,7 @@ class PlayerWindow(QWidget):
             self._last_cursor_activity_ms = self._cursor_now_ms()
             if not self._cursor_hide_timer.isActive():
                 self._cursor_hide_timer.start()
-            self._restore_video_cursor(stop_timer=False)
+            self._restore_video_cursor(stop_timer=False, disable_native_autohide=False)
             return
         self._restore_video_cursor()
 
@@ -1116,6 +1124,10 @@ class PlayerWindow(QWidget):
             self._refresh_video_pointer_inside_state()
             if self.is_playing and self._video_pointer_inside:
                 self._handle_video_mouse_activity()
+            elif self.is_playing:
+                self._restore_video_cursor(stop_timer=False, disable_native_autohide=False)
+                if not self._cursor_hide_timer.isActive():
+                    self._cursor_hide_timer.start()
             else:
                 self._restore_video_cursor()
         if isinstance(watched, QWidget) and watched in self._video_surface_widgets():

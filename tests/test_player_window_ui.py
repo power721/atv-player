@@ -1804,7 +1804,7 @@ def test_player_window_pausing_playback_restores_video_cursor_and_stops_autohide
     assert cursor_autohide_calls[-1] is None
 
 
-def test_player_window_video_leave_restores_cursor_and_stops_autohide(qtbot) -> None:
+def test_player_window_video_leave_restores_cursor_and_keeps_polling_while_playing(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     window.show()
@@ -1820,8 +1820,66 @@ def test_player_window_video_leave_restores_cursor_and_stops_autohide(qtbot) -> 
     assert window._video_pointer_inside is False
     assert window.video.cursor().shape() == Qt.CursorShape.ArrowCursor
     assert window.cursor().shape() == Qt.CursorShape.ArrowCursor
-    assert window._cursor_hide_timer.isActive() is False
-    assert cursor_autohide_calls[-1] is None
+    assert window._cursor_hide_timer.isActive() is True
+    assert cursor_autohide_calls[-1] == 3000
+
+
+def test_player_window_mouse_move_outside_video_keeps_native_autohide_armed_while_playing(
+    qtbot, monkeypatch
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+    cursor_autohide_calls: list[int | None] = []
+    window.video.set_cursor_autohide = lambda value: cursor_autohide_calls.append(value)
+    window.is_playing = True
+    center_point = window.video_widget.rect().center()
+    outside_local = window.rect().bottomRight()
+    outside_global = window.mapToGlobal(outside_local)
+    monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: outside_global))
+
+    window._video_pointer_inside = True
+    window._handle_video_mouse_activity(now_ms=1000)
+    move_event = QMouseEvent(
+        QEvent.Type.MouseMove,
+        outside_local,
+        outside_global,
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+    QApplication.sendEvent(window, move_event)
+
+    assert window._video_pointer_inside is False
+    assert window._cursor_hide_timer.isActive() is True
+    assert cursor_autohide_calls[-1] == 3000
+
+
+def test_player_window_polling_restarts_autohide_when_cursor_reenters_video_after_leave(
+    qtbot, monkeypatch
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+    center_point = window.video_widget.rect().center()
+    inside_global = window.video_widget.mapToGlobal(center_point)
+    outside_global = window.mapToGlobal(window.rect().bottomRight())
+    current_pos = {"value": outside_global}
+    monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: current_pos["value"]))
+    cursor_autohide_calls: list[int | None] = []
+    window.video.set_cursor_autohide = lambda value: cursor_autohide_calls.append(value)
+    window.is_playing = True
+    window._video_pointer_inside = True
+    window._handle_video_mouse_activity(now_ms=1000)
+
+    window._handle_video_leave()
+    current_pos["value"] = inside_global
+    window._poll_cursor_idle_state(now_ms=1500)
+
+    assert window._video_pointer_inside is True
+    assert window._cursor_hide_timer.isActive() is True
+    assert cursor_autohide_calls[-1] == 3000
 
 
 def test_player_window_exit_fullscreen_restores_maximized_state(qtbot) -> None:
