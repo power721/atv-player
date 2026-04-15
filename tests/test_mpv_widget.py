@@ -37,6 +37,70 @@ def test_mpv_widget_recreates_player_when_core_is_shutdown(qtbot, monkeypatch) -
     assert alive.play_calls == ["http://m/1.m3u8"]
 
 
+def test_mpv_widget_reregisters_player_events_after_recreating_during_load_failure(
+    qtbot,
+    monkeypatch,
+) -> None:
+    class BrokenPlayer:
+        def __init__(self) -> None:
+            self.core_shutdown = False
+
+        def play(self, url: str) -> None:
+            self.core_shutdown = True
+            raise RuntimeError(f"broken: {url}")
+
+    class ReplacementPlayer:
+        def __init__(self) -> None:
+            self.play_calls: list[str] = []
+            self.pause = False
+            self._end_file_callback = None
+            self._track_list_observer = None
+
+        def event_callback(self, *event_types):
+            assert event_types == ("end-file",)
+
+            def register(callback):
+                self._end_file_callback = callback
+                return callback
+
+            return register
+
+        def observe_property(self, name: str, handler) -> None:
+            assert name == "track-list"
+            self._track_list_observer = handler
+
+        def play(self, url: str) -> None:
+            self.play_calls.append(url)
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    widget._player = BrokenPlayer()
+    replacement = ReplacementPlayer()
+    monkeypatch.setattr(widget, "_create_player", lambda: replacement)
+
+    finished = {"count": 0}
+    subtitle_changes = {"count": 0}
+    audio_changes = {"count": 0}
+    widget.playback_finished.connect(lambda: finished.__setitem__("count", finished["count"] + 1))
+    widget.subtitle_tracks_changed.connect(
+        lambda: subtitle_changes.__setitem__("count", subtitle_changes["count"] + 1)
+    )
+    widget.audio_tracks_changed.connect(
+        lambda: audio_changes.__setitem__("count", audio_changes["count"] + 1)
+    )
+
+    widget.load("http://m/1.m3u8")
+
+    replacement._end_file_callback(types.SimpleNamespace(data=types.SimpleNamespace(reason=0)))
+    replacement._track_list_observer("track-list", [{"id": 1, "type": "sub"}])
+
+    assert widget._player is replacement
+    assert replacement.play_calls == ["http://m/1.m3u8"]
+    assert finished["count"] == 1
+    assert subtitle_changes["count"] == 1
+    assert audio_changes["count"] == 1
+
+
 def test_mpv_widget_updates_volume_and_mute_state(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)

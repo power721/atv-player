@@ -112,6 +112,7 @@ class MpvWidget(QWidget):
         except Exception:
             if getattr(self._player, "core_shutdown", False):
                 self._player = self._create_player()
+                self._register_player_events()
                 if start_seconds > 0:
                     self._player.loadfile(url, start=str(start_seconds))
                 else:
