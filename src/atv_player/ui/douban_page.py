@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from threading import BoundedSemaphore
 
 from PySide6.QtCore import QObject, QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QPixmap
@@ -65,6 +66,7 @@ class DoubanPage(QWidget):
         self._categories_request_id = 0
         self._items_request_id = 0
         self._poster_generation = 0
+        self._poster_semaphore = BoundedSemaphore(value=6)
         self._signals = _DoubanSignals(self)
         self._signals.categories_loaded.connect(self._handle_categories_loaded)
         self._signals.items_loaded.connect(self._handle_items_loaded)
@@ -252,9 +254,13 @@ class DoubanPage(QWidget):
         gen = self._poster_generation
 
         def load() -> None:
-            image = load_remote_poster_image(image_url, self._CARD_POSTER_SIZE)
-            if image is not None and gen == self._poster_generation:
-                self._signals.poster_loaded.emit(button, image)
+            self._poster_semaphore.acquire()
+            try:
+                image = load_remote_poster_image(image_url, self._CARD_POSTER_SIZE)
+                if image is not None and gen == self._poster_generation:
+                    self._signals.poster_loaded.emit(button, image)
+            finally:
+                self._poster_semaphore.release()
 
         threading.Thread(target=load, daemon=True).start()
 

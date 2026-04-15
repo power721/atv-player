@@ -81,8 +81,8 @@ class BrowseController:
             vod_lang=resolved_vod.vod_lang or fallback_vod.vod_lang,
             vod_director=resolved_vod.vod_director or fallback_vod.vod_director,
             vod_actor=resolved_vod.vod_actor or fallback_vod.vod_actor,
-            dbid=resolved_vod.dbid if resolved_vod.dbid is not None else fallback_vod.dbid,
-            type=resolved_vod.type if resolved_vod.type is not None else fallback_vod.type,
+            dbid=resolved_vod.dbid or fallback_vod.dbid,
+            type=resolved_vod.type or fallback_vod.type,
             items=resolved_vod.items if resolved_vod.items is not None else fallback_vod.items,
         )
 
