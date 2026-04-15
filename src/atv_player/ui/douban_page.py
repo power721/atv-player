@@ -25,8 +25,8 @@ from atv_player.ui.poster_loader import load_remote_poster_image, normalize_post
 class _DoubanSignals(QObject):
     categories_loaded = Signal(int, object)
     items_loaded = Signal(int, object, int)
-    failed = Signal(str, int)
-    unauthorized = Signal(int)
+    failed = Signal(str, int, str)
+    unauthorized = Signal(int, str)
     poster_loaded = Signal(object, object)
 
 
@@ -119,10 +119,10 @@ class DoubanPage(QWidget):
             try:
                 categories = self.controller.load_categories()
             except UnauthorizedError:
-                self._signals.unauthorized.emit(request_id)
+                self._signals.unauthorized.emit(request_id, "categories")
                 return
             except ApiError as exc:
-                self._signals.failed.emit(str(exc), request_id)
+                self._signals.failed.emit(str(exc), request_id, "categories")
                 return
             self._signals.categories_loaded.emit(request_id, categories)
 
@@ -137,10 +137,10 @@ class DoubanPage(QWidget):
             try:
                 items, total = self.controller.load_items(category_id, page)
             except UnauthorizedError:
-                self._signals.unauthorized.emit(request_id)
+                self._signals.unauthorized.emit(request_id, "items")
                 return
             except ApiError as exc:
-                self._signals.failed.emit(str(exc), request_id)
+                self._signals.failed.emit(str(exc), request_id, "items")
                 return
             self._signals.items_loaded.emit(request_id, items, total)
 
@@ -175,11 +175,19 @@ class DoubanPage(QWidget):
         self._render_cards()
         self._update_pagination()
 
-    def _handle_failed(self, message: str, _request_id: int) -> None:
+    def _handle_failed(self, message: str, request_id: int, request_kind: str) -> None:
+        if request_kind == "categories" and request_id != self._categories_request_id:
+            return
+        if request_kind == "items" and request_id != self._items_request_id:
+            return
         self.status_label.setText(message)
         self._update_pagination()
 
-    def _handle_unauthorized(self, _request_id: int) -> None:
+    def _handle_unauthorized(self, request_id: int, request_kind: str) -> None:
+        if request_kind == "categories" and request_id != self._categories_request_id:
+            return
+        if request_kind == "items" and request_id != self._items_request_id:
+            return
         self.unauthorized.emit()
 
     def _render_cards(self) -> None:

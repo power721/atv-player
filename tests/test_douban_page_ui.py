@@ -2,7 +2,7 @@ import threading
 
 from PySide6.QtCore import Qt
 
-from atv_player.api import ApiError
+from atv_player.api import ApiError, UnauthorizedError
 from atv_player.models import DoubanCategory, VodItem
 import atv_player.ui.douban_page as douban_page_module
 from atv_player.ui.douban_page import DoubanPage
@@ -60,6 +60,44 @@ class FailingDoubanController(FakeDoubanController):
         return super().load_items(category_id, page)
 
 
+class AsyncFailingDoubanController(FakeDoubanController):
+    def __init__(self) -> None:
+        super().__init__()
+        self._events = {
+            ("suggestion", 1): threading.Event(),
+            ("movie", 1): threading.Event(),
+        }
+
+    def load_items(self, category_id: str, page: int):
+        self.item_calls.append((category_id, page))
+        self._events[(category_id, page)].wait(timeout=5)
+        if category_id == "suggestion":
+            raise ApiError("旧请求失败")
+        return self.items_by_category[category_id]
+
+    def release(self, category_id: str, page: int) -> None:
+        self._events[(category_id, page)].set()
+
+
+class AsyncUnauthorizedDoubanController(FakeDoubanController):
+    def __init__(self) -> None:
+        super().__init__()
+        self._events = {
+            ("suggestion", 1): threading.Event(),
+            ("movie", 1): threading.Event(),
+        }
+
+    def load_items(self, category_id: str, page: int):
+        self.item_calls.append((category_id, page))
+        self._events[(category_id, page)].wait(timeout=5)
+        if category_id == "suggestion":
+            raise UnauthorizedError("Unauthorized")
+        return self.items_by_category[category_id]
+
+    def release(self, category_id: str, page: int) -> None:
+        self._events[(category_id, page)].set()
+
+
 def test_douban_page_loads_categories_and_first_page(qtbot) -> None:
     page = DoubanPage(FakeDoubanController())
     qtbot.addWidget(page)
@@ -115,6 +153,48 @@ def test_douban_page_ignores_stale_item_response(qtbot) -> None:
 
     controller.release("suggestion", 1)
     qtbot.wait(50)
+    assert page.card_buttons[0].text() == "活着\n9.3"
+
+
+def test_douban_page_ignores_stale_failed_item_response(qtbot) -> None:
+    controller = AsyncFailingDoubanController()
+    page = DoubanPage(controller)
+    qtbot.addWidget(page)
+    page.show()
+
+    qtbot.waitUntil(lambda: page.category_list.count() == 2)
+    controller.release("movie", 1)
+    page.category_list.setCurrentRow(1)
+    qtbot.waitUntil(lambda: controller.item_calls[-1] == ("movie", 1))
+    qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
+    assert page.card_buttons[0].text() == "活着\n9.3"
+
+    controller.release("suggestion", 1)
+    qtbot.wait(50)
+
+    assert page.card_buttons[0].text() == "活着\n9.3"
+    assert page.status_label.text() == ""
+
+
+def test_douban_page_ignores_stale_unauthorized_response(qtbot) -> None:
+    controller = AsyncUnauthorizedDoubanController()
+    page = DoubanPage(controller)
+    qtbot.addWidget(page)
+    page.show()
+    unauthorized = {"count": 0}
+    page.unauthorized.connect(lambda: unauthorized.__setitem__("count", unauthorized["count"] + 1))
+
+    qtbot.waitUntil(lambda: page.category_list.count() == 2)
+    controller.release("movie", 1)
+    page.category_list.setCurrentRow(1)
+    qtbot.waitUntil(lambda: controller.item_calls[-1] == ("movie", 1))
+    qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
+    assert page.card_buttons[0].text() == "活着\n9.3"
+
+    controller.release("suggestion", 1)
+    qtbot.wait(50)
+
+    assert unauthorized["count"] == 0
     assert page.card_buttons[0].text() == "活着\n9.3"
 
 
