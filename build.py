@@ -99,6 +99,7 @@ def find_libmpv(target_platform: str) -> list[tuple[Path, str]]:
     runtime_dir = os.environ.get("ATV_MPV_RUNTIME_DIR")
     if runtime_dir:
         search_dirs.append(Path(runtime_dir))
+    search_dirs.append(PROJECT_ROOT / "mpv")
     search_dirs.extend(Path(part) for part in os.environ.get("PATH", "").split(os.pathsep) if part)
 
     for directory in search_dirs:

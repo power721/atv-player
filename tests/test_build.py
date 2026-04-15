@@ -40,6 +40,18 @@ def test_find_libmpv_uses_explicit_windows_runtime_dir(monkeypatch, tmp_path) ->
     assert build.find_libmpv("windows") == [(dll_path, ".")]
 
 
+def test_find_libmpv_uses_repo_local_windows_runtime_dir(monkeypatch, tmp_path) -> None:
+    runtime_dir = tmp_path / "mpv"
+    runtime_dir.mkdir()
+    dll_path = runtime_dir / "libmpv-2.dll"
+    dll_path.write_bytes(b"dll")
+    monkeypatch.setattr(build, "PROJECT_ROOT", tmp_path)
+    monkeypatch.delenv("ATV_MPV_RUNTIME_DIR", raising=False)
+    monkeypatch.setenv("PATH", "")
+
+    assert build.find_libmpv("windows") == [(dll_path, ".")]
+
+
 def test_build_pyinstaller_command_collects_icons_and_libmpv(monkeypatch, tmp_path) -> None:
     libmpv = tmp_path / "libmpv.so.2"
     libmpv.write_bytes(b"so")
