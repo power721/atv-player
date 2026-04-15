@@ -33,8 +33,9 @@ class PlayerController:
     ) -> PlayerSession:
         history = self._api_client.get_history(vod.vod_id)
         start_index = resolve_resume_index(history, playlist, clicked_index)
-        position_seconds = int((history.position if history else 0) / 1000)
-        speed = history.speed if history else 1.0
+        matched_history = history and start_index == history.episode
+        position_seconds = int((history.position if matched_history else 0) / 1000)
+        speed = history.speed if matched_history else 1.0
         return PlayerSession(
             vod=vod,
             playlist=playlist,
