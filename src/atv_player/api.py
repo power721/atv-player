@@ -46,7 +46,7 @@ class ApiClient:
             return False
         if not isinstance(params, dict):
             return False
-        return params.get("ac") == "web" and "t" in params
+        return params.get("ac") == "gui" and "t" in params
 
     def _request(self, method: str, url: str, **kwargs: Any) -> Any:
         try:
