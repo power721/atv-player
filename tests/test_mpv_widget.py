@@ -1,7 +1,7 @@
 import sys
 import types
 
-from atv_player.player.mpv_widget import MpvWidget, SubtitleTrack
+from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
 
 
 class FakeDeadPlayer:
@@ -235,3 +235,102 @@ def test_mpv_widget_can_disable_or_select_a_specific_embedded_subtitle_track(qtb
     assert disabled_track_id is None
     assert selected_track_id == 9
     assert player.sid == 9
+
+
+def test_mpv_widget_emits_audio_tracks_changed_when_mpv_track_list_updates(qtbot, monkeypatch) -> None:
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.play_calls: list[str] = []
+            self.pause = False
+            self._track_list_observer = None
+
+        def event_callback(self, *event_types):
+            def register(callback):
+                return callback
+
+            return register
+
+        def observe_property(self, name: str, handler) -> None:
+            assert name == "track-list"
+            self._track_list_observer = handler
+
+        def play(self, url: str) -> None:
+            self.play_calls.append(url)
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = FakePlayer()
+    monkeypatch.setattr(widget, "_create_player", lambda: player)
+    changes = {"count": 0}
+    widget.audio_tracks_changed.connect(lambda: changes.__setitem__("count", changes["count"] + 1))
+
+    widget.load("http://m/1.m3u8")
+    player._track_list_observer("track-list", [{"id": 1, "type": "audio"}])
+
+    assert player.play_calls == ["http://m/1.m3u8"]
+    assert changes["count"] == 1
+
+
+def test_mpv_widget_lists_embedded_audio_tracks_with_readable_labels(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    widget._player = types.SimpleNamespace(
+        track_list=[
+            {"id": 1, "type": "audio", "lang": "cmn", "title": "", "default": True, "forced": False, "external": False},
+            {"id": 2, "type": "audio", "lang": "eng", "title": "English Dub", "default": False, "forced": False, "external": False},
+            {"id": 3, "type": "sub", "lang": "zh", "title": "", "default": True, "forced": False, "external": False},
+            {"id": 4, "type": "audio", "lang": "jpn", "title": "", "default": False, "forced": False, "external": True},
+        ]
+    )
+
+    assert widget.audio_tracks() == [
+        AudioTrack(id=1, title="", lang="cmn", is_default=True, is_forced=False, label="国语 (默认)"),
+        AudioTrack(id=2, title="English Dub", lang="eng", is_default=False, is_forced=False, label="English Dub"),
+    ]
+
+
+def test_mpv_widget_auto_mode_prefers_chinese_or_mandarin_audio(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = types.SimpleNamespace(
+        aid="auto",
+        track_list=[
+            {"id": 3, "type": "audio", "lang": "eng", "title": "English", "default": True, "forced": False, "external": False},
+            {"id": 5, "type": "audio", "lang": "cmn", "title": "", "default": False, "forced": False, "external": False},
+        ],
+    )
+    widget._player = player
+
+    applied_track_id = widget.apply_audio_mode("auto")
+
+    assert applied_track_id == 5
+    assert player.aid == 5
+
+
+def test_mpv_widget_auto_mode_falls_back_to_mpv_default_without_preferred_audio(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = types.SimpleNamespace(
+        aid=7,
+        track_list=[
+            {"id": 7, "type": "audio", "lang": "eng", "title": "English", "default": False, "forced": False, "external": False},
+        ],
+    )
+    widget._player = player
+
+    applied_track_id = widget.apply_audio_mode("auto")
+
+    assert applied_track_id is None
+    assert player.aid == "auto"
+
+
+def test_mpv_widget_can_select_a_specific_embedded_audio_track(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = types.SimpleNamespace(aid="auto", track_list=[])
+    widget._player = player
+
+    selected_track_id = widget.apply_audio_mode("track", track_id=9)
+
+    assert selected_track_id == 9
+    assert player.aid == 9
