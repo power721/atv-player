@@ -577,7 +577,10 @@ class PlayerWindow(QWidget):
         current_item = self.session.playlist[self.current_index]
         self._append_log(f"当前: {current_item.title}")
         self._append_log(f"URL: {current_item.url}")
-        effective_start_seconds = max(start_position_seconds, self.opening_spin.value())
+        if start_position_seconds > 0:
+            effective_start_seconds = start_position_seconds
+        else:
+            effective_start_seconds = self.opening_spin.value()
         self.video.load(current_item.url, pause=pause, start_seconds=effective_start_seconds)
         self._auto_advance_locked = False
         self._configure_video_surface_widgets()
