@@ -580,6 +580,7 @@ class PlayerWindow(QWidget):
         effective_start_seconds = max(start_position_seconds, self.opening_spin.value())
         self.video.load(current_item.url, pause=pause, start_seconds=effective_start_seconds)
         self._auto_advance_locked = False
+        self._configure_video_surface_widgets()
         self.video.set_speed(self.current_speed)
         self.video.set_volume(self.volume_slider.value())
         self._refresh_subtitle_state()
