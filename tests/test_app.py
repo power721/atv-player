@@ -1,8 +1,19 @@
+import httpx
+
 import atv_player.app as app_module
 import atv_player.ui.main_window as main_window_module
+from atv_player.api import ApiClient
 from atv_player.app import AppCoordinator, decide_start_view
 from atv_player.models import AppConfig, OpenPlayerRequest, PlayItem, VodItem
 from atv_player.ui.main_window import MainWindow
+
+
+class RaisingTransport(httpx.BaseTransport):
+    def __init__(self, exc: Exception) -> None:
+        self.exc = exc
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        raise self.exc
 
 
 class FakeBrowseController:
@@ -226,6 +237,50 @@ def test_app_coordinator_falls_back_to_main_when_player_restore_fails(monkeypatc
 
     assert isinstance(widget, FakeMainWindow)
     assert repo.config.last_active_window == "main"
+
+
+def test_app_coordinator_show_main_keeps_window_open_when_initial_browse_times_out(
+    qtbot,
+    monkeypatch,
+) -> None:
+    class FakeRepo:
+        def __init__(self) -> None:
+            self.config = AppConfig(
+                base_url="http://127.0.0.1:4567",
+                username="alice",
+                token="auth-123",
+                vod_token="vod-123",
+                last_path="/电影",
+            )
+
+        def load_config(self) -> AppConfig:
+            return self.config
+
+        def save_config(self, config: AppConfig) -> None:
+            self.config = config
+
+        def clear_token(self) -> None:
+            self.config.token = ""
+            self.config.vod_token = ""
+
+    class TimeoutApiClient(ApiClient):
+        def __init__(self, base_url: str, token: str = "", vod_token: str = "") -> None:
+            super().__init__(
+                base_url,
+                token=token,
+                vod_token=vod_token,
+                transport=RaisingTransport(httpx.ReadTimeout("timed out")),
+            )
+
+    coordinator = AppCoordinator(FakeRepo())
+    monkeypatch.setattr(app_module, "ApiClient", TimeoutApiClient)
+
+    window = coordinator._show_main()
+    qtbot.addWidget(window)
+
+    assert isinstance(window, MainWindow)
+    status_widget = window.browse_page.breadcrumb_layout.itemAt(0).widget()
+    assert status_widget.text() == "/电影 | 加载文件列表超时"
 
 
 def test_app_coordinator_logout_clears_tokens_and_shows_login(monkeypatch) -> None:
