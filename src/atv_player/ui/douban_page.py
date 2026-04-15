@@ -34,7 +34,7 @@ class DoubanPage(QWidget):
     unauthorized = Signal()
     _CARD_WIDTH = 220
     _CARD_HEIGHT = 360
-    _CARD_POSTER_SIZE = QSize(190, 285)
+    _CARD_POSTER_SIZE = QSize(200, 285)
     _CARD_SPACING = 16
     _MIN_CARD_COLUMNS = 1
     _MAX_CARD_COLUMNS = 6
