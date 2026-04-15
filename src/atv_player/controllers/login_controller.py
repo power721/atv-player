@@ -15,7 +15,7 @@ class LoginController:
         config = self._repo.load_config()
         config.base_url = base_url.rstrip("/")
         config.username = username
-        config.token = payload["token"]
+        config.token = payload.get("token", "")
         config.vod_token = ""
         self._repo.save_config(config)
         return config
