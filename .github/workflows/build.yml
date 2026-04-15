@@ -52,7 +52,14 @@ jobs:
 
       - name: Install Windows system dependencies
         if: matrix.platform == 'windows'
-        run: choco install mpv -y
+        run: |
+          New-Item -ItemType Directory -Force -Path "mpv" | Out-Null
+          Invoke-WebRequest -Uri "http://46.38.157.230/libmpv-2.dll" -OutFile "mpv\libmpv-2.dll"
+          $mpvDll = Get-Item "mpv\libmpv-2.dll"
+          if ($mpvDll.Length -le 0) {
+            throw "Downloaded libmpv-2.dll is empty"
+          }
+          Write-Host "Downloaded libmpv runtime: $($mpvDll.FullName) ($([Math]::Round($mpvDll.Length / 1MB, 2)) MB)"
 
       - name: Sync dependencies
         run: uv sync --frozen --group dev --group package
