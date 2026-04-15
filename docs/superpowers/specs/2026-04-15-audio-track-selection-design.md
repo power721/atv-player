@@ -10,7 +10,7 @@ The feature is intentionally scoped to the player window and the mpv wrapper. It
 
 - Add an audio selector to the bottom playback controls in the player window.
 - Show `自动选择` and the detected embedded audio tracks for the current media item.
-- Make `自动选择` prefer Chinese or Mandarin audio when available, then fall back to mpv's default behavior.
+- Make `自动选择` defer directly to mpv's default audio selection behavior.
 - Remember the current audio choice for the active playback session and try to carry it forward when switching episodes in the same session.
 - Keep failures non-fatal by logging them and falling back to a safe UI state.
 
@@ -69,7 +69,6 @@ The wrapper should provide:
 
 - a way to read embedded audio track metadata from the current player
 - a way to set audio mode to auto or a specific track
-- a deterministic helper that chooses the preferred Chinese or Mandarin track for auto mode when one exists
 
 The wrapper remains responsible for translating between Qt-facing values and mpv-specific details such as `aid`, `track-list`, and audio-related properties.
 
@@ -94,19 +93,12 @@ If no reasonable match exists for the next episode, fall back to `auto`.
 
 `自动选择` means:
 
-1. inspect the embedded audio tracks for Chinese or Mandarin candidates
-2. if a Chinese or Mandarin candidate exists, select the best available candidate
-3. otherwise let mpv use its normal automatic audio selection behavior
+1. do not inspect or rank embedded audio tracks in application code
+2. set the current audio mode back to mpv's normal automatic audio selection behavior
 
-The initial implementation should treat common Chinese and Mandarin codes such as `zh`, `chi`, `zho`, and `cmn` as preferred candidates. When the language code is absent, it should treat track titles containing `中文`, `国语`, `普通话`, `Mandarin`, or `Chinese` as preferred candidates.
+The player should treat mpv as the source of truth for automatic audio selection. The desktop app keeps the `自动选择` label in the UI, but that label is now only a request to hand control back to mpv rather than an application-defined preference strategy.
 
-When several preferred candidates exist, the tie-break should prefer:
-
-1. a track explicitly marked default
-2. a track whose title is non-empty
-3. the earliest matching embedded track in the track list
-
-This behavior is limited to embedded audio tracks on the current item. It does not change global mpv configuration.
+This behavior is limited to the current item's embedded audio state. It does not change global mpv configuration.
 
 ### Episode Changes
 
@@ -137,8 +129,7 @@ The UI should never display track-specific choices from a previous media item af
 Add focused tests in `tests/test_mpv_widget.py` for:
 
 - parsing embedded audio tracks from mocked mpv track metadata
-- choosing Chinese or Mandarin audio for auto mode when available
-- falling back to mpv default behavior for auto mode when preferred audio tracks are absent
+- falling back to mpv default behavior for auto mode without preferring a specific language in application code
 - selecting a specific audio track
 - tolerating mpv exceptions without crashing callers
 
