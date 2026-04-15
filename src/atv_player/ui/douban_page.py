@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QPushButton,
     QScrollArea,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -30,6 +31,11 @@ class _DoubanSignals(QObject):
 class DoubanPage(QWidget):
     search_requested = Signal(str)
     unauthorized = Signal()
+    _CARD_WIDTH = 180
+    _CARD_HEIGHT = 320
+    _CARD_SPACING = 16
+    _MIN_CARD_COLUMNS = 5
+    _MAX_CARD_COLUMNS = 6
 
     def __init__(self, controller) -> None:
         super().__init__()
@@ -42,17 +48,18 @@ class DoubanPage(QWidget):
         self.cards_widget = QWidget()
         self.cards_layout = QGridLayout(self.cards_widget)
         self.cards_layout.setContentsMargins(0, 0, 0, 0)
-        self.cards_layout.setSpacing(16)
+        self.cards_layout.setSpacing(self._CARD_SPACING)
         self.cards_scroll = QScrollArea()
         self.cards_scroll.setWidgetResizable(True)
         self.cards_scroll.setWidget(self.cards_widget)
-        self.card_buttons: list[QPushButton] = []
+        self.card_buttons: list[QToolButton] = []
         self.categories = []
         self.items = []
         self.selected_category_id = ""
         self.current_page = 1
-        self.page_size = 35
+        self.page_size = 30
         self.total_items = 0
+        self._current_card_columns = self._MIN_CARD_COLUMNS
         self._categories_request_id = 0
         self._items_request_id = 0
         self._signals = _DoubanSignals()
@@ -164,10 +171,29 @@ class DoubanPage(QWidget):
             if widget is not None:
                 widget.deleteLater()
         self.card_buttons = []
-        for index, item in enumerate(self.items):
+        for item in self.items:
             button = self._build_card_button(item)
             self.card_buttons.append(button)
-            self.cards_layout.addWidget(button, index // 4, index % 4)
+            self._start_card_poster_load(button, item)
+        self._relayout_cards()
+
+    def _relayout_cards(self) -> None:
+        while self.cards_layout.count():
+            item = self.cards_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                self.cards_layout.removeWidget(widget)
+        columns = self._column_count_for_width(self.cards_scroll.viewport().width())
+        self._current_card_columns = columns
+        for index, button in enumerate(self.card_buttons):
+            self.cards_layout.addWidget(button, index // columns, index % columns)
+
+    def _column_count_for_width(self, available_width: int) -> int:
+        if available_width <= 0:
+            return self._MIN_CARD_COLUMNS
+        fit_columns = (available_width + self._CARD_SPACING) // (self._CARD_WIDTH + self._CARD_SPACING)
+        fit_columns = max(self._MIN_CARD_COLUMNS, fit_columns)
+        return min(fit_columns, self._MAX_CARD_COLUMNS)
 
     def _update_pagination(self) -> None:
         total_pages = max(1, (self.total_items + self.page_size - 1) // self.page_size)
@@ -188,27 +214,38 @@ class DoubanPage(QWidget):
         self.current_page += 1
         self.load_items(self.selected_category_id, self.current_page)
 
-    def _build_card_button(self, item) -> QPushButton:
+    def _build_card_button(self, item) -> QToolButton:
         text = item.vod_name if not item.vod_remarks else f"{item.vod_name}\n{item.vod_remarks}"
-        button = QPushButton(text)
-        button.setFixedSize(180, 320)
+        button = QToolButton()
+        button.setText(text)
+        button.setFixedSize(self._CARD_WIDTH, self._CARD_HEIGHT)
         button.setToolTip(item.vod_name)
         button.setIconSize(QSize(160, 240))
-        button.setStyleSheet("text-align: left; padding: 10px;")
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        button.setStyleSheet("padding: 10px;")
         button.clicked.connect(lambda _checked=False, keyword=item.vod_name: self.search_requested.emit(keyword))
-        image_url = normalize_poster_url(item.vod_pic)
-        if image_url:
-            def load() -> None:
-                image = load_remote_poster_image(image_url, QSize(160, 240))
-                if image is not None:
-                    self._signals.poster_loaded.emit(button, image)
-
-            threading.Thread(target=load, daemon=True).start()
         return button
 
-    def _handle_poster_loaded(self, button: QPushButton, image) -> None:
+    def _start_card_poster_load(self, button: QToolButton, item) -> None:
+        image_url = normalize_poster_url(item.vod_pic)
+        if not image_url:
+            return
+
+        def load() -> None:
+            image = load_remote_poster_image(image_url, QSize(160, 240))
+            if image is not None:
+                self._signals.poster_loaded.emit(button, image)
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def _handle_poster_loaded(self, button: QToolButton, image) -> None:
         if button not in self.card_buttons:
             return
         pixmap = QPixmap.fromImage(image)
         button.setIcon(QIcon(pixmap))
         button.setIconSize(QSize(160, 240))
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self.card_buttons:
+            self._relayout_cards()

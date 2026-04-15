@@ -38,6 +38,7 @@ def load_remote_poster_image(
     get=httpx.get,
 ) -> QImage | None:
     try:
+        print(image_url)
         response = get(
             image_url,
             headers=build_poster_request_headers(image_url),

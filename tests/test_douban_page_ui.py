@@ -2,6 +2,7 @@ import threading
 
 from atv_player.api import ApiError
 from atv_player.models import DoubanCategory, VodItem
+import atv_player.ui.douban_page as douban_page_module
 from atv_player.ui.douban_page import DoubanPage
 
 
@@ -16,7 +17,7 @@ class FakeDoubanController:
         self.items_by_category = {
             "suggestion": (
                 [VodItem(vod_id="m1", vod_name="霸王别姬", vod_pic="poster-1", vod_remarks="9.6")],
-                70,
+                60,
             ),
             "movie": (
                 [VodItem(vod_id="m2", vod_name="活着", vod_pic="poster-2", vod_remarks="9.3")],
@@ -127,3 +128,52 @@ def test_douban_page_keeps_previous_cards_when_new_load_fails(qtbot) -> None:
 
     qtbot.waitUntil(lambda: page.status_label.text() == "获取列表失败")
     assert page.card_buttons[0].text() == "霸王别姬\n9.6"
+
+
+def test_douban_page_renders_loaded_poster_icon_on_card(qtbot, monkeypatch) -> None:
+    class ImmediateThread:
+        def __init__(self, target, daemon=None) -> None:
+            self._target = target
+
+        def start(self) -> None:
+            self._target()
+
+    from PySide6.QtGui import QImage
+
+    image = QImage(20, 40, QImage.Format.Format_RGB32)
+    image.fill(0x00FF00)
+
+    monkeypatch.setattr(douban_page_module, "load_remote_poster_image", lambda *args, **kwargs: image)
+    monkeypatch.setattr(douban_page_module.threading, "Thread", ImmediateThread)
+
+    page = DoubanPage(FakeDoubanController())
+    qtbot.addWidget(page)
+    page.show()
+    qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
+
+    assert page.card_buttons[0].icon().isNull() is False
+
+
+def test_douban_page_uses_five_then_six_columns_based_on_width(qtbot) -> None:
+    controller = FakeDoubanController()
+    controller.items_by_category["suggestion"] = (
+        [
+            VodItem(vod_id=str(index), vod_name=f"Movie {index}", vod_pic="", vod_remarks="9.0")
+            for index in range(6)
+        ],
+        30,
+    )
+    page = DoubanPage(controller)
+    qtbot.addWidget(page)
+    page.resize(1300, 900)
+    page.show()
+
+    qtbot.waitUntil(lambda: len(page.card_buttons) == 6)
+    qtbot.waitUntil(lambda: page._current_card_columns == 5)
+
+    assert page.cards_layout.getItemPosition(5)[:2] == (1, 0)
+
+    page.resize(1600, 900)
+    qtbot.waitUntil(lambda: page._current_card_columns == 6)
+
+    assert page.cards_layout.getItemPosition(5)[:2] == (0, 5)

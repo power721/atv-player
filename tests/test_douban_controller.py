@@ -11,7 +11,7 @@ class FakeApiClient:
     def list_douban_categories(self) -> dict:
         return self.category_payload
 
-    def list_douban_items(self, category_id: str, page: int, size: int = 35) -> dict:
+    def list_douban_items(self, category_id: str, page: int, size: int = 30) -> dict:
         self.item_calls.append((category_id, page, size))
         return self.items_payload
 
@@ -66,4 +66,4 @@ def test_load_items_uses_fixed_desktop_page_size() -> None:
 
     controller.load_items("movie", page=3)
 
-    assert api.item_calls == [("movie", 3, 35)]
+    assert api.item_calls == [("movie", 3, 30)]

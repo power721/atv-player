@@ -86,7 +86,7 @@ class ApiClient:
         return self._request(
             "GET",
             f"/tg-db/{self._vod_token}",
-            params={"ac": "web", "t": category_id, "pg": page, "size": size},
+            params={"ac": "gui", "t": category_id, "pg": page, "size": size},
         )
 
     def telegram_search(self, keyword: str) -> dict[str, Any]:

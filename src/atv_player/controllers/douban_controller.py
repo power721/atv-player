@@ -23,7 +23,7 @@ def _map_item(payload: dict) -> VodItem:
 
 
 class DoubanController:
-    _PAGE_SIZE = 35
+    _PAGE_SIZE = 30
 
     def __init__(self, api_client) -> None:
         self._api_client = api_client
