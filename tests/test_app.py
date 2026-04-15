@@ -1,4 +1,5 @@
 import httpx
+from PySide6.QtGui import QIcon
 
 import atv_player.app as app_module
 import atv_player.ui.main_window as main_window_module
@@ -129,6 +130,30 @@ def test_decide_start_view_prefers_login_without_token() -> None:
 
 def test_decide_start_view_uses_main_window_with_token() -> None:
     assert decide_start_view(AppConfig(token="token-123")) == "main"
+
+
+def test_build_application_sets_window_icon_and_creates_repo(monkeypatch, tmp_path) -> None:
+    class FakeApplication:
+        def __init__(self, args) -> None:
+            self.args = args
+            self.application_name = ""
+            self.window_icon = QIcon()
+
+        def setApplicationName(self, name: str) -> None:
+            self.application_name = name
+
+        def setWindowIcon(self, icon: QIcon) -> None:
+            self.window_icon = icon
+
+    monkeypatch.setattr(app_module, "QApplication", FakeApplication)
+    monkeypatch.setattr(app_module.Path, "home", staticmethod(lambda: tmp_path))
+
+    app, repo = app_module.build_application()
+
+    assert app.application_name == "atv-player"
+    assert not app.window_icon.isNull()
+    assert (tmp_path / ".local" / "share" / "atv-player" / "app.db").exists()
+    assert repo.load_config().base_url == "http://127.0.0.1:4567"
 
 
 def test_app_coordinator_start_does_not_require_vod_root_probe(monkeypatch) -> None:

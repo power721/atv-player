@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QObject
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QWidget
 
 from atv_player.api import ApiClient, UnauthorizedError
@@ -21,9 +22,14 @@ def decide_start_view(config: AppConfig) -> str:
     return "main" if config.token else "login"
 
 
+def _app_icon_path() -> Path:
+    return Path(__file__).resolve().parent / "icons" / "app.svg"
+
+
 def build_application() -> tuple[QApplication, SettingsRepository]:
     app = QApplication([])
     app.setApplicationName("atv-player")
+    app.setWindowIcon(QIcon(str(_app_icon_path())))
     data_dir = Path.home() / ".local" / "share" / "atv-player"
     repo = SettingsRepository(data_dir / "app.db")
     return app, repo
