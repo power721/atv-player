@@ -29,6 +29,12 @@ class PlayItem:
 
 
 @dataclass(slots=True)
+class DoubanCategory:
+    type_id: str
+    type_name: str
+
+
+@dataclass(slots=True)
 class VodItem:
     vod_id: str
     vod_name: str
