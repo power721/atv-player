@@ -688,6 +688,51 @@ def test_history_page_delete_reloads_previous_page_when_last_page_becomes_empty(
     assert page.current_page == 1
 
 
+def test_history_page_clear_all_resets_to_first_page(qtbot) -> None:
+    class Controller:
+        def __init__(self) -> None:
+            self.calls: list[tuple[int, int]] = []
+            self.cleared = False
+
+        def load_page(self, page: int, size: int):
+            self.calls.append((page, size))
+            if self.cleared:
+                return [], 0
+            return [
+                HistoryRecord(
+                    id=9,
+                    key="movie-1",
+                    vod_name="Movie",
+                    vod_pic="",
+                    vod_remarks="Ep",
+                    episode=0,
+                    episode_url="",
+                    position=0,
+                    opening=0,
+                    ending=0,
+                    speed=1.0,
+                    create_time=1,
+                )
+            ], 60
+
+        def clear_all(self) -> None:
+            self.cleared = True
+
+    controller = Controller()
+    page = HistoryPage(controller)
+    qtbot.addWidget(page)
+    page.current_page = 2
+    page.page_size = 50
+
+    page.load_history()
+    controller.calls.clear()
+    page.clear_all()
+
+    assert page.current_page == 1
+    assert controller.calls == [(1, 50)]
+    assert page.page_label.text() == "第 1 / 1 页"
+
+
 def test_history_page_refresh_reuses_current_page_state(qtbot) -> None:
     class Controller:
         def __init__(self) -> None:

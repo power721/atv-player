@@ -131,6 +131,7 @@ class HistoryPage(QWidget):
             return
         except ApiError:
             return
+        self.current_page = 1
         self.load_history()
 
     def _open_selected(self, row: int, _column: int) -> None:
