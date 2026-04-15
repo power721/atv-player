@@ -754,37 +754,73 @@ class PlayerWindow(QWidget):
         self.subtitle_combo.blockSignals(False)
 
     def _apply_subtitle_preference(self) -> None:
-        mode = self._subtitle_preference.mode
-        track_id = None
-        if mode == "track":
-            for track in self._subtitle_tracks:
-                if track.title == self._subtitle_preference.title and track.lang == self._subtitle_preference.lang:
-                    track_id = track.id
-                    break
-            if track_id is None and self._subtitle_tracks:
-                track_id = self._subtitle_tracks[0].id
-        applied_track_id = self.video.apply_subtitle_mode(mode if track_id is not None else "auto", track_id=track_id)
-        if applied_track_id is None:
-            self.subtitle_combo.setCurrentIndex(0)
-            if mode != "off":
-                self._subtitle_preference = SubtitlePreference()
-            return
-        for index, track in enumerate(self._subtitle_tracks, start=2):
-            if track.id == applied_track_id:
-                self.subtitle_combo.setCurrentIndex(index)
+        self.subtitle_combo.blockSignals(True)
+        try:
+            if self._subtitle_preference.mode == "off":
+                self.video.apply_subtitle_mode("off")
+                if self.subtitle_combo.count() > 1:
+                    self.subtitle_combo.setCurrentIndex(1)
                 return
+
+            if self._subtitle_preference.mode == "track":
+                matched_track = self._matching_track_for_preference()
+                if matched_track is not None:
+                    applied_track_id = self.video.apply_subtitle_mode("track", track_id=matched_track.id)
+                    for index, track in enumerate(self._subtitle_tracks, start=2):
+                        if track.id == applied_track_id:
+                            self.subtitle_combo.setCurrentIndex(index)
+                            return
+                self._subtitle_preference = SubtitlePreference()
+
+            self.video.apply_subtitle_mode("auto")
+            self.subtitle_combo.setCurrentIndex(0)
+        finally:
+            self.subtitle_combo.blockSignals(False)
+
+    def _subtitle_track_match_score(self, track: SubtitleTrack, preference: SubtitlePreference) -> tuple[int, int, int]:
+        return (
+            int(bool(preference.title) and track.title == preference.title),
+            int(bool(preference.lang) and track.lang == preference.lang),
+            int(track.is_forced == preference.is_forced and track.is_default == preference.is_default),
+        )
+
+    def _matching_track_for_preference(self) -> SubtitleTrack | None:
+        if self._subtitle_preference.mode != "track" or not self._subtitle_tracks:
+            return None
+        ranked_tracks = sorted(
+            self._subtitle_tracks,
+            key=lambda track: self._subtitle_track_match_score(track, self._subtitle_preference),
+            reverse=True,
+        )
+        best_track = ranked_tracks[0]
+        if self._subtitle_track_match_score(best_track, self._subtitle_preference) == (0, 0, 0):
+            return None
+        return best_track
 
     def _refresh_subtitle_state(self) -> None:
         if not hasattr(self.video, "subtitle_tracks") or not hasattr(self.video, "apply_subtitle_mode"):
             self._subtitle_tracks = []
+            self._subtitle_preference = SubtitlePreference()
             self._reset_subtitle_combo()
             return
-        self._subtitle_tracks = self.video.subtitle_tracks()
+        try:
+            self._subtitle_tracks = self.video.subtitle_tracks()
+        except Exception as exc:
+            self._subtitle_tracks = []
+            self._subtitle_preference = SubtitlePreference()
+            self._reset_subtitle_combo()
+            self._append_log(f"字幕加载失败: {exc}")
+            return
         self._populate_subtitle_combo(self._subtitle_tracks)
         if not self._subtitle_tracks:
             self._subtitle_preference = SubtitlePreference()
             return
-        self._apply_subtitle_preference()
+        try:
+            self._apply_subtitle_preference()
+        except Exception as exc:
+            self._subtitle_preference = SubtitlePreference()
+            self._reset_subtitle_combo()
+            self._append_log(f"字幕切换失败: {exc}")
 
     def _change_subtitle_selection(self, index: int) -> None:
         if index < 0:

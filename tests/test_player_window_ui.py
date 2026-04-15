@@ -1192,6 +1192,139 @@ def test_player_window_user_selection_applies_selected_subtitle_track(qtbot) -> 
     assert window.video.subtitle_apply_calls == [("track", 12)]
 
 
+def test_player_window_reuses_subtitle_track_preference_for_next_episode(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.current_url = ""
+            self.subtitle_apply_calls: list[tuple[str, str, int | None]] = []
+            self.tracks_by_url = {
+                "http://m/1.m3u8": [
+                    SubtitleTrack(id=11, title="", lang="zh", is_default=True, is_forced=False, label="中文 (默认)"),
+                    SubtitleTrack(id=12, title="English", lang="eng", is_default=False, is_forced=False, label="English"),
+                ],
+                "http://m/2.m3u8": [
+                    SubtitleTrack(id=21, title="", lang="zh", is_default=True, is_forced=False, label="中文 (默认)"),
+                    SubtitleTrack(id=22, title="English", lang="eng", is_default=False, is_forced=False, label="English"),
+                ],
+            }
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.current_url = url
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return self.tracks_by_url[self.current_url]
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((self.current_url, mode, track_id))
+            return track_id if mode == "track" else None
+
+        def position_seconds(self) -> int:
+            return 30
+
+        def duration_seconds(self) -> int:
+            return 120
+
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(make_player_session(start_index=0))
+    window.subtitle_combo.setCurrentIndex(3)
+    window.video.subtitle_apply_calls.clear()
+
+    window.play_next()
+
+    assert ("http://m/2.m3u8", "track", 22) in window.video.subtitle_apply_calls
+    assert window.subtitle_combo.currentText() == "English"
+
+
+def test_player_window_falls_back_to_auto_when_previous_track_cannot_be_matched(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.current_url = ""
+            self.subtitle_apply_calls: list[tuple[str, str, int | None]] = []
+            self.tracks_by_url = {
+                "http://m/1.m3u8": [
+                    SubtitleTrack(id=11, title="", lang="zh", is_default=True, is_forced=False, label="中文 (默认)"),
+                    SubtitleTrack(id=12, title="English", lang="eng", is_default=False, is_forced=False, label="English"),
+                ],
+                "http://m/2.m3u8": [
+                    SubtitleTrack(id=21, title="", lang="zh", is_default=True, is_forced=False, label="中文 (默认)"),
+                ],
+            }
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.current_url = url
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return self.tracks_by_url[self.current_url]
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((self.current_url, mode, track_id))
+            return 21 if mode == "auto" else track_id
+
+        def position_seconds(self) -> int:
+            return 30
+
+        def duration_seconds(self) -> int:
+            return 120
+
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(make_player_session(start_index=0))
+    window.subtitle_combo.setCurrentIndex(3)
+    window.video.subtitle_apply_calls.clear()
+
+    window.play_next()
+
+    assert ("http://m/2.m3u8", "auto", None) in window.video.subtitle_apply_calls
+    assert window.subtitle_combo.currentText() == "自动选择"
+
+
+def test_player_window_logs_and_resets_when_subtitle_refresh_fails(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            raise RuntimeError("boom")
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(make_player_session(start_index=0))
+
+    assert "字幕加载失败: boom" in window.log_view.toPlainText()
+    assert window.subtitle_combo.count() == 1
+    assert window.subtitle_combo.itemText(0) == "自动选择"
+    assert window.subtitle_combo.isEnabled() is False
+
+
 def test_player_window_uses_distinct_seek_icons(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
