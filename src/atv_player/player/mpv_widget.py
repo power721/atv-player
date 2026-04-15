@@ -210,13 +210,14 @@ class MpvWidget(QWidget):
                 return
             raise
 
-    def position_seconds(self) -> int:
+    def position_seconds(self) -> int | None:
         if self._player is None:
-            return 0
+            return None
         try:
-            return int(self._player.time_pos or 0)
+            pos = self._player.time_pos
+            return int(pos) if pos is not None else None
         except Exception:
-            return 0
+            return None
 
     def duration_seconds(self) -> int:
         if self._player is None:

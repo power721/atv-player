@@ -772,6 +772,8 @@ class PlayerWindow(QWidget):
             return
         try:
             position_seconds = self.video.position_seconds()
+            if position_seconds is None:
+                return
             self.session.opening_seconds = self.opening_spin.value()
             self.session.ending_seconds = self.ending_spin.value()
             self.controller.report_progress(
@@ -1152,7 +1154,7 @@ class PlayerWindow(QWidget):
         if self._slider_dragging:
             return
         duration = self.video.duration_seconds() if hasattr(self.video, "duration_seconds") else 0
-        position = self.video.position_seconds()
+        position = self.video.position_seconds() or 0
         if duration > 0 or position > 0:
             self._video_surface_ready = True
             self.video_poster_overlay.hide()
