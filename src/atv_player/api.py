@@ -79,6 +79,16 @@ class ApiClient:
             params={"ac": "web", "ids": vod_id},
         )
 
+    def list_douban_categories(self) -> dict[str, Any]:
+        return self._request("GET", f"/tg-db/{self._vod_token}")
+
+    def list_douban_items(self, category_id: str, page: int, size: int = 35) -> dict[str, Any]:
+        return self._request(
+            "GET",
+            f"/tg-db/{self._vod_token}",
+            params={"ac": "web", "t": category_id, "pg": page, "size": size},
+        )
+
     def telegram_search(self, keyword: str) -> dict[str, Any]:
         return self._request("GET", "/api/telegram/search", params={"wd": keyword})
 

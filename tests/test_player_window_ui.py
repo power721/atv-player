@@ -481,7 +481,7 @@ def test_player_window_renders_remote_poster_via_direct_request_headers(qtbot, m
                 "Referer": "https://movie.douban.com/",
                 "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
             },
-            3.0,
+            10.0,
         )
     ]
 
@@ -535,9 +535,9 @@ def test_player_window_uses_short_timeout_for_remote_poster_requests(qtbot, monk
     window.video = FakeVideo()
 
     window.open_session(session)
-    qtbot.waitUntil(lambda: requested_timeouts == [3.0])
+    qtbot.waitUntil(lambda: requested_timeouts == [10.0])
 
-    assert requested_timeouts == [3.0]
+    assert requested_timeouts == [10.0]
 
 
 def test_player_window_uses_youtube_referer_for_ytimg_posters(qtbot, monkeypatch) -> None:

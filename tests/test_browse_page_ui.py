@@ -51,6 +51,16 @@ class AsyncSearchController:
         self._events_by_keyword[keyword].pop(0).set()
 
 
+class RecordingSearchController(FakeBrowseController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.search_calls: list[str] = []
+
+    def search(self, keyword: str):
+        self.search_calls.append(keyword)
+        return []
+
+
 def test_browse_page_uses_split_view_for_search_and_file_list(qtbot) -> None:
     page = BrowsePage(FakeBrowseController())
     qtbot.addWidget(page)
@@ -134,6 +144,18 @@ def test_browse_page_persists_and_restores_content_splitter_state(qtbot) -> None
     restored._show_search_results_panel()
 
     assert restored.content_splitter.saveState() == QByteArray(config.browse_content_splitter_state)
+
+
+def test_browse_page_search_keyword_sets_input_and_starts_search(qtbot) -> None:
+    controller = RecordingSearchController()
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+    page.show()
+
+    page.search_keyword("霸王别姬")
+
+    assert controller.search_calls == ["霸王别姬"]
+    assert page.keyword_edit.text() == "霸王别姬"
 
 
 def test_tables_are_read_only(qtbot) -> None:

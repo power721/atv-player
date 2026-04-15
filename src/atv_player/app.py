@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 from atv_player.api import ApiClient, UnauthorizedError
 from atv_player.controllers.browse_controller import BrowseController
+from atv_player.controllers.douban_controller import DoubanController
 from atv_player.controllers.history_controller import HistoryController
 from atv_player.controllers.login_controller import LoginController
 from atv_player.controllers.player_controller import PlayerController
@@ -87,6 +88,7 @@ class AppCoordinator(QObject):
     def _show_main(self):
         self._api_client = self._build_api_client()
         config = self.repo.load_config()
+        douban_controller = DoubanController(self._api_client)
         browse_controller = BrowseController(self._api_client)
         history_controller = HistoryController(self._api_client)
         player_controller = PlayerController(self._api_client)
@@ -96,6 +98,7 @@ class AppCoordinator(QObject):
             player_controller=player_controller,
             config=config,
             save_config=lambda: self.repo.save_config(config),
+            douban_controller=douban_controller,
         )
         self.main_window.logout_requested.connect(self._handle_logout_requested)
         if self.login_window is not None:

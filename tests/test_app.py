@@ -13,13 +13,22 @@ class FakeHistoryController:
     pass
 
 
+class FakeDoubanController:
+    def load_categories(self):
+        return []
+
+    def load_items(self, category_id: str, page: int):
+        return [], 0
+
+
 class FakePlayerController:
     def create_session(self, vod, playlist, clicked_index: int):
         return {"vod": vod, "playlist": playlist, "clicked_index": clicked_index}
 
 
-def test_main_window_starts_on_browse_tab(qtbot) -> None:
+def test_main_window_starts_on_douban_tab(qtbot) -> None:
     window = MainWindow(
+        douban_controller=FakeDoubanController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -30,13 +39,15 @@ def test_main_window_starts_on_browse_tab(qtbot) -> None:
     window.show()
 
     assert window.nav_tabs.currentIndex() == 0
-    assert window.nav_tabs.count() == 2
-    assert window.nav_tabs.tabText(0) == "浏览"
-    assert window.nav_tabs.tabText(1) == "播放记录"
+    assert window.nav_tabs.count() == 3
+    assert window.nav_tabs.tabText(0) == "豆瓣电影"
+    assert window.nav_tabs.tabText(1) == "文件浏览"
+    assert window.nav_tabs.tabText(2) == "播放记录"
 
 
 def test_main_window_logout_button_emits_logout_requested(qtbot) -> None:
     window = MainWindow(
+        douban_controller=FakeDoubanController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -54,6 +65,7 @@ def test_main_window_passes_config_and_save_callback_to_browse_page(qtbot) -> No
     saved = {"count": 0}
     config = AppConfig()
     window = MainWindow(
+        douban_controller=FakeDoubanController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -65,6 +77,26 @@ def test_main_window_passes_config_and_save_callback_to_browse_page(qtbot) -> No
 
     assert window.browse_page.config is config
     assert callable(window.browse_page._save_config)
+
+
+def test_main_window_switches_to_browse_and_searches_from_douban_signal(qtbot, monkeypatch) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    searched = []
+    monkeypatch.setattr(window.browse_page, "search_keyword", lambda keyword: searched.append(keyword))
+
+    window.douban_page.search_requested.emit("霸王别姬")
+
+    assert window.nav_tabs.currentWidget() is window.browse_page
+    assert searched == ["霸王别姬"]
 
 
 def test_decide_start_view_prefers_login_without_token() -> None:
