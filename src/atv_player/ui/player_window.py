@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QSlider,
+    QSpinBox,
     QSplitter,
     QTextEdit,
     QVBoxLayout,
@@ -125,6 +126,8 @@ class PlayerWindow(QWidget):
         self.speed_combo = QComboBox()
         self.speed_combo.addItems(["0.5x", "0.75x", "1.0x", "1.25x", "1.5x", "2.0x"])
         self.speed_combo.setCurrentText("1.0x")
+        self.opening_spin = self._create_skip_spinbox("片头 ")
+        self.ending_spin = self._create_skip_spinbox("片尾 ")
 
         self.current_time_label = QLabel("00:00")
         self.current_time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -203,6 +206,8 @@ class PlayerWindow(QWidget):
         control_group_layout.addWidget(self.wide_button)
         control_group_layout.addWidget(self.fullscreen_button)
         control_group_layout.addWidget(self.speed_combo)
+        control_group_layout.addWidget(self.opening_spin)
+        control_group_layout.addWidget(self.ending_spin)
         controls.addWidget(control_group, 0, Qt.AlignmentFlag.AlignCenter)
         controls.addStretch(1)
 
@@ -253,6 +258,8 @@ class PlayerWindow(QWidget):
         self.wide_button.clicked.connect(self._toggle_wide_mode)
         self.fullscreen_button.clicked.connect(self.toggle_fullscreen)
         self.speed_combo.currentTextChanged.connect(self._change_speed)
+        self.opening_spin.valueChanged.connect(self._change_opening_seconds)
+        self.ending_spin.valueChanged.connect(self._change_ending_seconds)
         self.volume_slider.valueChanged.connect(self._change_volume)
         self.playlist.itemDoubleClicked.connect(self._play_clicked_item)
         self.toggle_playlist_button.clicked.connect(self._update_sidebar_visibility)
@@ -293,6 +300,15 @@ class PlayerWindow(QWidget):
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setFixedHeight(28)
         return button
+
+    def _create_skip_spinbox(self, prefix: str) -> QSpinBox:
+        spinbox = QSpinBox()
+        spinbox.setPrefix(prefix)
+        spinbox.setSuffix("s")
+        spinbox.setRange(0, 240)
+        spinbox.setFixedHeight(28)
+        spinbox.setSingleStep(10)
+        return spinbox
 
     def _update_play_button_icon(self) -> None:
         icon_name = "pause.svg" if self.is_playing else "play.svg"
@@ -401,6 +417,12 @@ class PlayerWindow(QWidget):
         self._reset_log()
         self.current_index = session.start_index
         self.current_speed = session.speed
+        self.opening_spin.blockSignals(True)
+        self.ending_spin.blockSignals(True)
+        self.opening_spin.setValue(session.opening_seconds)
+        self.ending_spin.setValue(session.ending_seconds)
+        self.opening_spin.blockSignals(False)
+        self.ending_spin.blockSignals(False)
         speed_text = self._speed_text(session.speed)
         speed_index = self.speed_combo.findText(speed_text)
         if speed_index >= 0:
@@ -424,8 +446,9 @@ class PlayerWindow(QWidget):
         current_item = self.session.playlist[self.current_index]
         self._append_log(f"当前: {current_item.title}")
         self._append_log(f"URL: {current_item.url}")
+        effective_start_seconds = max(start_position_seconds, self.opening_spin.value())
         try:
-            self.video.load(current_item.url, pause=pause, start_seconds=start_position_seconds)
+            self.video.load(current_item.url, pause=pause, start_seconds=effective_start_seconds)
             self.video.set_speed(self.current_speed)
             self.video.set_volume(self.volume_slider.value())
         except Exception as exc:
@@ -546,11 +569,15 @@ class PlayerWindow(QWidget):
             return
         try:
             position_seconds = self.video.position_seconds()
+            self.session.opening_seconds = self.opening_spin.value()
+            self.session.ending_seconds = self.ending_spin.value()
             self.controller.report_progress(
                 self.session,
                 current_index=self.current_index,
                 position_seconds=position_seconds,
                 speed=self.current_speed,
+                opening_seconds=self.session.opening_seconds,
+                ending_seconds=self.session.ending_seconds,
             )
         except Exception as exc:
             self._append_log(f"进度上报失败: {exc}")
@@ -596,6 +623,18 @@ class PlayerWindow(QWidget):
             self.video.set_speed(self.current_speed)
         except Exception as exc:
             self._append_log(f"倍速设置失败: {exc}")
+
+    def _change_opening_seconds(self, value: int) -> None:
+        if self.session is None:
+            return
+        self.session.opening_seconds = value
+        self.report_progress()
+
+    def _change_ending_seconds(self, value: int) -> None:
+        if self.session is None:
+            return
+        self.session.ending_seconds = value
+        self.report_progress()
 
     def _change_volume(self, value: int) -> None:
         try:
@@ -676,6 +715,15 @@ class PlayerWindow(QWidget):
             return
         duration = self.video.duration_seconds() if hasattr(self.video, "duration_seconds") else 0
         position = self.video.position_seconds()
+        if (
+            self.session is not None
+            and self.current_index + 1 < len(self.session.playlist)
+            and duration > self.opening_spin.value() + self.ending_spin.value()
+            and position < duration
+            and position + self.ending_spin.value() >= duration
+        ):
+            self.play_next()
+            return
         self.progress.setMaximum(max(duration, 0))
         self.progress.setValue(max(min(position, self.progress.maximum()), 0))
         self.current_time_label.setText(self._format_time(position))

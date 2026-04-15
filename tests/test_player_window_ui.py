@@ -10,16 +10,32 @@ from atv_player.ui.player_window import PlayerWindow
 
 
 class FakePlayerController:
-    def report_progress(self, session, current_index: int, position_seconds: int, speed: float) -> None:
+    def report_progress(
+        self,
+        session,
+        current_index: int,
+        position_seconds: int,
+        speed: float,
+        opening_seconds: int,
+        ending_seconds: int,
+    ) -> None:
         return None
 
 
 class RecordingPlayerController(FakePlayerController):
     def __init__(self) -> None:
-        self.progress_calls: list[tuple[int, int, float]] = []
+        self.progress_calls: list[tuple[int, int, float, int, int]] = []
 
-    def report_progress(self, session, current_index: int, position_seconds: int, speed: float) -> None:
-        self.progress_calls.append((current_index, position_seconds, speed))
+    def report_progress(
+        self,
+        session,
+        current_index: int,
+        position_seconds: int,
+        speed: float,
+        opening_seconds: int,
+        ending_seconds: int,
+    ) -> None:
+        self.progress_calls.append((current_index, position_seconds, speed, opening_seconds, ending_seconds))
 
 
 class RecordingVideo:
@@ -71,6 +87,8 @@ def make_player_session(start_index: int = 1, speed: float = 1.0) -> PlayerSessi
         start_index=start_index,
         start_position_seconds=0,
         speed=speed,
+        opening_seconds=0,
+        ending_seconds=0,
     )
 
 
@@ -95,6 +113,8 @@ def test_player_window_has_reasonable_default_size_and_horizontal_progress(qtbot
     assert window.volume_slider.maximumWidth() == 180
     assert window.bottom_area.maximumHeight() == 72
     assert window.bottom_layout.spacing() == 4
+    assert window.opening_spin.prefix() == "片头 "
+    assert window.ending_spin.prefix() == "片尾 "
 
 
 def test_player_window_uses_splitters_for_resizable_panels(qtbot) -> None:
@@ -389,6 +409,26 @@ def test_player_window_passes_resume_offset_into_video_load(qtbot) -> None:
     window.open_session(session)
 
     assert window.video.load_calls == [("http://m/1.m3u8", False, 42)]
+
+
+def test_player_window_starts_from_opening_skip_when_resume_position_is_earlier(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=3,
+        speed=1.0,
+        opening_seconds=12,
+        ending_seconds=0,
+    )
+
+    window.open_session(session)
+
+    assert window.video.load_calls == [("http://m/1.m3u8", 12)]
 
 
 def test_player_window_can_open_session_paused(qtbot) -> None:
@@ -751,7 +791,7 @@ def test_player_window_advances_to_next_item_when_playback_finishes(qtbot) -> No
     assert window.current_index == 1
     assert window.playlist.currentRow() == 1
     assert video.load_calls == [("http://m/2.m3u8", 0)]
-    assert controller.progress_calls == [(0, 30, 1.0)]
+    assert controller.progress_calls == [(0, 30, 1.0, 0, 0)]
 
 
 def test_player_window_playback_controls_show_shortcuts_and_pointing_cursor(qtbot) -> None:
@@ -1129,7 +1169,7 @@ def test_player_window_keyboard_shortcuts_control_playback_navigation_and_view(q
     send_key(window, Qt.Key.Key_PageDown)
     assert window.current_index == 1
     assert window.playlist.currentRow() == 1
-    assert controller.progress_calls == [(1, 30, 1.0), (0, 30, 1.0)]
+    assert controller.progress_calls == [(1, 30, 1.0, 0, 0), (0, 30, 1.0, 0, 0)]
 
 
 def test_player_window_toggle_playback_persists_last_player_paused(qtbot) -> None:

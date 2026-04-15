@@ -1,6 +1,8 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QSplitter
 
+from atv_player.api import ApiError
+from atv_player.models import HistoryRecord
 from atv_player.ui.browse_page import BrowsePage
 from atv_player.ui.history_page import HistoryPage
 from atv_player.ui.search_page import SearchPage
@@ -16,7 +18,8 @@ class FakeBrowseController:
 
 
 class FakeHistoryController:
-    pass
+    def load_page(self, page: int, size: int):
+        return [], 0
 
 
 class FakeSearchController:
@@ -146,7 +149,72 @@ def test_main_text_columns_stretch_and_other_columns_fit_content(qtbot) -> None:
     assert history_header.sectionResizeMode(1) == QHeaderView.ResizeMode.ResizeToContents
     assert history_header.sectionResizeMode(2) == QHeaderView.ResizeMode.ResizeToContents
     assert history_header.sectionResizeMode(3) == QHeaderView.ResizeMode.ResizeToContents
+    assert history_header.sectionResizeMode(4) == QHeaderView.ResizeMode.ResizeToContents
 
     search_header = search_page.results_table.horizontalHeader()
     assert search_header.sectionResizeMode(0) == QHeaderView.ResizeMode.ResizeToContents
     assert search_header.sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch
+
+
+def test_history_page_formats_episode_progress_and_time(qtbot) -> None:
+    class Controller:
+        def load_page(self, page: int, size: int):
+            return [
+                HistoryRecord(
+                    id=1,
+                    key="movie-1",
+                    vod_name="Movie",
+                    vod_pic="pic",
+                    vod_remarks="Episode 2",
+                    episode=1,
+                    episode_url="2.m3u8",
+                    position=90000,
+                    opening=0,
+                    ending=0,
+                    speed=1.0,
+                    create_time=1713168000000,
+                )
+            ], 1
+
+    page = HistoryPage(Controller())
+    qtbot.addWidget(page)
+
+    page.load_history()
+
+    assert page.table.columnCount() == 5
+    assert page.table.horizontalHeaderItem(1).text() == "集数"
+    assert page.table.item(0, 1).text() == "2"
+    assert page.table.item(0, 3).text() == "01:30"
+    assert page.table.item(0, 4).text() != "1713168000000"
+    assert ":" in page.table.item(0, 4).text()
+
+
+def test_browse_page_handles_open_errors_without_missing_widget_crash(qtbot) -> None:
+    class Controller(FakeBrowseController):
+        def build_request_from_detail(self, vod_id: str):
+            raise ApiError("detail failed")
+
+    page = BrowsePage(Controller())
+    qtbot.addWidget(page)
+    page.current_items = [type("Item", (), {"type": 9, "vod_id": "movie-1"})()]
+    page.current_path = "/Movies"
+
+    page._handle_open(0, 0)
+
+    breadcrumb_label = page.breadcrumb_layout.itemAt(0).widget()
+    assert breadcrumb_label.text() == "/Movies | detail failed"
+
+
+def test_search_filter_options_cover_web_drive_types(qtbot) -> None:
+    browse_page = BrowsePage(FakeBrowseController())
+    search_page = SearchPage(FakeSearchController())
+    qtbot.addWidget(browse_page)
+    qtbot.addWidget(search_page)
+
+    expected_values = {"", "0", "1", "2", "3", "5", "6", "7", "8", "9", "10"}
+
+    browse_values = {browse_page.filter_combo.itemData(index) for index in range(browse_page.filter_combo.count())}
+    search_values = {search_page.filter_combo.itemData(index) for index in range(search_page.filter_combo.count())}
+
+    assert browse_values == expected_values
+    assert search_values == expected_values

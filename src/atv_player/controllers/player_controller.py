@@ -12,6 +12,8 @@ class PlayerSession:
     start_index: int
     start_position_seconds: int
     speed: float
+    opening_seconds: int = 0
+    ending_seconds: int = 0
 
 
 class PlayerController:
@@ -34,6 +36,8 @@ class PlayerController:
             start_index=start_index,
             start_position_seconds=position_seconds,
             speed=speed,
+            opening_seconds=int((history.opening if history else 0) / 1000),
+            ending_seconds=int((history.ending if history else 0) / 1000),
         )
 
     def report_progress(
@@ -42,6 +46,8 @@ class PlayerController:
         current_index: int,
         position_seconds: int,
         speed: float,
+        opening_seconds: int,
+        ending_seconds: int,
     ) -> None:
         current_item = session.playlist[current_index]
         self._api_client.save_history(
@@ -54,8 +60,8 @@ class PlayerController:
                 "episode": current_index,
                 "episodeUrl": current_item.url,
                 "position": position_seconds * 1000,
-                "opening": 0,
-                "ending": 0,
+                "opening": opening_seconds * 1000,
+                "ending": ending_seconds * 1000,
                 "speed": speed,
                 "createTime": int(time() * 1000),
             }

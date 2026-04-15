@@ -25,8 +25,8 @@ def test_player_controller_restores_resume_state() -> None:
         episode=1,
         episode_url="2.m3u8",
         position=45000,
-        opening=0,
-        ending=0,
+        opening=12000,
+        ending=24000,
         speed=1.5,
         create_time=1,
     )
@@ -39,6 +39,8 @@ def test_player_controller_restores_resume_state() -> None:
     assert session.start_index == 1
     assert session.start_position_seconds == 45
     assert session.speed == 1.5
+    assert session.opening_seconds == 12
+    assert session.ending_seconds == 24
 
 
 def test_player_controller_builds_history_payload() -> None:
@@ -48,7 +50,14 @@ def test_player_controller_builds_history_payload() -> None:
     playlist = [PlayItem(title="Episode 1", url="1.m3u8"), PlayItem(title="Episode 2", url="2.m3u8")]
     session = controller.create_session(vod, playlist, clicked_index=1)
 
-    controller.report_progress(session, current_index=1, position_seconds=90, speed=1.25)
+    controller.report_progress(
+        session,
+        current_index=1,
+        position_seconds=90,
+        speed=1.25,
+        opening_seconds=15,
+        ending_seconds=30,
+    )
 
     payload = api.saved_payloads[0]
     assert payload["key"] == "movie-1"
@@ -56,4 +65,6 @@ def test_player_controller_builds_history_payload() -> None:
     assert payload["episode"] == 1
     assert payload["episodeUrl"] == "2.m3u8"
     assert payload["position"] == 90000
+    assert payload["opening"] == 15000
+    assert payload["ending"] == 30000
     assert payload["speed"] == 1.25

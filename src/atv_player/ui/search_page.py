@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 from atv_player.api import ApiError, UnauthorizedError
 from atv_player.controllers.browse_controller import filter_search_results
 from atv_player.models import VodItem
+from atv_player.ui.filter_options import SEARCH_DRIVE_FILTER_OPTIONS
 from atv_player.ui.table_utils import configure_table_columns
 
 
@@ -37,13 +38,8 @@ class SearchPage(QWidget):
         self.status_label.setPlaceholderText("搜索电报资源")
         self._results: list[VodItem] = []
 
-        self.filter_combo.addItem("全部", "")
-        self.filter_combo.addItem("📀 0", "0")
-        self.filter_combo.addItem("💾 3", "3")
-        self.filter_combo.addItem("🚀 5", "5")
-        self.filter_combo.addItem("🌞 7", "7")
-        self.filter_combo.addItem("📡 8", "8")
-        self.filter_combo.addItem("☁ 9", "9")
+        for label, value in SEARCH_DRIVE_FILTER_OPTIONS:
+            self.filter_combo.addItem(label, value)
 
         top = QHBoxLayout()
         top.addWidget(self.keyword_edit)
