@@ -830,6 +830,53 @@ class PlayerWindow(QWidget):
         self.audio_combo.setCurrentIndex(0)
         self.audio_combo.blockSignals(False)
 
+    def _remember_audio_track_preference(self, track: AudioTrack) -> None:
+        self._audio_preference = AudioPreference(
+            mode="track",
+            title=track.title,
+            lang=track.lang,
+            is_default=track.is_default,
+            is_forced=track.is_forced,
+        )
+
+    def _audio_track_match_score(self, track: AudioTrack, preference: AudioPreference) -> tuple[int, int, int]:
+        return (
+            int(bool(preference.title) and track.title == preference.title),
+            int(bool(preference.lang) and track.lang == preference.lang),
+            int(track.is_forced == preference.is_forced and track.is_default == preference.is_default),
+        )
+
+    def _matching_audio_track_for_preference(self) -> AudioTrack | None:
+        if self._audio_preference.mode != "track" or len(self._audio_tracks) <= 1:
+            return None
+        ranked_tracks = sorted(
+            self._audio_tracks,
+            key=lambda track: self._audio_track_match_score(track, self._audio_preference),
+            reverse=True,
+        )
+        best_track = ranked_tracks[0]
+        if self._audio_track_match_score(best_track, self._audio_preference) == (0, 0, 0):
+            return None
+        return best_track
+
+    def _apply_audio_preference(self) -> None:
+        self.audio_combo.blockSignals(True)
+        try:
+            if self._audio_preference.mode == "track":
+                matched_track = self._matching_audio_track_for_preference()
+                if matched_track is not None:
+                    applied_track_id = self.video.apply_audio_mode("track", track_id=matched_track.id)
+                    for index, track in enumerate(self._audio_tracks, start=1):
+                        if track.id == applied_track_id:
+                            self.audio_combo.setCurrentIndex(index)
+                            return
+                self._audio_preference = AudioPreference()
+
+            self.video.apply_audio_mode("auto")
+            self.audio_combo.setCurrentIndex(0)
+        finally:
+            self.audio_combo.blockSignals(False)
+
     def _apply_subtitle_preference(self) -> None:
         self.subtitle_combo.blockSignals(True)
         try:
@@ -918,15 +965,11 @@ class PlayerWindow(QWidget):
             self._audio_preference = AudioPreference()
             return
         try:
-            self.audio_combo.blockSignals(True)
-            self.video.apply_audio_mode("auto")
-            self.audio_combo.setCurrentIndex(0)
+            self._apply_audio_preference()
         except Exception as exc:
             self._audio_preference = AudioPreference()
             self._reset_audio_combo()
             self._append_log(f"音轨切换失败: {exc}")
-        finally:
-            self.audio_combo.blockSignals(False)
 
     def _change_subtitle_selection(self, index: int) -> None:
         if index < 0:
@@ -959,13 +1002,7 @@ class PlayerWindow(QWidget):
             self.video.apply_audio_mode("auto")
             return
         track = next(track for track in self._audio_tracks if track.id == track_id)
-        self._audio_preference = AudioPreference(
-            mode="track",
-            title=track.title,
-            lang=track.lang,
-            is_default=track.is_default,
-            is_forced=track.is_forced,
-        )
+        self._remember_audio_track_preference(track)
         self.video.apply_audio_mode("track", track_id=track_id)
 
     def _change_volume(self, value: int) -> None:
