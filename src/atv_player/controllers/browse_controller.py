@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from atv_player.models import OpenPlayerRequest, PlayItem, VodItem
+from atv_player.share_types import get_share_type_name
+from atv_player.time_utils import format_local_datetime
 
 
 def build_vod_list_path(path: str) -> str:
@@ -15,6 +17,7 @@ def _map_play_item(payload: dict, index: int) -> PlayItem:
         path=str(payload.get("path") or ""),
         index=index,
         size=int(payload.get("size") or 0),
+        vod_id=str(payload.get("vod_id") or ""),
     )
 
 
@@ -48,12 +51,49 @@ def _map_vod_item(payload: dict) -> VodItem:
 def filter_search_results(results: list[VodItem], drive_type: str) -> list[VodItem]:
     if not drive_type:
         return list(results)
-    return [item for item in results if drive_type in item.type_name]
+    return [
+        item
+        for item in results
+        if item.share_type == drive_type or drive_type in item.type_name
+    ]
 
 
 class BrowseController:
     def __init__(self, api_client) -> None:
         self._api_client = api_client
+
+    def _merge_vod_metadata(self, resolved_vod: VodItem, fallback_vod: VodItem) -> VodItem:
+        return VodItem(
+            vod_id=resolved_vod.vod_id or fallback_vod.vod_id,
+            vod_name=resolved_vod.vod_name or fallback_vod.vod_name,
+            path=resolved_vod.path or fallback_vod.path,
+            share_type=resolved_vod.share_type or fallback_vod.share_type,
+            vod_pic=resolved_vod.vod_pic or fallback_vod.vod_pic,
+            vod_tag=resolved_vod.vod_tag or fallback_vod.vod_tag,
+            vod_time=resolved_vod.vod_time or fallback_vod.vod_time,
+            vod_remarks=resolved_vod.vod_remarks or fallback_vod.vod_remarks,
+            vod_play_from=resolved_vod.vod_play_from or fallback_vod.vod_play_from,
+            vod_play_url=resolved_vod.vod_play_url or fallback_vod.vod_play_url,
+            type_name=resolved_vod.type_name or fallback_vod.type_name,
+            vod_content=resolved_vod.vod_content or fallback_vod.vod_content,
+            vod_year=resolved_vod.vod_year or fallback_vod.vod_year,
+            vod_area=resolved_vod.vod_area or fallback_vod.vod_area,
+            vod_lang=resolved_vod.vod_lang or fallback_vod.vod_lang,
+            vod_director=resolved_vod.vod_director or fallback_vod.vod_director,
+            vod_actor=resolved_vod.vod_actor or fallback_vod.vod_actor,
+            dbid=resolved_vod.dbid or fallback_vod.dbid,
+            type=resolved_vod.type or fallback_vod.type,
+            items=resolved_vod.items or fallback_vod.items,
+        )
+
+    def _first_play_url(self, vod: VodItem) -> str:
+        if vod.items:
+            return vod.items[0].url
+        return vod.vod_play_url
+
+    def resolve_folder_play_item(self, item: PlayItem) -> VodItem:
+        payload = self._api_client.get_detail(item.vod_id)
+        return _map_vod_item(payload["list"][0])
 
     def load_folder(self, path: str, page: int = 1, size: int = 50) -> tuple[list[VodItem], int]:
         payload = self._api_client.list_vod(build_vod_list_path(path), page=page, size=size)
@@ -66,9 +106,10 @@ class BrowseController:
             VodItem(
                 vod_id=str(item.get("id", "")),
                 vod_name=str(item.get("name", "")),
+                share_type=str(item.get("type", "")),
                 vod_tag="folder",
-                vod_time=str(item.get("time", "")),
-                type_name=str(item.get("type", "")),
+                vod_time=format_local_datetime(str(item.get("time", ""))),
+                type_name=get_share_type_name(str(item.get("type", ""))) or str(item.get("type", "")),
                 vod_play_from=str(item.get("channel", "")),
                 vod_play_url=str(item.get("link", "")),
             )
@@ -92,6 +133,7 @@ class BrowseController:
                 path=item.path,
                 index=index,
                 size=0,
+                vod_id=item.vod_id,
             )
             playlist.append(playlist_item)
             if item.vod_id == clicked_vod_id:
@@ -118,28 +160,18 @@ class BrowseController:
         folder_items: list[VodItem],
     ) -> OpenPlayerRequest:
         playlist, clicked_index = self.build_playlist_from_folder(folder_items, clicked_item.vod_id)
-        vod = VodItem(
-            vod_id=clicked_item.vod_id,
-            vod_name=clicked_item.vod_name,
-            vod_pic=clicked_item.vod_pic,
-            path=clicked_item.path,
-            vod_remarks=clicked_item.vod_remarks,
-            type_name=clicked_item.type_name,
-            vod_content=clicked_item.vod_content,
-            vod_year=clicked_item.vod_year,
-            vod_area=clicked_item.vod_area,
-            vod_lang=clicked_item.vod_lang,
-            vod_director=clicked_item.vod_director,
-            vod_actor=clicked_item.vod_actor,
-            dbid=clicked_item.dbid,
-            type=clicked_item.type,
-        )
+        clicked_playlist_item = playlist[clicked_index]
+        resolved_vod = self._merge_vod_metadata(self.resolve_folder_play_item(clicked_playlist_item), clicked_item)
+        resolved_vod.vod_id = clicked_item.vod_id
+        clicked_playlist_item.url = self._first_play_url(resolved_vod)
         return OpenPlayerRequest(
-            vod=vod,
+            vod=resolved_vod,
             playlist=playlist,
             clicked_index=clicked_index,
             source_mode="folder",
             source_path=clicked_item.path.rsplit("/", 1)[0] or "/",
             source_vod_id=clicked_item.vod_id,
             source_clicked_vod_id=clicked_item.vod_id,
+            detail_resolver=self.resolve_folder_play_item,
+            resolved_vod_by_id={resolved_vod.vod_id: resolved_vod},
         )

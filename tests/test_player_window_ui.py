@@ -4,6 +4,7 @@ from PySide6.QtWidgets import QApplication, QComboBox
 from PySide6.QtWidgets import QSplitter
 from atv_player.controllers.player_controller import PlayerSession
 from atv_player.models import AppConfig, PlayItem, VodItem
+from atv_player.player.mpv_widget import AudioTrack, SubtitleTrack
 
 import atv_player.ui.player_window as player_window_module
 from atv_player.ui.player_window import PlayerWindow
@@ -21,6 +22,9 @@ class FakePlayerController:
     ) -> None:
         return None
 
+    def resolve_play_item_detail(self, session, play_item):
+        return None
+
 
 class RecordingPlayerController(FakePlayerController):
     def __init__(self) -> None:
@@ -36,6 +40,17 @@ class RecordingPlayerController(FakePlayerController):
         ending_seconds: int,
     ) -> None:
         self.progress_calls.append((current_index, position_seconds, speed, opening_seconds, ending_seconds))
+
+    def resolve_play_item_detail(self, session, play_item):
+        if not play_item.vod_id or session.detail_resolver is None:
+            return None
+        if play_item.vod_id in session.resolved_vod_by_id:
+            resolved_vod = session.resolved_vod_by_id[play_item.vod_id]
+        else:
+            resolved_vod = session.detail_resolver(play_item)
+            session.resolved_vod_by_id[play_item.vod_id] = resolved_vod
+        play_item.url = resolved_vod.items[0].url if resolved_vod.items else resolved_vod.vod_play_url
+        return resolved_vod
 
 
 class RecordingVideo:
@@ -481,7 +496,7 @@ def test_player_window_renders_remote_poster_via_direct_request_headers(qtbot, m
                 "Referer": "https://movie.douban.com/",
                 "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
             },
-            3.0,
+            10.0,
         )
     ]
 
@@ -535,9 +550,9 @@ def test_player_window_uses_short_timeout_for_remote_poster_requests(qtbot, monk
     window.video = FakeVideo()
 
     window.open_session(session)
-    qtbot.waitUntil(lambda: requested_timeouts == [3.0])
+    qtbot.waitUntil(lambda: requested_timeouts == [10.0])
 
-    assert requested_timeouts == [3.0]
+    assert requested_timeouts == [10.0]
 
 
 def test_player_window_uses_youtube_referer_for_ytimg_posters(qtbot, monkeypatch) -> None:
@@ -677,6 +692,24 @@ def test_player_window_bottom_controls_are_not_nested_inside_video_pane(qtbot) -
 
 def test_player_window_falls_back_when_saved_splitter_state_is_invalid(qtbot) -> None:
     config = AppConfig(player_main_splitter_state=b"not-a-real-splitter-state")
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.show()
+
+    sizes = window.main_splitter.sizes()
+
+    assert len(sizes) == 2
+    assert all(size > 0 for size in sizes)
+
+
+def test_player_window_falls_back_when_saved_splitter_state_collapses_sidebar(qtbot) -> None:
+    config = AppConfig()
+    source = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(source)
+    source.show()
+    source.main_splitter.setSizes([1, 0])
+    config.player_main_splitter_state = bytes(source.main_splitter.saveState())
+
     window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
     qtbot.addWidget(window)
     window.show()
@@ -1068,6 +1101,637 @@ def test_player_window_exposes_extended_playback_controls(qtbot) -> None:
     assert window.volume_slider.maximum() == 100
 
 
+def test_player_window_exposes_subtitle_combo_with_default_auto_entry(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert isinstance(window.subtitle_combo, QComboBox)
+    assert window.subtitle_combo.count() == 1
+    assert window.subtitle_combo.itemText(0) == "自动选择"
+    assert window.subtitle_combo.isEnabled() is False
+
+
+def test_player_window_exposes_audio_combo_with_default_auto_entry(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert isinstance(window.audio_combo, QComboBox)
+    assert window.audio_combo.count() == 1
+    assert window.audio_combo.itemText(0) == "自动选择"
+    assert window.audio_combo.isEnabled() is False
+
+
+def test_player_window_populates_embedded_audio_options_after_open_session(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int]] = []
+            self.audio_apply_calls: list[tuple[str, int | None]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.load_calls.append((url, pause, start_seconds))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return [
+                AudioTrack(id=31, title="", lang="cmn", is_default=True, is_forced=False, label="国语 (默认)"),
+                AudioTrack(id=32, title="English Dub", lang="eng", is_default=False, is_forced=False, label="English Dub"),
+            ]
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.audio_apply_calls.append((mode, track_id))
+            return 31 if mode == "auto" else track_id
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(make_player_session(start_index=0))
+
+    assert [window.audio_combo.itemText(index) for index in range(window.audio_combo.count())] == [
+        "音轨",
+        "国语 (默认)",
+        "English Dub",
+    ]
+    assert window.audio_combo.isEnabled() is True
+    assert window.video.audio_apply_calls[0] == ("auto", None)
+
+
+def test_player_window_disables_audio_selector_when_current_item_has_no_embedded_audio_options(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(make_player_session(start_index=0))
+
+    assert window.audio_combo.count() == 1
+    assert window.audio_combo.itemText(0) == "音轨"
+    assert window.audio_combo.isEnabled() is False
+
+
+def test_player_window_user_selection_applies_selected_audio_track(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.audio_apply_calls: list[tuple[str, int | None]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return [
+                AudioTrack(id=31, title="", lang="cmn", is_default=True, is_forced=False, label="国语 (默认)"),
+                AudioTrack(id=32, title="English Dub", lang="eng", is_default=False, is_forced=False, label="English Dub"),
+            ]
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.audio_apply_calls.append((mode, track_id))
+            return track_id
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(make_player_session(start_index=0))
+    window.video.audio_apply_calls.clear()
+
+    window.audio_combo.setCurrentIndex(2)
+
+    assert window.video.audio_apply_calls == [("track", 32)]
+
+
+def test_player_window_reuses_audio_track_preference_for_next_episode(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.current_url = ""
+            self.audio_apply_calls: list[tuple[str, str, int | None]] = []
+            self.tracks_by_url = {
+                "http://m/1.m3u8": [
+                    AudioTrack(id=31, title="", lang="cmn", is_default=True, is_forced=False, label="国语 (默认)"),
+                    AudioTrack(id=32, title="English Dub", lang="eng", is_default=False, is_forced=False, label="English Dub"),
+                ],
+                "http://m/2.m3u8": [
+                    AudioTrack(id=41, title="", lang="cmn", is_default=True, is_forced=False, label="国语 (默认)"),
+                    AudioTrack(id=42, title="English Dub", lang="eng", is_default=False, is_forced=False, label="English Dub"),
+                ],
+            }
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.current_url = url
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return self.tracks_by_url[self.current_url]
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.audio_apply_calls.append((self.current_url, mode, track_id))
+            return track_id if mode == "track" else 41
+
+        def position_seconds(self) -> int:
+            return 30
+
+        def duration_seconds(self) -> int:
+            return 120
+
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(make_player_session(start_index=0))
+    window.audio_combo.setCurrentIndex(2)
+    window.video.audio_apply_calls.clear()
+
+    window.play_next()
+
+    assert ("http://m/2.m3u8", "track", 42) in window.video.audio_apply_calls
+    assert window.audio_combo.currentText() == "English Dub"
+
+
+def test_player_window_falls_back_to_auto_when_previous_audio_track_cannot_be_matched(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.current_url = ""
+            self.audio_apply_calls: list[tuple[str, str, int | None]] = []
+            self.tracks_by_url = {
+                "http://m/1.m3u8": [
+                    AudioTrack(id=31, title="", lang="cmn", is_default=True, is_forced=False, label="国语 (默认)"),
+                    AudioTrack(id=32, title="English Dub", lang="eng", is_default=False, is_forced=False, label="English Dub"),
+                ],
+                "http://m/2.m3u8": [
+                    AudioTrack(id=41, title="", lang="cmn", is_default=True, is_forced=False, label="国语 (默认)"),
+                ],
+            }
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.current_url = url
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return self.tracks_by_url[self.current_url]
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.audio_apply_calls.append((self.current_url, mode, track_id))
+            return 41 if mode == "auto" else track_id
+
+        def position_seconds(self) -> int:
+            return 30
+
+        def duration_seconds(self) -> int:
+            return 120
+
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(make_player_session(start_index=0))
+    window.audio_combo.setCurrentIndex(2)
+    window.video.audio_apply_calls.clear()
+
+    window.play_next()
+
+    assert ("http://m/2.m3u8", "auto", None) in window.video.audio_apply_calls
+    assert window.audio_combo.currentText() == "音轨"
+    assert window.audio_combo.isEnabled() is False
+
+
+def test_player_window_logs_and_resets_when_audio_refresh_fails(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            raise RuntimeError("boom")
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(make_player_session(start_index=0))
+
+    assert "音轨加载失败: boom" in window.log_view.toPlainText()
+    assert window.audio_combo.count() == 1
+    assert window.audio_combo.itemText(0) == "音轨"
+    assert window.audio_combo.isEnabled() is False
+
+
+def test_player_window_refreshes_audio_options_when_mpv_reports_tracks_after_load(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    load_calls: list[tuple[str, bool, int]] = []
+    audio_apply_calls: list[tuple[str, int | None]] = []
+    tracks_call_count = {"count": 0}
+
+    def fake_audio_tracks() -> list[AudioTrack]:
+        tracks_call_count["count"] += 1
+        if tracks_call_count["count"] == 1:
+            return []
+        return [
+            AudioTrack(id=31, title="", lang="cmn", is_default=True, is_forced=False, label="国语 (默认)"),
+            AudioTrack(id=32, title="English Dub", lang="eng", is_default=False, is_forced=False, label="English Dub"),
+        ]
+
+    window.video_widget.load = lambda url, pause=False, start_seconds=0: load_calls.append((url, pause, start_seconds))
+    window.video_widget.set_speed = lambda speed: None
+    window.video_widget.set_volume = lambda value: None
+    window.video_widget.subtitle_tracks = lambda: []
+    window.video_widget.apply_subtitle_mode = lambda mode, track_id=None: None
+    window.video_widget.audio_tracks = fake_audio_tracks
+    window.video_widget.apply_audio_mode = (
+        lambda mode, track_id=None: audio_apply_calls.append((mode, track_id)) or (31 if mode == "auto" else track_id)
+    )
+    window.video_widget.position_seconds = lambda: 0
+
+    window.open_session(make_player_session(start_index=0))
+
+    assert load_calls == [("http://m/1.m3u8", False, 0)]
+    assert window.audio_combo.count() == 1
+    assert window.audio_combo.isEnabled() is False
+
+    window.video_widget.audio_tracks_changed.emit()
+
+    assert [window.audio_combo.itemText(index) for index in range(window.audio_combo.count())] == [
+        "音轨",
+        "国语 (默认)",
+        "English Dub",
+    ]
+    assert window.audio_combo.isEnabled() is True
+    assert audio_apply_calls == [("auto", None)]
+
+
+def test_player_window_populates_embedded_subtitle_options_after_open_session(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int]] = []
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.load_calls.append((url, pause, start_seconds))
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return [
+                SubtitleTrack(id=11, title="", lang="zh", is_default=True, is_forced=False, label="中文 (默认)"),
+                SubtitleTrack(id=12, title="English", lang="eng", is_default=False, is_forced=False, label="English"),
+            ]
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
+            return 11 if mode == "auto" else track_id
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(make_player_session(start_index=0))
+
+    assert [window.subtitle_combo.itemText(index) for index in range(window.subtitle_combo.count())] == [
+        "字幕",
+        "关闭字幕",
+        "中文 (默认)",
+        "English",
+    ]
+    assert window.subtitle_combo.isEnabled() is True
+    assert window.video.subtitle_apply_calls[0] == ("auto", None)
+
+
+def test_player_window_disables_subtitle_selector_when_current_item_has_no_embedded_subtitles(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(make_player_session(start_index=0))
+
+    assert window.subtitle_combo.count() == 1
+    assert window.subtitle_combo.itemText(0) == "字幕"
+    assert window.subtitle_combo.isEnabled() is False
+
+
+def test_player_window_user_selection_applies_selected_subtitle_track(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return [
+                SubtitleTrack(id=11, title="", lang="zh", is_default=True, is_forced=False, label="中文 (默认)"),
+                SubtitleTrack(id=12, title="English", lang="eng", is_default=False, is_forced=False, label="English"),
+            ]
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
+            return track_id
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(make_player_session(start_index=0))
+    window.video.subtitle_apply_calls.clear()
+
+    window.subtitle_combo.setCurrentIndex(3)
+
+    assert window.video.subtitle_apply_calls == [("track", 12)]
+
+
+def test_player_window_reuses_subtitle_track_preference_for_next_episode(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.current_url = ""
+            self.subtitle_apply_calls: list[tuple[str, str, int | None]] = []
+            self.tracks_by_url = {
+                "http://m/1.m3u8": [
+                    SubtitleTrack(id=11, title="", lang="zh", is_default=True, is_forced=False, label="中文 (默认)"),
+                    SubtitleTrack(id=12, title="English", lang="eng", is_default=False, is_forced=False, label="English"),
+                ],
+                "http://m/2.m3u8": [
+                    SubtitleTrack(id=21, title="", lang="zh", is_default=True, is_forced=False, label="中文 (默认)"),
+                    SubtitleTrack(id=22, title="English", lang="eng", is_default=False, is_forced=False, label="English"),
+                ],
+            }
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.current_url = url
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return self.tracks_by_url[self.current_url]
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((self.current_url, mode, track_id))
+            return track_id if mode == "track" else None
+
+        def position_seconds(self) -> int:
+            return 30
+
+        def duration_seconds(self) -> int:
+            return 120
+
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(make_player_session(start_index=0))
+    window.subtitle_combo.setCurrentIndex(3)
+    window.video.subtitle_apply_calls.clear()
+
+    window.play_next()
+
+    assert ("http://m/2.m3u8", "track", 22) in window.video.subtitle_apply_calls
+    assert window.subtitle_combo.currentText() == "English"
+
+
+def test_player_window_falls_back_to_auto_when_previous_track_cannot_be_matched(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.current_url = ""
+            self.subtitle_apply_calls: list[tuple[str, str, int | None]] = []
+            self.tracks_by_url = {
+                "http://m/1.m3u8": [
+                    SubtitleTrack(id=11, title="", lang="zh", is_default=True, is_forced=False, label="中文 (默认)"),
+                    SubtitleTrack(id=12, title="English", lang="eng", is_default=False, is_forced=False, label="English"),
+                ],
+                "http://m/2.m3u8": [
+                    SubtitleTrack(id=21, title="", lang="zh", is_default=True, is_forced=False, label="中文 (默认)"),
+                ],
+            }
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.current_url = url
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return self.tracks_by_url[self.current_url]
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((self.current_url, mode, track_id))
+            return 21 if mode == "auto" else track_id
+
+        def position_seconds(self) -> int:
+            return 30
+
+        def duration_seconds(self) -> int:
+            return 120
+
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(make_player_session(start_index=0))
+    window.subtitle_combo.setCurrentIndex(3)
+    window.video.subtitle_apply_calls.clear()
+
+    window.play_next()
+
+    assert ("http://m/2.m3u8", "auto", None) in window.video.subtitle_apply_calls
+    assert window.subtitle_combo.currentText() == "字幕"
+
+
+def test_player_window_logs_and_resets_when_subtitle_refresh_fails(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            raise RuntimeError("boom")
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(make_player_session(start_index=0))
+
+    assert "字幕加载失败: boom" in window.log_view.toPlainText()
+    assert window.subtitle_combo.count() == 1
+    assert window.subtitle_combo.itemText(0) == "字幕"
+    assert window.subtitle_combo.isEnabled() is False
+
+
+def test_player_window_refreshes_subtitle_options_when_mpv_reports_tracks_after_load(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    load_calls: list[tuple[str, bool, int]] = []
+    subtitle_apply_calls: list[tuple[str, int | None]] = []
+    tracks_call_count = {"count": 0}
+
+    def fake_subtitle_tracks() -> list[SubtitleTrack]:
+        tracks_call_count["count"] += 1
+        if tracks_call_count["count"] == 1:
+            return []
+        return [SubtitleTrack(id=11, title="", lang="zh", is_default=True, is_forced=False, label="中文 (默认)")]
+
+    window.video_widget.load = lambda url, pause=False, start_seconds=0: load_calls.append((url, pause, start_seconds))
+    window.video_widget.set_speed = lambda speed: None
+    window.video_widget.set_volume = lambda value: None
+    window.video_widget.subtitle_tracks = fake_subtitle_tracks
+    window.video_widget.apply_subtitle_mode = (
+        lambda mode, track_id=None: subtitle_apply_calls.append((mode, track_id)) or (11 if mode == "auto" else track_id)
+    )
+    window.video_widget.position_seconds = lambda: 0
+
+    window.open_session(make_player_session(start_index=0))
+
+    assert load_calls == [("http://m/1.m3u8", False, 0)]
+    assert window.subtitle_combo.count() == 1
+    assert window.subtitle_combo.isEnabled() is False
+
+    window.video_widget.subtitle_tracks_changed.emit()
+
+    assert [window.subtitle_combo.itemText(index) for index in range(window.subtitle_combo.count())] == [
+        "字幕",
+        "关闭字幕",
+        "中文 (默认)",
+    ]
+    assert window.subtitle_combo.isEnabled() is True
+    assert subtitle_apply_calls == [("auto", None)]
+
+
 def test_player_window_uses_distinct_seek_icons(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
@@ -1134,6 +1798,37 @@ def test_player_window_refresh_button_replays_current_item(qtbot) -> None:
     assert window.video.set_volume_calls == [35]
 
 
+def test_player_window_restores_saved_volume_for_new_session(qtbot) -> None:
+    config = AppConfig(player_volume=35)
+    window = PlayerWindow(FakePlayerController(), config=config)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    assert window.volume_slider.value() == 35
+
+    window.open_session(make_player_session(start_index=0))
+
+    assert window.video.set_volume_calls[-1] == 35
+
+
+def test_player_window_volume_changes_persist_to_config(qtbot) -> None:
+    config = AppConfig(player_volume=35)
+    saved = {"count": 0}
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("count", saved["count"] + 1),
+    )
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.volume_slider.setValue(60)
+
+    assert config.player_volume == 60
+    assert window.video.set_volume_calls == [60]
+    assert saved["count"] >= 1
+
+
 def test_player_window_advances_to_next_item_when_playback_finishes(qtbot) -> None:
     controller = RecordingPlayerController()
     video = RecordingVideo()
@@ -1150,6 +1845,196 @@ def test_player_window_advances_to_next_item_when_playback_finishes(qtbot) -> No
     assert window.playlist.currentRow() == 1
     assert video.load_calls == [("http://m/2.m3u8", 0)]
     assert controller.progress_calls == [(0, 30, 1.0, 0, 0)]
+
+
+def test_player_window_play_next_resolves_target_episode_before_loading(qtbot) -> None:
+    controller = RecordingPlayerController()
+    resolved_vod = VodItem(
+        vod_id="ep-2",
+        vod_name="Resolved Episode 2",
+        vod_content="resolved episode content",
+        items=[PlayItem(title="Episode 2", url="http://resolved/2.m3u8", vod_id="ep-2")],
+    )
+
+    class FakeVideo(RecordingVideo):
+        pass
+
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    session = make_player_session(start_index=0)
+    session.playlist = [
+        PlayItem(title="Episode 1", url="http://m/1.m3u8", vod_id="ep-1"),
+        PlayItem(title="Episode 2", url="", vod_id="ep-2"),
+    ]
+    session.detail_resolver = lambda item: resolved_vod
+    window.open_session(session)
+    window.video.load_calls.clear()
+
+    window.play_next()
+
+    assert window.current_index == 1
+    assert window.video.load_calls == [("http://resolved/2.m3u8", 0)]
+    assert "resolved episode content" in window.metadata_view.toPlainText()
+
+
+def test_player_window_reuses_cached_detail_when_returning_to_same_episode(qtbot) -> None:
+    controller = RecordingPlayerController()
+    detail_calls: list[str] = []
+
+    def detail_resolver(item: PlayItem) -> VodItem:
+        detail_calls.append(item.vod_id)
+        return VodItem(
+            vod_id=item.vod_id,
+            vod_name=f"Resolved {item.title}",
+            items=[PlayItem(title=item.title, url=f"http://resolved/{item.vod_id}.m3u8", vod_id=item.vod_id)],
+        )
+
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = make_player_session(start_index=0)
+    session.playlist = [
+        PlayItem(title="Episode 1", url="", vod_id="ep-1"),
+        PlayItem(title="Episode 2", url="", vod_id="ep-2"),
+    ]
+    session.detail_resolver = detail_resolver
+    window.open_session(session)
+    detail_calls.clear()
+    window.video.load_calls.clear()
+
+    window.play_next()
+    window.play_previous()
+    window.play_next()
+
+    assert detail_calls == ["ep-2"]
+    assert ("http://resolved/ep-2.m3u8", 0) in window.video.load_calls
+
+
+def test_player_window_keeps_current_index_when_next_episode_detail_resolution_fails(qtbot) -> None:
+    controller = RecordingPlayerController()
+
+    def detail_resolver(item: PlayItem) -> VodItem:
+        if item.vod_id == "ep-2":
+            raise RuntimeError("detail failed")
+        return VodItem(
+            vod_id=item.vod_id,
+            vod_name=item.title,
+            items=[PlayItem(title=item.title, url=f"http://resolved/{item.vod_id}.m3u8", vod_id=item.vod_id)],
+        )
+
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = make_player_session(start_index=0)
+    session.playlist = [
+        PlayItem(title="Episode 1", url="", vod_id="ep-1"),
+        PlayItem(title="Episode 2", url="", vod_id="ep-2"),
+    ]
+    session.detail_resolver = detail_resolver
+    window.open_session(session)
+    window.video.load_calls.clear()
+
+    window.play_next()
+
+    assert window.current_index == 0
+    assert window.video.load_calls == []
+    assert "播放失败: detail failed" in window.log_view.toPlainText()
+
+
+def test_player_window_play_next_resolves_target_episode_before_loading(qtbot) -> None:
+    controller = RecordingPlayerController()
+    resolved_vod = VodItem(
+        vod_id="ep-2",
+        vod_name="Resolved Episode 2",
+        vod_content="resolved episode content",
+        items=[PlayItem(title="Episode 2", url="http://resolved/2.m3u8", vod_id="ep-2")],
+    )
+
+    class FakeVideo(RecordingVideo):
+        pass
+
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    session = make_player_session(start_index=0)
+    session.playlist = [
+        PlayItem(title="Episode 1", url="http://m/1.m3u8", vod_id="ep-1"),
+        PlayItem(title="Episode 2", url="", vod_id="ep-2"),
+    ]
+    session.detail_resolver = lambda item: resolved_vod
+    window.open_session(session)
+    window.video.load_calls.clear()
+
+    window.play_next()
+
+    assert window.current_index == 1
+    assert window.video.load_calls == [("http://resolved/2.m3u8", 0)]
+    assert "resolved episode content" in window.metadata_view.toPlainText()
+
+
+def test_player_window_reuses_cached_detail_when_returning_to_same_episode(qtbot) -> None:
+    controller = RecordingPlayerController()
+    detail_calls: list[str] = []
+
+    def detail_resolver(item: PlayItem) -> VodItem:
+        detail_calls.append(item.vod_id)
+        return VodItem(
+            vod_id=item.vod_id,
+            vod_name=f"Resolved {item.title}",
+            items=[PlayItem(title=item.title, url=f"http://resolved/{item.vod_id}.m3u8", vod_id=item.vod_id)],
+        )
+
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = make_player_session(start_index=0)
+    session.playlist = [
+        PlayItem(title="Episode 1", url="", vod_id="ep-1"),
+        PlayItem(title="Episode 2", url="", vod_id="ep-2"),
+    ]
+    session.detail_resolver = detail_resolver
+    window.open_session(session)
+    detail_calls.clear()
+    window.video.load_calls.clear()
+
+    window.play_next()
+    window.play_previous()
+    window.play_next()
+
+    assert detail_calls == ["ep-2"]
+    assert ("http://resolved/ep-2.m3u8", 0) in window.video.load_calls
+
+
+def test_player_window_keeps_current_index_when_next_episode_detail_resolution_fails(qtbot) -> None:
+    controller = RecordingPlayerController()
+
+    def detail_resolver(item: PlayItem) -> VodItem:
+        if item.vod_id == "ep-2":
+            raise RuntimeError("detail failed")
+        return VodItem(
+            vod_id=item.vod_id,
+            vod_name=item.title,
+            items=[PlayItem(title=item.title, url=f"http://resolved/{item.vod_id}.m3u8", vod_id=item.vod_id)],
+        )
+
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = make_player_session(start_index=0)
+    session.playlist = [
+        PlayItem(title="Episode 1", url="", vod_id="ep-1"),
+        PlayItem(title="Episode 2", url="", vod_id="ep-2"),
+    ]
+    session.detail_resolver = detail_resolver
+    window.open_session(session)
+    window.video.load_calls.clear()
+
+    window.play_next()
+
+    assert window.current_index == 0
+    assert window.video.load_calls == []
+    assert "播放失败: detail failed" in window.log_view.toPlainText()
 
 
 def test_player_window_playback_controls_show_shortcuts_and_pointing_cursor(qtbot) -> None:
@@ -1312,7 +2197,7 @@ def test_player_window_pausing_playback_restores_video_cursor_and_stops_autohide
     assert cursor_autohide_calls[-1] is None
 
 
-def test_player_window_video_leave_restores_cursor_and_stops_autohide(qtbot) -> None:
+def test_player_window_video_leave_restores_cursor_and_keeps_polling_while_playing(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
     window.show()
@@ -1328,8 +2213,66 @@ def test_player_window_video_leave_restores_cursor_and_stops_autohide(qtbot) -> 
     assert window._video_pointer_inside is False
     assert window.video.cursor().shape() == Qt.CursorShape.ArrowCursor
     assert window.cursor().shape() == Qt.CursorShape.ArrowCursor
-    assert window._cursor_hide_timer.isActive() is False
-    assert cursor_autohide_calls[-1] is None
+    assert window._cursor_hide_timer.isActive() is True
+    assert cursor_autohide_calls[-1] == 3000
+
+
+def test_player_window_mouse_move_outside_video_keeps_native_autohide_armed_while_playing(
+    qtbot, monkeypatch
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+    cursor_autohide_calls: list[int | None] = []
+    window.video.set_cursor_autohide = lambda value: cursor_autohide_calls.append(value)
+    window.is_playing = True
+    center_point = window.video_widget.rect().center()
+    outside_local = window.rect().bottomRight()
+    outside_global = window.mapToGlobal(outside_local)
+    monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: outside_global))
+
+    window._video_pointer_inside = True
+    window._handle_video_mouse_activity(now_ms=1000)
+    move_event = QMouseEvent(
+        QEvent.Type.MouseMove,
+        outside_local,
+        outside_global,
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+    QApplication.sendEvent(window, move_event)
+
+    assert window._video_pointer_inside is False
+    assert window._cursor_hide_timer.isActive() is True
+    assert cursor_autohide_calls[-1] == 3000
+
+
+def test_player_window_polling_restarts_autohide_when_cursor_reenters_video_after_leave(
+    qtbot, monkeypatch
+) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+    center_point = window.video_widget.rect().center()
+    inside_global = window.video_widget.mapToGlobal(center_point)
+    outside_global = window.mapToGlobal(window.rect().bottomRight())
+    current_pos = {"value": outside_global}
+    monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: current_pos["value"]))
+    cursor_autohide_calls: list[int | None] = []
+    window.video.set_cursor_autohide = lambda value: cursor_autohide_calls.append(value)
+    window.is_playing = True
+    window._video_pointer_inside = True
+    window._handle_video_mouse_activity(now_ms=1000)
+
+    window._handle_video_leave()
+    current_pos["value"] = inside_global
+    window._poll_cursor_idle_state(now_ms=1500)
+
+    assert window._video_pointer_inside is True
+    assert window._cursor_hide_timer.isActive() is True
+    assert cursor_autohide_calls[-1] == 3000
 
 
 def test_player_window_exit_fullscreen_restores_maximized_state(qtbot) -> None:
@@ -1400,6 +2343,26 @@ def test_player_window_wide_button_hides_sidebar(qtbot) -> None:
 
     window.wide_button.click()
     assert window.sidebar_container.isHidden() is False
+
+
+def test_player_window_persists_pre_wide_splitter_state_when_saved_in_wide_mode(qtbot) -> None:
+    config = AppConfig()
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.show()
+    window.main_splitter.setSizes([900, 300])
+
+    expected_sizes = window.main_splitter.sizes()
+
+    window.wide_button.click()
+    window._persist_geometry()
+
+    restored = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(restored)
+    restored.show()
+
+    assert restored.sidebar_container.isHidden() is False
+    assert restored.main_splitter.sizes() == expected_sizes
 
 
 def test_player_window_persists_and_restores_main_splitter_state(qtbot) -> None:
@@ -1518,7 +2481,9 @@ def test_player_window_keyboard_shortcuts_control_playback_navigation_and_view(q
 
     send_key(window, Qt.Key.Key_Left)
     send_key(window, Qt.Key.Key_Right)
-    assert video.seek_relative_calls == [-15, 15]
+    send_key(window, Qt.Key.Key_Left, Qt.KeyboardModifier.ControlModifier)
+    send_key(window, Qt.Key.Key_Right, Qt.KeyboardModifier.ControlModifier)
+    assert video.seek_relative_calls == [-15, 15, -60, 60]
 
     send_key(window, Qt.Key.Key_PageUp)
     assert window.current_index == 0

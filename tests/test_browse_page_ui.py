@@ -1,8 +1,10 @@
-from PySide6.QtCore import Qt
+import threading
+
+from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QSplitter
 
 from atv_player.api import ApiError
-from atv_player.models import HistoryRecord
+from atv_player.models import AppConfig, HistoryRecord, VodItem
 from atv_player.ui.browse_page import BrowsePage
 from atv_player.ui.history_page import HistoryPage
 from atv_player.ui.search_page import SearchPage
@@ -20,6 +22,11 @@ class FakeBrowseController:
         return [], self.total
 
 
+class ErroringBrowseController(FakeBrowseController):
+    def load_folder(self, path: str, page: int = 1, size: int = 50):
+        raise ApiError("加载文件列表超时")
+
+
 class FakeHistoryController:
     def load_page(self, page: int, size: int):
         return [], 0
@@ -27,6 +34,36 @@ class FakeHistoryController:
 
 class FakeSearchController:
     pass
+
+
+class AsyncSearchController:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self._main_thread_id = threading.get_ident()
+        self._events_by_keyword: dict[str, list[threading.Event]] = {}
+        self._results_by_keyword: dict[str, list[VodItem]] = {}
+
+    def search(self, keyword: str) -> list[VodItem]:
+        self.calls.append(keyword)
+        assert threading.get_ident() != self._main_thread_id
+        event = threading.Event()
+        self._events_by_keyword.setdefault(keyword, []).append(event)
+        assert event.wait(timeout=5), f"search for {keyword!r} was never released"
+        return self._results_by_keyword.get(keyword, [])
+
+    def finish(self, keyword: str, results: list[VodItem]) -> None:
+        self._results_by_keyword[keyword] = results
+        self._events_by_keyword[keyword].pop(0).set()
+
+
+class RecordingSearchController(FakeBrowseController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.search_calls: list[str] = []
+
+    def search(self, keyword: str):
+        self.search_calls.append(keyword)
+        return []
 
 
 def test_browse_page_uses_split_view_for_search_and_file_list(qtbot) -> None:
@@ -64,6 +101,88 @@ def test_browse_page_shows_search_results_panel_at_one_quarter_width(qtbot) -> N
     assert right > left
 
 
+def test_search_page_centers_content_container(qtbot) -> None:
+    page = SearchPage(FakeSearchController())
+    qtbot.addWidget(page)
+    page.resize(2000, 900)
+    page.show()
+    qtbot.wait(50)
+
+    container_center = page.content_container.geometry().center().x()
+    page_center = page.rect().center().x()
+
+    assert abs(container_center - page_center) <= 5
+
+
+def test_browse_page_centers_content_container(qtbot) -> None:
+    page = BrowsePage(FakeBrowseController())
+    qtbot.addWidget(page)
+    page.resize(2200, 1000)
+    page.show()
+    qtbot.wait(50)
+
+    container_center = page.content_container.geometry().center().x()
+    page_center = page.rect().center().x()
+
+    assert abs(container_center - page_center) <= 5
+
+
+def test_history_page_centers_content_container(qtbot) -> None:
+    page = HistoryPage(FakeHistoryController())
+    qtbot.addWidget(page)
+    page.resize(2200, 1000)
+    page.show()
+    qtbot.wait(50)
+
+    container_center = page.content_container.geometry().center().x()
+    page_center = page.rect().center().x()
+
+    assert abs(container_center - page_center) <= 5
+
+
+def test_history_page_exposes_refresh_button(qtbot) -> None:
+    page = HistoryPage(FakeHistoryController())
+    qtbot.addWidget(page)
+
+    assert page.refresh_button.text() == "刷新"
+
+
+def test_browse_page_persists_and_restores_content_splitter_state(qtbot) -> None:
+    saved = {"count": 0}
+    config = AppConfig()
+    page = BrowsePage(FakeBrowseController(), config=config, save_config=lambda: saved.__setitem__("count", saved["count"] + 1))
+    qtbot.addWidget(page)
+    page.resize(1400, 900)
+    page.show()
+
+    page._show_search_results_panel()
+    page.content_splitter.setSizes([320, 880])
+    page._persist_content_splitter_state()
+
+    assert config.browse_content_splitter_state is not None
+    assert saved["count"] >= 1
+
+    restored = BrowsePage(FakeBrowseController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(restored)
+    restored.resize(1400, 900)
+    restored.show()
+    restored._show_search_results_panel()
+
+    assert restored.content_splitter.saveState() == QByteArray(config.browse_content_splitter_state)
+
+
+def test_browse_page_search_keyword_sets_input_and_starts_search(qtbot) -> None:
+    controller = RecordingSearchController()
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+    page.show()
+
+    page.search_keyword("霸王别姬")
+
+    assert controller.search_calls == ["霸王别姬"]
+    assert page.keyword_edit.text() == "霸王别姬"
+
+
 def test_tables_are_read_only(qtbot) -> None:
     browse_page = BrowsePage(FakeBrowseController())
     history_page = HistoryPage(FakeHistoryController())
@@ -91,6 +210,17 @@ def test_browse_page_breadcrumb_click_loads_target_folder(qtbot) -> None:
 
     assert controller.loaded_paths == ["/电影/国产"]
     assert controller.load_calls == [("/电影/国产", 1, 50)]
+
+
+def test_browse_page_shows_folder_timeout_in_breadcrumb_status(qtbot) -> None:
+    page = BrowsePage(ErroringBrowseController())
+    qtbot.addWidget(page)
+
+    page.load_path("/电影")
+
+    status_widget = page.breadcrumb_layout.itemAt(0).widget()
+    assert status_widget.text() == "/电影 | 加载文件列表超时"
+    assert page.table.rowCount() == 0
 
 
 def test_browse_page_shows_size_dbid_and_rating_columns(qtbot) -> None:
@@ -127,6 +257,8 @@ def test_browse_page_shows_size_dbid_and_rating_columns(qtbot) -> None:
     assert page.table.item(1, 2).text() == "-"
     assert page.table.item(1, 3).text() == "654321"
     assert page.table.item(1, 4).text() == "8.6"
+    assert page.table.item(0, 1).toolTip() == "Episode 1"
+    assert page.table.item(1, 1).toolTip() == "Movie Folder"
 
 
 def test_main_text_columns_stretch_and_other_columns_fit_content(qtbot) -> None:
@@ -159,6 +291,18 @@ def test_main_text_columns_stretch_and_other_columns_fit_content(qtbot) -> None:
     search_header = search_page.results_table.horizontalHeader()
     assert search_header.sectionResizeMode(0) == QHeaderView.ResizeMode.ResizeToContents
     assert search_header.sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch
+
+
+def test_search_results_tables_show_source_channel_time_and_name_columns(qtbot) -> None:
+    browse_page = BrowsePage(FakeBrowseController())
+    search_page = SearchPage(FakeSearchController())
+    qtbot.addWidget(browse_page)
+    qtbot.addWidget(search_page)
+
+    expected_headers = ["来源", "名称"]
+
+    assert [browse_page.results_table.horizontalHeaderItem(index).text() for index in range(2)] == expected_headers
+    assert [search_page.results_table.horizontalHeaderItem(index).text() for index in range(2)] == expected_headers
 
 
 def test_history_page_formats_episode_progress_and_time(qtbot) -> None:
@@ -223,6 +367,121 @@ def test_search_filter_options_cover_web_drive_types(qtbot) -> None:
 
     assert browse_values == expected_values
     assert search_values == expected_values
+
+
+def test_search_filter_options_show_pure_drive_names(qtbot) -> None:
+    browse_page = BrowsePage(FakeBrowseController())
+    search_page = SearchPage(FakeSearchController())
+    qtbot.addWidget(browse_page)
+    qtbot.addWidget(search_page)
+
+    expected_labels = ["全部", "百度", "天翼", "夸克", "UC", "阿里", "115", "123", "迅雷", "移动", "PikPak"]
+
+    browse_labels = [browse_page.filter_combo.itemText(index) for index in range(browse_page.filter_combo.count())]
+    search_labels = [search_page.filter_combo.itemText(index) for index in range(search_page.filter_combo.count())]
+
+    assert browse_labels == expected_labels
+    assert search_labels == expected_labels
+
+
+def test_search_page_allows_empty_keyword_and_shows_loading_until_worker_finishes(qtbot) -> None:
+    controller = AsyncSearchController()
+    page = SearchPage(controller)
+    qtbot.addWidget(page)
+
+    page.keyword_edit.setText("")
+    page.search()
+
+    qtbot.waitUntil(lambda: controller.calls == [""], timeout=1000)
+
+    assert page.status_label.text() == "搜索中..."
+    assert page.keyword_edit.isEnabled() is False
+    assert page.search_button.isEnabled() is False
+    assert page.filter_combo.isEnabled() is False
+    assert page.clear_button.isEnabled() is False
+
+    controller.finish(
+        "",
+        [VodItem(vod_id="1", vod_name="全集", type_name="阿里", vod_play_from="频道A", vod_time="2026-04-15")],
+    )
+
+    qtbot.waitUntil(lambda: page.status_label.text() == "1 条结果", timeout=1000)
+
+    assert page.results_table.rowCount() == 1
+    assert page.results_table.item(0, 0).text() == "阿里"
+    assert page.results_table.item(0, 1).text() == "全集"
+    assert page.results_table.item(0, 1).toolTip() == "全集"
+    assert page.keyword_edit.isEnabled() is True
+    assert page.search_button.isEnabled() is True
+    assert page.filter_combo.isEnabled() is True
+    assert page.clear_button.isEnabled() is True
+
+
+def test_browse_page_allows_empty_keyword_and_displays_loading_during_async_search(qtbot) -> None:
+    controller = AsyncSearchController()
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+    page.show()
+
+    page.keyword_edit.setText("")
+    page.search()
+
+    qtbot.waitUntil(lambda: controller.calls == [""], timeout=1000)
+
+    assert page.search_panel.isHidden() is False
+    assert page.status_label.isHidden() is False
+    assert page.status_label.text() == "搜索中..."
+    assert page.keyword_edit.isEnabled() is False
+    assert page.search_button.isEnabled() is False
+    assert page.filter_combo.isEnabled() is False
+    assert page.clear_button.isEnabled() is False
+
+    controller.finish(
+        "",
+        [VodItem(vod_id="1", vod_name="全集", type_name="阿里", vod_play_from="频道A", vod_time="2026-04-15")],
+    )
+
+    qtbot.waitUntil(lambda: page.status_label.text() == "1 条结果", timeout=1000)
+
+    assert page.results_table.rowCount() == 1
+    assert page.results_table.item(0, 0).text() == "阿里"
+    assert page.results_table.item(0, 1).text() == "全集"
+    assert page.results_table.item(0, 1).toolTip() == "全集"
+    assert page.keyword_edit.isEnabled() is True
+    assert page.search_button.isEnabled() is True
+    assert page.filter_combo.isEnabled() is True
+    assert page.clear_button.isEnabled() is True
+
+
+def test_browse_page_uses_latest_async_search_result(qtbot) -> None:
+    controller = AsyncSearchController()
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+
+    page.keyword_edit.setText("旧结果")
+    page.search()
+    qtbot.waitUntil(lambda: controller.calls == ["旧结果"], timeout=1000)
+
+    page.keyword_edit.setText("新结果")
+    page.search()
+    qtbot.waitUntil(lambda: controller.calls == ["旧结果", "新结果"], timeout=1000)
+
+    controller.finish(
+        "新结果",
+        [VodItem(vod_id="2", vod_name="新的", type_name="阿里", vod_play_from="频道B", vod_time="2026-04-16")],
+    )
+    qtbot.waitUntil(lambda: page.status_label.text() == "1 条结果", timeout=1000)
+    assert page.results_table.item(0, 1).text() == "新的"
+    assert page.results_table.item(0, 1).toolTip() == "新的"
+
+    controller.finish(
+        "旧结果",
+        [VodItem(vod_id="1", vod_name="旧的", type_name="阿里", vod_play_from="频道A", vod_time="2026-04-15")],
+    )
+    qtbot.wait(100)
+
+    assert page.results_table.item(0, 1).text() == "新的"
+    assert page.results_table.item(0, 1).toolTip() == "新的"
 
 
 def test_browse_page_loads_selected_page_and_page_size(qtbot) -> None:
@@ -363,6 +622,29 @@ def test_history_page_delete_reloads_previous_page_when_last_page_becomes_empty(
 
     assert controller.calls[-1] == (1, 50)
     assert page.current_page == 1
+
+
+def test_history_page_refresh_reuses_current_page_state(qtbot) -> None:
+    class Controller:
+        def __init__(self) -> None:
+            self.calls: list[tuple[int, int]] = []
+
+        def load_page(self, page: int, size: int):
+            self.calls.append((page, size))
+            return [], 120
+
+    controller = Controller()
+    page = HistoryPage(controller)
+    qtbot.addWidget(page)
+
+    page.page_size_combo.setCurrentText("30")
+    page.load_history()
+    page.next_page()
+    controller.calls.clear()
+
+    page.refresh_button.click()
+
+    assert controller.calls == [(2, 30)]
 
 
 def test_browse_page_refresh_reuses_current_page_state(qtbot) -> None:

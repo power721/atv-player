@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 
@@ -14,9 +15,11 @@ class AppConfig:
     last_playback_vod_id: str = ""
     last_playback_clicked_vod_id: str = ""
     last_player_paused: bool = False
+    player_volume: int = 100
     main_window_geometry: bytes | None = None
     player_window_geometry: bytes | None = None
     player_main_splitter_state: bytes | None = None
+    browse_content_splitter_state: bytes | None = None
 
 
 @dataclass(slots=True)
@@ -26,6 +29,13 @@ class PlayItem:
     path: str = ""
     index: int = 0
     size: int = 0
+    vod_id: str = ""
+
+
+@dataclass(slots=True)
+class DoubanCategory:
+    type_id: str
+    type_name: str
 
 
 @dataclass(slots=True)
@@ -33,6 +43,7 @@ class VodItem:
     vod_id: str
     vod_name: str
     path: str = ""
+    share_type: str = ""
     vod_pic: str = ""
     vod_tag: str = ""
     vod_time: str = ""
@@ -76,3 +87,5 @@ class OpenPlayerRequest:
     source_path: str = ""
     source_vod_id: str = ""
     source_clicked_vod_id: str = ""
+    detail_resolver: Callable[[PlayItem], VodItem] | None = None
+    resolved_vod_by_id: dict[str, VodItem] = field(default_factory=dict)

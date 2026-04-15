@@ -1,13 +1,37 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtGui import QCloseEvent, QMouseEvent
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+
+
+@dataclass(frozen=True, slots=True)
+class SubtitleTrack:
+    id: int
+    title: str
+    lang: str
+    is_default: bool
+    is_forced: bool
+    label: str
+
+
+@dataclass(frozen=True, slots=True)
+class AudioTrack:
+    id: int
+    title: str
+    lang: str
+    is_default: bool
+    is_forced: bool
+    label: str
 
 
 class MpvWidget(QWidget):
     double_clicked = Signal()
     playback_finished = Signal()
+    subtitle_tracks_changed = Signal()
+    audio_tracks_changed = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -35,6 +59,21 @@ class MpvWidget(QWidget):
         self._player = self._create_player()
         self._register_player_events()
 
+    def shutdown(self) -> None:
+        if self._player is None:
+            return
+        player, self._player = self._player, None
+        if getattr(player, "core_shutdown", False):
+            return
+        try:
+            terminate = getattr(player, "terminate", None)
+            if terminate is not None:
+                terminate()
+        except Exception:
+            if getattr(player, "core_shutdown", False):
+                return
+            raise
+
     def _register_player_events(self) -> None:
         if self._player is None:
             return
@@ -52,6 +91,16 @@ class MpvWidget(QWidget):
                 self.playback_finished.emit()
 
         self._end_file_handler = handle_end_file
+        observe_property = getattr(self._player, "observe_property", None)
+        if observe_property is None:
+            return
+
+        def handle_track_list(_property_name, _tracks) -> None:
+            self.subtitle_tracks_changed.emit()
+            self.audio_tracks_changed.emit()
+
+        observe_property("track-list", handle_track_list)
+        self._track_list_handler = handle_track_list
 
     def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
         self._ensure_player()
@@ -177,6 +226,168 @@ class MpvWidget(QWidget):
         except Exception:
             return 0
 
+    def _subtitle_language_label(self, lang: str) -> str:
+        normalized = lang.strip().lower()
+        return {
+            "zh": "中文",
+            "chi": "中文",
+            "zho": "中文",
+            "en": "English",
+            "eng": "English",
+            "ja": "日本語",
+            "jpn": "日本語",
+        }.get(normalized, normalized or "")
+
+    def _subtitle_track_label(self, title: str, lang: str, is_default: bool, is_forced: bool, index: int) -> str:
+        base = title.strip() or self._subtitle_language_label(lang) or f"字幕 {index}"
+        suffixes = []
+        if is_default:
+            suffixes.append("默认")
+        if is_forced:
+            suffixes.append("强制")
+        if not suffixes:
+            return base
+        return f"{base} ({'/'.join(suffixes)})"
+
+    def _is_chinese_subtitle_track(self, track: SubtitleTrack) -> bool:
+        if track.lang in {"zh", "chi", "zho"}:
+            return True
+        lowered_title = track.title.casefold()
+        return any(token in lowered_title for token in ("中文", "简中", "繁中", "中字", "chinese"))
+
+    def subtitle_tracks(self) -> list[SubtitleTrack]:
+        if self._player is None:
+            return []
+        try:
+            raw_tracks = getattr(self._player, "track_list", None) or []
+        except Exception:
+            return []
+
+        tracks: list[SubtitleTrack] = []
+        for raw_track in raw_tracks:
+            if raw_track.get("type") != "sub" or raw_track.get("external"):
+                continue
+            title = str(raw_track.get("title") or "").strip()
+            lang = str(raw_track.get("lang") or "").strip().lower()
+            is_default = bool(raw_track.get("default"))
+            is_forced = bool(raw_track.get("forced"))
+            tracks.append(
+                SubtitleTrack(
+                    id=int(raw_track["id"]),
+                    title=title,
+                    lang=lang,
+                    is_default=is_default,
+                    is_forced=is_forced,
+                    label=self._subtitle_track_label(title, lang, is_default, is_forced, len(tracks) + 1),
+                )
+            )
+        return tracks
+
+    def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+        if self._player is None:
+            return None
+        try:
+            if mode == "off":
+                self._player.sid = "no"
+                return None
+            if mode == "track" and track_id is not None:
+                self._player.sid = track_id
+                return track_id
+            preferred_track = next((track for track in self.subtitle_tracks() if self._is_chinese_subtitle_track(track)), None)
+            if preferred_track is not None:
+                self._player.sid = preferred_track.id
+                return preferred_track.id
+            self._player.sid = "auto"
+            return None
+        except Exception:
+            if getattr(self._player, "core_shutdown", False):
+                return None
+            raise
+
+    def _audio_language_label(self, lang: str) -> str:
+        normalized = lang.strip().lower()
+        return {
+            "zh": "中文",
+            "chi": "中文",
+            "zho": "中文",
+            "cmn": "国语",
+            "en": "English",
+            "eng": "English",
+            "ja": "日语",
+            "jpn": "日语",
+        }.get(normalized, normalized or "")
+
+    def _audio_track_label(self, title: str, lang: str, is_default: bool, is_forced: bool, index: int) -> str:
+        base = title.strip() or self._audio_language_label(lang) or f"音轨 {index}"
+        suffixes = []
+        if is_default:
+            suffixes.append("默认")
+        if is_forced:
+            suffixes.append("强制")
+        if not suffixes:
+            return base
+        return f"{base} ({'/'.join(suffixes)})"
+
+    def _is_preferred_audio_track(self, track: AudioTrack) -> bool:
+        if track.lang in {"zh", "chi", "zho", "cmn"}:
+            return True
+        lowered_title = track.title.casefold()
+        return any(token in lowered_title for token in ("中文", "国语", "普通话", "mandarin", "chinese"))
+
+    def _preferred_audio_sort_key(self, track: AudioTrack) -> tuple[int, int]:
+        return (int(track.is_default), int(bool(track.title)))
+
+    def audio_tracks(self) -> list[AudioTrack]:
+        if self._player is None:
+            return []
+        try:
+            raw_tracks = getattr(self._player, "track_list", None) or []
+        except Exception:
+            return []
+
+        tracks: list[AudioTrack] = []
+        for raw_track in raw_tracks:
+            if raw_track.get("type") != "audio" or raw_track.get("external"):
+                continue
+            title = str(raw_track.get("title") or "").strip()
+            lang = str(raw_track.get("lang") or "").strip().lower()
+            is_default = bool(raw_track.get("default"))
+            is_forced = bool(raw_track.get("forced"))
+            tracks.append(
+                AudioTrack(
+                    id=int(raw_track["id"]),
+                    title=title,
+                    lang=lang,
+                    is_default=is_default,
+                    is_forced=is_forced,
+                    label=self._audio_track_label(title, lang, is_default, is_forced, len(tracks) + 1),
+                )
+            )
+        return tracks
+
+    def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+        if self._player is None:
+            return None
+        try:
+            if mode == "track" and track_id is not None:
+                self._player.aid = track_id
+                return track_id
+            preferred_tracks = [track for track in self.audio_tracks() if self._is_preferred_audio_track(track)]
+            if preferred_tracks:
+                preferred_track = max(preferred_tracks, key=self._preferred_audio_sort_key)
+                self._player.aid = preferred_track.id
+                return preferred_track.id
+            self._player.aid = "auto"
+            return None
+        except Exception:
+            if getattr(self._player, "core_shutdown", False):
+                return None
+            raise
+
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         self.double_clicked.emit()
         super().mouseDoubleClickEvent(event)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self.shutdown()
+        super().closeEvent(event)

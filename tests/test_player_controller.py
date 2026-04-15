@@ -68,3 +68,55 @@ def test_player_controller_builds_history_payload() -> None:
     assert payload["opening"] == 15000
     assert payload["ending"] == 30000
     assert payload["speed"] == 1.25
+
+
+def test_player_controller_create_session_preserves_detail_resolver_and_seed_cache() -> None:
+    controller = PlayerController(FakeApiClient())
+    vod = VodItem(vod_id="movie-1", vod_name="Movie")
+    playlist = [PlayItem(title="Episode 1", url="", vod_id="1$91483$1")]
+    resolved_vod = VodItem(
+        vod_id="1$91483$1",
+        vod_name="Resolved Episode",
+        vod_play_url="http://m/1.m3u8",
+        items=[PlayItem(title="Episode 1", url="http://m/1.m3u8", vod_id="1$91483$1")],
+    )
+
+    def detail_resolver(item: PlayItem) -> VodItem:
+        raise AssertionError("resolver should not be called when the cache is pre-seeded")
+
+    session = controller.create_session(
+        vod,
+        playlist,
+        clicked_index=0,
+        detail_resolver=detail_resolver,
+        resolved_vod_by_id={"1$91483$1": resolved_vod},
+    )
+
+    assert session.detail_resolver is detail_resolver
+    assert session.resolved_vod_by_id["1$91483$1"].vod_name == "Resolved Episode"
+
+
+def test_player_controller_resolve_play_item_detail_uses_session_cache() -> None:
+    controller = PlayerController(FakeApiClient())
+    vod = VodItem(vod_id="movie-1", vod_name="Movie")
+    playlist = [PlayItem(title="Episode 1", url="", vod_id="1$91483$1")]
+    calls: list[str] = []
+
+    def detail_resolver(item: PlayItem) -> VodItem:
+        calls.append(item.vod_id)
+        return VodItem(
+            vod_id=item.vod_id,
+            vod_name="Resolved Episode",
+            vod_play_url="http://m/1.m3u8",
+            items=[PlayItem(title="Episode 1", url="http://m/1.m3u8", vod_id=item.vod_id)],
+        )
+
+    session = controller.create_session(vod, playlist, clicked_index=0, detail_resolver=detail_resolver)
+
+    first = controller.resolve_play_item_detail(session, playlist[0])
+    second = controller.resolve_play_item_detail(session, playlist[0])
+
+    assert calls == ["1$91483$1"]
+    assert first.vod_name == "Resolved Episode"
+    assert second.vod_name == "Resolved Episode"
+    assert playlist[0].url == "http://m/1.m3u8"

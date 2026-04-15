@@ -1,7 +1,7 @@
 import sys
 import types
 
-from atv_player.player.mpv_widget import MpvWidget
+from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
 
 
 class FakeDeadPlayer:
@@ -65,6 +65,26 @@ def test_mpv_widget_updates_native_cursor_autohide_property(qtbot) -> None:
     }
 
 
+def test_mpv_widget_close_terminates_active_player(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    terminated = {"count": 0}
+
+    class FakePlayer:
+        core_shutdown = False
+
+        def terminate(self) -> None:
+            terminated["count"] += 1
+
+    widget._player = FakePlayer()
+    widget.show()
+
+    widget.close()
+
+    assert terminated["count"] == 1
+    assert widget._player is None
+
+
 def test_mpv_widget_disables_mpv_keyboard_bindings_for_embedded_player(qtbot, monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -114,3 +134,203 @@ def test_mpv_widget_emits_playback_finished_only_for_natural_end(qtbot, monkeypa
 
     assert player.play_calls == ["http://m/1.m3u8"]
     assert finished["count"] == 1
+
+
+def test_mpv_widget_emits_subtitle_tracks_changed_when_mpv_track_list_updates(qtbot, monkeypatch) -> None:
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.play_calls: list[str] = []
+            self.pause = False
+            self._track_list_observer = None
+
+        def event_callback(self, *event_types):
+            def register(callback):
+                return callback
+
+            return register
+
+        def observe_property(self, name: str, handler) -> None:
+            assert name == "track-list"
+            self._track_list_observer = handler
+
+        def play(self, url: str) -> None:
+            self.play_calls.append(url)
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = FakePlayer()
+    monkeypatch.setattr(widget, "_create_player", lambda: player)
+    changes = {"count": 0}
+    widget.subtitle_tracks_changed.connect(lambda: changes.__setitem__("count", changes["count"] + 1))
+
+    widget.load("http://m/1.m3u8")
+    player._track_list_observer("track-list", [{"id": 1, "type": "sub"}])
+
+    assert player.play_calls == ["http://m/1.m3u8"]
+    assert changes["count"] == 1
+
+
+def test_mpv_widget_lists_embedded_subtitle_tracks_with_readable_labels(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    widget._player = types.SimpleNamespace(
+        track_list=[
+            {"id": 1, "type": "sub", "lang": "zh", "title": "", "default": True, "forced": False, "external": False},
+            {"id": 2, "type": "sub", "lang": "eng", "title": "Signs", "default": False, "forced": True, "external": False},
+            {"id": 3, "type": "audio", "lang": "ja", "title": "", "default": False, "forced": False, "external": False},
+            {"id": 4, "type": "sub", "lang": "zho", "title": "外挂", "default": False, "forced": False, "external": True},
+        ]
+    )
+
+    assert widget.subtitle_tracks() == [
+        SubtitleTrack(id=1, title="", lang="zh", is_default=True, is_forced=False, label="中文 (默认)"),
+        SubtitleTrack(id=2, title="Signs", lang="eng", is_default=False, is_forced=True, label="Signs (强制)"),
+    ]
+
+
+def test_mpv_widget_auto_mode_prefers_chinese_embedded_subtitles(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = types.SimpleNamespace(
+        sid="auto",
+        track_list=[
+            {"id": 3, "type": "sub", "lang": "eng", "title": "English", "default": False, "forced": False, "external": False},
+            {"id": 5, "type": "sub", "lang": "chi", "title": "", "default": True, "forced": False, "external": False},
+        ],
+    )
+    widget._player = player
+
+    applied_track_id = widget.apply_subtitle_mode("auto")
+
+    assert applied_track_id == 5
+    assert player.sid == 5
+
+
+def test_mpv_widget_auto_mode_falls_back_to_mpv_default_without_chinese_tracks(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = types.SimpleNamespace(
+        sid=7,
+        track_list=[
+            {"id": 7, "type": "sub", "lang": "eng", "title": "English", "default": False, "forced": False, "external": False},
+        ],
+    )
+    widget._player = player
+
+    applied_track_id = widget.apply_subtitle_mode("auto")
+
+    assert applied_track_id is None
+    assert player.sid == "auto"
+
+
+def test_mpv_widget_can_disable_or_select_a_specific_embedded_subtitle_track(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = types.SimpleNamespace(sid="auto", track_list=[])
+    widget._player = player
+
+    disabled_track_id = widget.apply_subtitle_mode("off")
+    selected_track_id = widget.apply_subtitle_mode("track", track_id=9)
+
+    assert disabled_track_id is None
+    assert selected_track_id == 9
+    assert player.sid == 9
+
+
+def test_mpv_widget_emits_audio_tracks_changed_when_mpv_track_list_updates(qtbot, monkeypatch) -> None:
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.play_calls: list[str] = []
+            self.pause = False
+            self._track_list_observer = None
+
+        def event_callback(self, *event_types):
+            def register(callback):
+                return callback
+
+            return register
+
+        def observe_property(self, name: str, handler) -> None:
+            assert name == "track-list"
+            self._track_list_observer = handler
+
+        def play(self, url: str) -> None:
+            self.play_calls.append(url)
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = FakePlayer()
+    monkeypatch.setattr(widget, "_create_player", lambda: player)
+    changes = {"count": 0}
+    widget.audio_tracks_changed.connect(lambda: changes.__setitem__("count", changes["count"] + 1))
+
+    widget.load("http://m/1.m3u8")
+    player._track_list_observer("track-list", [{"id": 1, "type": "audio"}])
+
+    assert player.play_calls == ["http://m/1.m3u8"]
+    assert changes["count"] == 1
+
+
+def test_mpv_widget_lists_embedded_audio_tracks_with_readable_labels(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    widget._player = types.SimpleNamespace(
+        track_list=[
+            {"id": 1, "type": "audio", "lang": "cmn", "title": "", "default": True, "forced": False, "external": False},
+            {"id": 2, "type": "audio", "lang": "eng", "title": "English Dub", "default": False, "forced": False, "external": False},
+            {"id": 3, "type": "sub", "lang": "zh", "title": "", "default": True, "forced": False, "external": False},
+            {"id": 4, "type": "audio", "lang": "jpn", "title": "", "default": False, "forced": False, "external": True},
+        ]
+    )
+
+    assert widget.audio_tracks() == [
+        AudioTrack(id=1, title="", lang="cmn", is_default=True, is_forced=False, label="国语 (默认)"),
+        AudioTrack(id=2, title="English Dub", lang="eng", is_default=False, is_forced=False, label="English Dub"),
+    ]
+
+
+def test_mpv_widget_auto_mode_prefers_chinese_or_mandarin_audio(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = types.SimpleNamespace(
+        aid="auto",
+        track_list=[
+            {"id": 3, "type": "audio", "lang": "eng", "title": "English", "default": True, "forced": False, "external": False},
+            {"id": 5, "type": "audio", "lang": "cmn", "title": "", "default": False, "forced": False, "external": False},
+        ],
+    )
+    widget._player = player
+
+    applied_track_id = widget.apply_audio_mode("auto")
+
+    assert applied_track_id == 5
+    assert player.aid == 5
+
+
+def test_mpv_widget_auto_mode_falls_back_to_mpv_default_without_preferred_audio(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = types.SimpleNamespace(
+        aid=7,
+        track_list=[
+            {"id": 7, "type": "audio", "lang": "eng", "title": "English", "default": False, "forced": False, "external": False},
+        ],
+    )
+    widget._player = player
+
+    applied_track_id = widget.apply_audio_mode("auto")
+
+    assert applied_track_id is None
+    assert player.aid == "auto"
+
+
+def test_mpv_widget_can_select_a_specific_embedded_audio_track(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = types.SimpleNamespace(aid="auto", track_list=[])
+    widget._player = player
+
+    selected_track_id = widget.apply_audio_mode("track", track_id=9)
+
+    assert selected_track_id == 9
+    assert player.aid == 9

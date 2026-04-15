@@ -5,6 +5,14 @@ from atv_player.api import ApiClient, ApiError, UnauthorizedError
 from atv_player.models import HistoryRecord
 
 
+class RaisingTransport(httpx.BaseTransport):
+    def __init__(self, exc: Exception) -> None:
+        self.exc = exc
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        raise self.exc
+
+
 def test_api_client_attaches_authorization_header() -> None:
     seen_headers: dict[str, str] = {}
 
@@ -145,3 +153,45 @@ def test_api_client_returns_plain_text_for_successful_text_response() -> None:
     )
 
     assert client.resolve_share_link("https://t.me/share") == "/电影/国产"
+
+
+def test_api_client_maps_file_list_read_timeout_to_localized_api_error() -> None:
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="vod-123",
+        transport=RaisingTransport(httpx.ReadTimeout("timed out")),
+    )
+
+    with pytest.raises(ApiError) as exc:
+        client.list_vod("1$/电影$1", page=1, size=50)
+
+    assert str(exc.value) == "加载文件列表超时"
+
+
+def test_api_client_maps_non_file_list_timeout_to_generic_timeout_error() -> None:
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="vod-123",
+        transport=RaisingTransport(httpx.ConnectTimeout("timed out")),
+    )
+
+    with pytest.raises(ApiError) as exc:
+        client.telegram_search("movie")
+
+    assert str(exc.value) == "请求超时"
+
+
+def test_api_client_maps_transport_http_error_to_network_request_failed() -> None:
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="vod-123",
+        transport=RaisingTransport(httpx.HTTPError("boom")),
+    )
+
+    with pytest.raises(ApiError) as exc:
+        client.telegram_search("movie")
+
+    assert str(exc.value) == "网络请求失败"

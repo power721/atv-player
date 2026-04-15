@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -24,7 +25,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from atv_player.player.mpv_widget import MpvWidget
+from atv_player.models import VodItem
+from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
+from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url
 
 
 class ClickableSlider(QSlider):
@@ -75,18 +78,33 @@ class _PosterLoadSignals(QObject):
     loaded = Signal(int, object)
 
 
+@dataclass(slots=True)
+class SubtitlePreference:
+    mode: str = "auto"
+    title: str = ""
+    lang: str = ""
+    is_default: bool = False
+    is_forced: bool = False
+
+
+@dataclass(slots=True)
+class AudioPreference:
+    mode: str = "auto"
+    title: str = ""
+    lang: str = ""
+    is_default: bool = False
+    is_forced: bool = False
+
+
 class PlayerWindow(QWidget):
     closed_to_main = Signal()
     _SEEK_SHORTCUT_SECONDS = 15
+    _MODIFIED_SEEK_SHORTCUT_SECONDS = 60
     _VOLUME_SHORTCUT_STEP = 5
     _CURSOR_HIDE_DELAY_MS = 3000
     _POSTER_SIZE = QSize(180, 260)
     _POSTER_REQUEST_TIMEOUT_SECONDS = 10.0
-    _POSTER_USER_AGENT = (
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
-    )
-    _DEFAULT_POSTER_REFERER = "https://movie.douban.com/"
+    _DEFAULT_MAIN_SPLITTER_SIZES = [960, 320]
 
     def __init__(self, controller, config=None, save_config=None) -> None:
         super().__init__()
@@ -141,6 +159,16 @@ class PlayerWindow(QWidget):
         self.speed_combo = QComboBox()
         self.speed_combo.addItems(["0.5x", "0.75x", "1.0x", "1.25x", "1.5x", "2.0x"])
         self.speed_combo.setCurrentText("1.0x")
+        self._subtitle_tracks: list[SubtitleTrack] = []
+        self._subtitle_preference = SubtitlePreference()
+        self.subtitle_combo = QComboBox()
+        self.subtitle_combo.addItem("自动选择", ("auto", None))
+        self.subtitle_combo.setEnabled(False)
+        self._audio_tracks: list[AudioTrack] = []
+        self._audio_preference = AudioPreference()
+        self.audio_combo = QComboBox()
+        self.audio_combo.addItem("自动选择", ("auto", None))
+        self.audio_combo.setEnabled(False)
         self.opening_spin = self._create_skip_spinbox("片头 ")
         self.ending_spin = self._create_skip_spinbox("片尾 ")
 
@@ -152,7 +180,13 @@ class PlayerWindow(QWidget):
         self.progress.setFixedHeight(24)
         self.volume_slider = ClickableSlider(Qt.Orientation.Horizontal)
         self.volume_slider.setRange(0, 100)
-        self.volume_slider.setValue(100)
+        initial_volume = 100
+        if self.config is not None:
+            initial_volume = max(
+                self.volume_slider.minimum(),
+                min(getattr(self.config, "player_volume", 100), self.volume_slider.maximum()),
+            )
+        self.volume_slider.setValue(initial_volume)
         self.volume_slider.setMaximumWidth(180)
         self.poster_label = QLabel()
         self.poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -225,6 +259,8 @@ class PlayerWindow(QWidget):
         control_group_layout.addWidget(self.wide_button)
         control_group_layout.addWidget(self.fullscreen_button)
         control_group_layout.addWidget(self.speed_combo)
+        control_group_layout.addWidget(self.subtitle_combo)
+        control_group_layout.addWidget(self.audio_combo)
         control_group_layout.addWidget(self.opening_spin)
         control_group_layout.addWidget(self.ending_spin)
         controls.addWidget(control_group, 0, Qt.AlignmentFlag.AlignCenter)
@@ -283,6 +319,8 @@ class PlayerWindow(QWidget):
         self.wide_button.clicked.connect(self._toggle_wide_mode)
         self.fullscreen_button.clicked.connect(self.toggle_fullscreen)
         self.speed_combo.currentTextChanged.connect(self._change_speed)
+        self.subtitle_combo.currentIndexChanged.connect(self._change_subtitle_selection)
+        self.audio_combo.currentIndexChanged.connect(self._change_audio_selection)
         self.opening_spin.valueChanged.connect(self._change_opening_seconds)
         self.ending_spin.valueChanged.connect(self._change_ending_seconds)
         self.volume_slider.valueChanged.connect(self._change_volume)
@@ -291,6 +329,8 @@ class PlayerWindow(QWidget):
         self.toggle_details_button.clicked.connect(self._update_sidebar_visibility)
         self.video_widget.double_clicked.connect(self.toggle_fullscreen)
         self.video_widget.playback_finished.connect(self._handle_playback_finished)
+        self.video_widget.subtitle_tracks_changed.connect(self._refresh_subtitle_state)
+        self.video_widget.audio_tracks_changed.connect(self._refresh_audio_state)
         self.progress.sliderPressed.connect(self._handle_slider_pressed)
         self.progress.sliderReleased.connect(self._seek_from_slider)
         self.progress.clicked_value.connect(self._seek_to_position)
@@ -364,12 +404,15 @@ class PlayerWindow(QWidget):
             widget.setCursor(cursor_shape)
         self.setCursor(cursor_shape)
 
-    def _restore_video_cursor(self, stop_timer: bool = True) -> None:
+    def _restore_video_cursor(self, stop_timer: bool = True, disable_native_autohide: bool = True) -> None:
         if stop_timer:
             self._cursor_hide_timer.stop()
         self._set_video_cursor_hidden(False)
         if hasattr(self.video, "set_cursor_autohide"):
-            self.video.set_cursor_autohide(None)
+            if disable_native_autohide:
+                self.video.set_cursor_autohide(None)
+            elif self.is_playing:
+                self.video.set_cursor_autohide(self._CURSOR_HIDE_DELAY_MS)
 
     def _cursor_now_ms(self) -> int:
         return int(time.monotonic() * 1000)
@@ -381,7 +424,7 @@ class PlayerWindow(QWidget):
         self._set_video_cursor_hidden(False)
         if self.is_playing:
             if hasattr(self.video, "set_cursor_autohide"):
-                self.video.set_cursor_autohide(self._CURSOR_HIDE_DELAY_MS if self._video_pointer_inside else None)
+                self.video.set_cursor_autohide(self._CURSOR_HIDE_DELAY_MS)
             if not self._cursor_hide_timer.isActive():
                 self._cursor_hide_timer.start()
             return
@@ -389,6 +432,11 @@ class PlayerWindow(QWidget):
 
     def _handle_video_leave(self) -> None:
         self._video_pointer_inside = False
+        if self.is_playing:
+            self._restore_video_cursor(stop_timer=False, disable_native_autohide=False)
+            if not self._cursor_hide_timer.isActive():
+                self._cursor_hide_timer.start()
+            return
         self._restore_video_cursor()
 
     def _hide_video_cursor_if_idle(self) -> None:
@@ -412,7 +460,7 @@ class PlayerWindow(QWidget):
             self._restore_video_cursor()
             return
         if not self._video_pointer_inside:
-            self._restore_video_cursor(stop_timer=False)
+            self._restore_video_cursor(stop_timer=False, disable_native_autohide=False)
             if not self._cursor_hide_timer.isActive():
                 self._cursor_hide_timer.start()
             return
@@ -431,7 +479,7 @@ class PlayerWindow(QWidget):
             self._last_cursor_activity_ms = self._cursor_now_ms()
             if not self._cursor_hide_timer.isActive():
                 self._cursor_hide_timer.start()
-            self._restore_video_cursor(stop_timer=False)
+            self._restore_video_cursor(stop_timer=False, disable_native_autohide=False)
             return
         self._restore_video_cursor()
 
@@ -460,7 +508,12 @@ class PlayerWindow(QWidget):
             self.playlist.addItem(QListWidgetItem(item.title))
         self.playlist.setCurrentRow(self.current_index)
         self.progress.setValue(0)
-        self._load_current_item(session.start_position_seconds, pause=start_paused)
+        self._reset_subtitle_combo()
+        self._reset_audio_combo()
+        try:
+            self._play_item_at_index(self.current_index, start_position_seconds=session.start_position_seconds, pause=start_paused)
+        except Exception as exc:
+            self._append_log(f"播放失败: {exc}")
         self.report_timer.start()
         self.progress_timer.start()
         self._sync_video_cursor_autohide()
@@ -468,16 +521,16 @@ class PlayerWindow(QWidget):
     def _load_current_item(self, start_position_seconds: int = 0, pause: bool = False) -> None:
         if self.session is None:
             return
+        self._resolve_current_play_item()
         current_item = self.session.playlist[self.current_index]
         self._append_log(f"当前: {current_item.title}")
         self._append_log(f"URL: {current_item.url}")
         effective_start_seconds = max(start_position_seconds, self.opening_spin.value())
-        try:
-            self.video.load(current_item.url, pause=pause, start_seconds=effective_start_seconds)
-            self.video.set_speed(self.current_speed)
-            self.video.set_volume(self.volume_slider.value())
-        except Exception as exc:
-            self._append_log(f"播放失败: {exc}")
+        self.video.load(current_item.url, pause=pause, start_seconds=effective_start_seconds)
+        self.video.set_speed(self.current_speed)
+        self.video.set_volume(self.volume_slider.value())
+        self._refresh_subtitle_state()
+        self._refresh_audio_state()
 
     def _format_metadata_text(self, vod) -> str:
         rows = [
@@ -502,6 +555,34 @@ class PlayerWindow(QWidget):
             self.metadata_view.clear()
             return
         self.metadata_view.setPlainText(self._format_metadata_text(self.session.vod))
+
+    def _apply_resolved_vod(self, resolved_vod: VodItem) -> None:
+        if self.session is None:
+            return
+        self.session.vod = resolved_vod
+        self._render_poster()
+        self._render_metadata()
+
+    def _resolve_current_play_item(self) -> None:
+        if self.session is None:
+            return
+        current_item = self.session.playlist[self.current_index]
+        resolved_vod = self.controller.resolve_play_item_detail(self.session, current_item)
+        if resolved_vod is not None:
+            self._apply_resolved_vod(resolved_vod)
+
+    def _play_item_at_index(self, index: int, start_position_seconds: int = 0, pause: bool = False) -> None:
+        if self.session is None:
+            return
+        previous_index = self.current_index
+        self.current_index = index
+        try:
+            self.playlist.setCurrentRow(self.current_index)
+            self._load_current_item(start_position_seconds=start_position_seconds, pause=pause)
+        except Exception:
+            self.current_index = previous_index
+            self.playlist.setCurrentRow(previous_index)
+            raise
 
     def _clear_poster(self) -> None:
         self.poster_label.clear()
@@ -547,54 +628,21 @@ class PlayerWindow(QWidget):
             Qt.TransformationMode.SmoothTransformation,
         )
 
-    def _normalize_poster_url(self, source: str) -> str:
-        normalized = source
-        if "doubanio.com" in normalized:
-            normalized = normalized.replace("s_ratio_poster", "m")
-        return normalized
-
-    def _poster_request_headers(self, image_url: str) -> dict[str, str]:
-        referer = self._DEFAULT_POSTER_REFERER
-        if "ytimg.com" in image_url:
-            referer = "https://www.youtube.com/"
-        elif "netease.com" in image_url or "163.com" in image_url:
-            referer = "https://cc.163.com/"
-        return {
-            "Referer": referer,
-            "User-Agent": self._POSTER_USER_AGENT,
-        }
-
     def _start_poster_load(self, source: str, request_id: int) -> None:
-        image_url = self._normalize_poster_url(source)
+        image_url = normalize_poster_url(source)
         if not image_url:
             return
-        headers = self._poster_request_headers(image_url)
 
         def load() -> None:
-            image = self._load_remote_poster_image(image_url, headers)
+            image = load_remote_poster_image(
+                image_url,
+                self._POSTER_SIZE,
+                timeout=self._POSTER_REQUEST_TIMEOUT_SECONDS,
+                get=httpx.get,
+            )
             self._poster_load_signals.loaded.emit(request_id, image)
 
         threading.Thread(target=load, daemon=True).start()
-
-    def _load_remote_poster_image(self, image_url: str, headers: dict[str, str]) -> QImage | None:
-        try:
-            response = httpx.get(
-                image_url,
-                headers=headers,
-                timeout=self._POSTER_REQUEST_TIMEOUT_SECONDS,
-            )
-            response.raise_for_status()
-        except Exception:
-            return None
-        image = QImage()
-        image.loadFromData(response.content)
-        if image.isNull():
-            return None
-        return image.scaled(
-            self._POSTER_SIZE,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
 
     def _handle_poster_load_finished(self, request_id: int, image: QImage | None) -> None:
         if request_id != self._poster_request_id:
@@ -736,11 +784,238 @@ class PlayerWindow(QWidget):
         self.session.ending_seconds = value
         self.report_progress()
 
+    def _reset_subtitle_combo(self) -> None:
+        self.subtitle_combo.blockSignals(True)
+        self.subtitle_combo.clear()
+        self.subtitle_combo.addItem("字幕", ("auto", None))
+        self.subtitle_combo.setCurrentIndex(0)
+        self.subtitle_combo.setEnabled(False)
+        self.subtitle_combo.blockSignals(False)
+
+    def _reset_audio_combo(self) -> None:
+        self.audio_combo.blockSignals(True)
+        self.audio_combo.clear()
+        self.audio_combo.addItem("音轨", ("auto", None))
+        self.audio_combo.setCurrentIndex(0)
+        self.audio_combo.setEnabled(False)
+        self.audio_combo.blockSignals(False)
+
+    def _remember_track_preference(self, track: SubtitleTrack) -> None:
+        self._subtitle_preference = SubtitlePreference(
+            mode="track",
+            title=track.title,
+            lang=track.lang,
+            is_default=track.is_default,
+            is_forced=track.is_forced,
+        )
+
+    def _populate_subtitle_combo(self, tracks: list[SubtitleTrack]) -> None:
+        self.subtitle_combo.blockSignals(True)
+        self.subtitle_combo.clear()
+        self.subtitle_combo.addItem("字幕", ("auto", None))
+        if tracks:
+            self.subtitle_combo.addItem("关闭字幕", ("off", None))
+            for track in tracks:
+                self.subtitle_combo.addItem(track.label, ("track", track.id))
+        self.subtitle_combo.setEnabled(bool(tracks))
+        self.subtitle_combo.setCurrentIndex(0)
+        self.subtitle_combo.blockSignals(False)
+
+    def _populate_audio_combo(self, tracks: list[AudioTrack]) -> None:
+        self.audio_combo.blockSignals(True)
+        self.audio_combo.clear()
+        self.audio_combo.addItem("音轨", ("auto", None))
+        if len(tracks) > 1:
+            for track in tracks:
+                self.audio_combo.addItem(track.label, ("track", track.id))
+        self.audio_combo.setEnabled(len(tracks) > 1)
+        self.audio_combo.setCurrentIndex(0)
+        self.audio_combo.blockSignals(False)
+
+    def _remember_audio_track_preference(self, track: AudioTrack) -> None:
+        self._audio_preference = AudioPreference(
+            mode="track",
+            title=track.title,
+            lang=track.lang,
+            is_default=track.is_default,
+            is_forced=track.is_forced,
+        )
+
+    def _audio_track_match_score(self, track: AudioTrack, preference: AudioPreference) -> tuple[int, int, int]:
+        return (
+            int(bool(preference.title) and track.title == preference.title),
+            int(bool(preference.lang) and track.lang == preference.lang),
+            int(track.is_forced == preference.is_forced and track.is_default == preference.is_default),
+        )
+
+    def _matching_audio_track_for_preference(self) -> AudioTrack | None:
+        if self._audio_preference.mode != "track" or len(self._audio_tracks) <= 1:
+            return None
+        ranked_tracks = sorted(
+            self._audio_tracks,
+            key=lambda track: self._audio_track_match_score(track, self._audio_preference),
+            reverse=True,
+        )
+        best_track = ranked_tracks[0]
+        if self._audio_track_match_score(best_track, self._audio_preference) == (0, 0, 0):
+            return None
+        return best_track
+
+    def _apply_audio_preference(self) -> None:
+        self.audio_combo.blockSignals(True)
+        try:
+            if self._audio_preference.mode == "track":
+                matched_track = self._matching_audio_track_for_preference()
+                if matched_track is not None:
+                    applied_track_id = self.video.apply_audio_mode("track", track_id=matched_track.id)
+                    for index, track in enumerate(self._audio_tracks, start=1):
+                        if track.id == applied_track_id:
+                            self.audio_combo.setCurrentIndex(index)
+                            return
+                self._audio_preference = AudioPreference()
+
+            self.video.apply_audio_mode("auto")
+            self.audio_combo.setCurrentIndex(0)
+        finally:
+            self.audio_combo.blockSignals(False)
+
+    def _apply_subtitle_preference(self) -> None:
+        self.subtitle_combo.blockSignals(True)
+        try:
+            if self._subtitle_preference.mode == "off":
+                self.video.apply_subtitle_mode("off")
+                if self.subtitle_combo.count() > 1:
+                    self.subtitle_combo.setCurrentIndex(1)
+                return
+
+            if self._subtitle_preference.mode == "track":
+                matched_track = self._matching_track_for_preference()
+                if matched_track is not None:
+                    applied_track_id = self.video.apply_subtitle_mode("track", track_id=matched_track.id)
+                    for index, track in enumerate(self._subtitle_tracks, start=2):
+                        if track.id == applied_track_id:
+                            self.subtitle_combo.setCurrentIndex(index)
+                            return
+                self._subtitle_preference = SubtitlePreference()
+
+            self.video.apply_subtitle_mode("auto")
+            self.subtitle_combo.setCurrentIndex(0)
+        finally:
+            self.subtitle_combo.blockSignals(False)
+
+    def _subtitle_track_match_score(self, track: SubtitleTrack, preference: SubtitlePreference) -> tuple[int, int, int]:
+        return (
+            int(bool(preference.title) and track.title == preference.title),
+            int(bool(preference.lang) and track.lang == preference.lang),
+            int(track.is_forced == preference.is_forced and track.is_default == preference.is_default),
+        )
+
+    def _matching_track_for_preference(self) -> SubtitleTrack | None:
+        if self._subtitle_preference.mode != "track" or not self._subtitle_tracks:
+            return None
+        ranked_tracks = sorted(
+            self._subtitle_tracks,
+            key=lambda track: self._subtitle_track_match_score(track, self._subtitle_preference),
+            reverse=True,
+        )
+        best_track = ranked_tracks[0]
+        if self._subtitle_track_match_score(best_track, self._subtitle_preference) == (0, 0, 0):
+            return None
+        return best_track
+
+    def _refresh_subtitle_state(self) -> None:
+        if not hasattr(self.video, "subtitle_tracks") or not hasattr(self.video, "apply_subtitle_mode"):
+            self._subtitle_tracks = []
+            self._subtitle_preference = SubtitlePreference()
+            self._reset_subtitle_combo()
+            return
+        try:
+            self._subtitle_tracks = self.video.subtitle_tracks()
+        except Exception as exc:
+            self._subtitle_tracks = []
+            self._subtitle_preference = SubtitlePreference()
+            self._reset_subtitle_combo()
+            self._append_log(f"字幕加载失败: {exc}")
+            return
+        self._populate_subtitle_combo(self._subtitle_tracks)
+        if not self._subtitle_tracks:
+            self._subtitle_preference = SubtitlePreference()
+            return
+        try:
+            self._apply_subtitle_preference()
+        except Exception as exc:
+            self._subtitle_preference = SubtitlePreference()
+            self._reset_subtitle_combo()
+            self._append_log(f"字幕切换失败: {exc}")
+
+    def _refresh_audio_state(self) -> None:
+        if not hasattr(self.video, "audio_tracks") or not hasattr(self.video, "apply_audio_mode"):
+            self._audio_tracks = []
+            self._audio_preference = AudioPreference()
+            self._reset_audio_combo()
+            return
+        try:
+            self._audio_tracks = self.video.audio_tracks()
+        except Exception as exc:
+            self._audio_tracks = []
+            self._audio_preference = AudioPreference()
+            self._reset_audio_combo()
+            self._append_log(f"音轨加载失败: {exc}")
+            return
+        self._populate_audio_combo(self._audio_tracks)
+        if not self._audio_tracks:
+            self._audio_preference = AudioPreference()
+            return
+        try:
+            self._apply_audio_preference()
+        except Exception as exc:
+            self._audio_preference = AudioPreference()
+            self._reset_audio_combo()
+            self._append_log(f"音轨切换失败: {exc}")
+
+    def _change_subtitle_selection(self, index: int) -> None:
+        if index < 0:
+            return
+        item_data = self.subtitle_combo.itemData(index)
+        if item_data is None:
+            return
+        mode, track_id = item_data
+        if mode == "auto":
+            self._subtitle_preference = SubtitlePreference()
+            self.video.apply_subtitle_mode("auto")
+            return
+        if mode == "off":
+            self._subtitle_preference = SubtitlePreference(mode="off")
+            self.video.apply_subtitle_mode("off")
+            return
+        track = next(track for track in self._subtitle_tracks if track.id == track_id)
+        self._remember_track_preference(track)
+        self.video.apply_subtitle_mode("track", track_id=track_id)
+
+    def _change_audio_selection(self, index: int) -> None:
+        if index < 0:
+            return
+        item_data = self.audio_combo.itemData(index)
+        if item_data is None:
+            return
+        mode, track_id = item_data
+        if mode == "auto":
+            self._audio_preference = AudioPreference()
+            self.video.apply_audio_mode("auto")
+            return
+        track = next(track for track in self._audio_tracks if track.id == track_id)
+        self._remember_audio_track_preference(track)
+        self.video.apply_audio_mode("track", track_id=track_id)
+
     def _change_volume(self, value: int) -> None:
         try:
             self.video.set_volume(value)
         except Exception as exc:
             self._append_log(f"音量设置失败: {exc}")
+            return
+        if self.config is not None and self.config.player_volume != value:
+            self.config.player_volume = value
+            self._save_config()
 
     def _step_volume(self, delta: int) -> None:
         value = max(self.volume_slider.minimum(), min(self.volume_slider.value() + delta, self.volume_slider.maximum()))
@@ -788,6 +1063,14 @@ class PlayerWindow(QWidget):
             (QKeySequence(Qt.Key.Key_Up), lambda: self._step_volume(self._VOLUME_SHORTCUT_STEP)),
             (QKeySequence(Qt.Key.Key_Left), lambda: self._seek_relative(-self._SEEK_SHORTCUT_SECONDS)),
             (QKeySequence(Qt.Key.Key_Right), lambda: self._seek_relative(self._SEEK_SHORTCUT_SECONDS)),
+            (
+                QKeySequence("Ctrl+Left"),
+                lambda: self._seek_relative(-self._MODIFIED_SEEK_SHORTCUT_SECONDS),
+            ),
+            (
+                QKeySequence("Ctrl+Right"),
+                lambda: self._seek_relative(self._MODIFIED_SEEK_SHORTCUT_SECONDS),
+            ),
             (QKeySequence(Qt.Key.Key_PageUp), self.play_previous),
             (QKeySequence(Qt.Key.Key_PageDown), self.play_next),
         ]
@@ -863,17 +1146,31 @@ class PlayerWindow(QWidget):
 
     def _restore_main_splitter_state(self) -> None:
         if self.config is None or not self.config.player_main_splitter_state:
-            self.main_splitter.setSizes([960, 320])
+            self.main_splitter.setSizes(self._DEFAULT_MAIN_SPLITTER_SIZES)
             return
         restored = self.main_splitter.restoreState(QByteArray(self.config.player_main_splitter_state))
-        if not restored:
-            self.main_splitter.setSizes([960, 320])
+        if not restored or self._has_collapsed_main_splitter_sizes():
+            self.main_splitter.setSizes(self._DEFAULT_MAIN_SPLITTER_SIZES)
+
+    def _has_collapsed_main_splitter_sizes(self) -> bool:
+        sizes = self.main_splitter.sizes()
+        return len(sizes) != 2 or any(size <= 0 for size in sizes)
+
+    def _main_splitter_state_for_persistence(self) -> bytes:
+        if not self.wide_button.isChecked() or not hasattr(self, "_sidebar_sizes"):
+            return bytes(self.main_splitter.saveState())
+        current_sizes = self.main_splitter.sizes()
+        try:
+            self.main_splitter.setSizes(self._sidebar_sizes)
+            return bytes(self.main_splitter.saveState())
+        finally:
+            self.main_splitter.setSizes(current_sizes)
 
     def _persist_geometry(self) -> None:
         if self.config is None:
             return
         self.config.player_window_geometry = bytes(self.saveGeometry())
-        self.config.player_main_splitter_state = bytes(self.main_splitter.saveState())
+        self.config.player_main_splitter_state = self._main_splitter_state_for_persistence()
         self._save_config()
 
     def _quit_application(self) -> None:
@@ -922,17 +1219,21 @@ class PlayerWindow(QWidget):
         if self.session is None or self.current_index <= 0:
             return
         self.report_progress()
-        self.current_index -= 1
-        self.playlist.setCurrentRow(self.current_index)
-        self._load_current_item()
+        target_index = self.current_index - 1
+        try:
+            self._play_item_at_index(target_index)
+        except Exception as exc:
+            self._append_log(f"播放失败: {exc}")
 
     def play_next(self) -> None:
         if self.session is None or self.current_index + 1 >= len(self.session.playlist):
             return
         self.report_progress()
-        self.current_index += 1
-        self.playlist.setCurrentRow(self.current_index)
-        self._load_current_item()
+        target_index = self.current_index + 1
+        try:
+            self._play_item_at_index(target_index)
+        except Exception as exc:
+            self._append_log(f"播放失败: {exc}")
 
     def _handle_playback_finished(self) -> None:
         if self.session is None or self.current_index + 1 >= len(self.session.playlist):
@@ -944,8 +1245,10 @@ class PlayerWindow(QWidget):
         if row == self.current_index or self.session is None:
             return
         self.report_progress()
-        self.current_index = row
-        self._load_current_item()
+        try:
+            self._play_item_at_index(row)
+        except Exception as exc:
+            self._append_log(f"播放失败: {exc}")
 
     def closeEvent(self, event: QCloseEvent) -> None:
         try:
@@ -956,6 +1259,7 @@ class PlayerWindow(QWidget):
             self.report_timer.stop()
             self.progress_timer.stop()
             self._restore_video_cursor()
+            self.video_widget.shutdown()
             app = QApplication.instance()
             if self._app_event_filter_installed and app is not None:
                 app.removeEventFilter(self)
@@ -972,6 +1276,10 @@ class PlayerWindow(QWidget):
             self._refresh_video_pointer_inside_state()
             if self.is_playing and self._video_pointer_inside:
                 self._handle_video_mouse_activity()
+            elif self.is_playing:
+                self._restore_video_cursor(stop_timer=False, disable_native_autohide=False)
+                if not self._cursor_hide_timer.isActive():
+                    self._cursor_hide_timer.start()
             else:
                 self._restore_video_cursor()
         if isinstance(watched, QWidget) and watched in self._video_surface_widgets():
@@ -992,6 +1300,14 @@ class PlayerWindow(QWidget):
             return
         if event.key() == Qt.Key.Key_P and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self._return_to_main()
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Left and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self._seek_relative(-self._MODIFIED_SEEK_SHORTCUT_SECONDS)
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Right and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self._seek_relative(self._MODIFIED_SEEK_SHORTCUT_SECONDS)
             event.accept()
             return
         if event.modifiers() & (

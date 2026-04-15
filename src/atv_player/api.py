@@ -41,8 +41,24 @@ class ApiClient:
     def set_vod_token(self, vod_token: str) -> None:
         self._vod_token = vod_token
 
+    def _is_file_list_request(self, url: str, params: Any) -> bool:
+        if not url.startswith("/vod/"):
+            return False
+        if not isinstance(params, dict):
+            return False
+        return params.get("ac") == "gui" and "t" in params
+
     def _request(self, method: str, url: str, **kwargs: Any) -> Any:
-        response = self._client.request(method, url, **kwargs)
+        try:
+            response = self._client.request(method, url, **kwargs)
+        except httpx.ReadTimeout as exc:
+            if self._is_file_list_request(url, kwargs.get("params")):
+                raise ApiError("加载文件列表超时") from exc
+            raise ApiError("请求超时") from exc
+        except httpx.TimeoutException as exc:
+            raise ApiError("请求超时") from exc
+        except httpx.HTTPError as exc:
+            raise ApiError("网络请求失败") from exc
         if response.status_code == 401:
             raise UnauthorizedError("Unauthorized")
         if response.is_error:
@@ -69,14 +85,24 @@ class ApiClient:
         return self._request(
             "GET",
             f"/vod/{self._vod_token}",
-            params={"ac": "web", "pg": page, "size": size, "t": path_id},
+            params={"ac": "gui", "pg": page, "size": size, "t": path_id},
         )
 
     def get_detail(self, vod_id: str) -> dict[str, Any]:
         return self._request(
             "GET",
             f"/vod/{self._vod_token}",
-            params={"ac": "web", "ids": vod_id},
+            params={"ac": "gui", "ids": vod_id},
+        )
+
+    def list_douban_categories(self) -> dict[str, Any]:
+        return self._request("GET", f"/tg-db/{self._vod_token}")
+
+    def list_douban_items(self, category_id: str, page: int, size: int = 35) -> dict[str, Any]:
+        return self._request(
+            "GET",
+            f"/tg-db/{self._vod_token}",
+            params={"ac": "gui", "t": category_id, "pg": page, "size": size},
         )
 
     def telegram_search(self, keyword: str) -> dict[str, Any]:
