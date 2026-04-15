@@ -702,6 +702,24 @@ def test_player_window_falls_back_when_saved_splitter_state_is_invalid(qtbot) ->
     assert all(size > 0 for size in sizes)
 
 
+def test_player_window_falls_back_when_saved_splitter_state_collapses_sidebar(qtbot) -> None:
+    config = AppConfig()
+    source = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(source)
+    source.show()
+    source.main_splitter.setSizes([1, 0])
+    config.player_main_splitter_state = bytes(source.main_splitter.saveState())
+
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.show()
+
+    sizes = window.main_splitter.sizes()
+
+    assert len(sizes) == 2
+    assert all(size > 0 for size in sizes)
+
+
 def test_player_window_retries_resume_seek_when_player_is_not_ready(qtbot, monkeypatch) -> None:
     class FakeVideo:
         def __init__(self) -> None:
@@ -1339,6 +1357,45 @@ def test_player_window_logs_and_resets_when_subtitle_refresh_fails(qtbot) -> Non
     assert window.subtitle_combo.isEnabled() is False
 
 
+def test_player_window_refreshes_subtitle_options_when_mpv_reports_tracks_after_load(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    load_calls: list[tuple[str, bool, int]] = []
+    subtitle_apply_calls: list[tuple[str, int | None]] = []
+    tracks_call_count = {"count": 0}
+
+    def fake_subtitle_tracks() -> list[SubtitleTrack]:
+        tracks_call_count["count"] += 1
+        if tracks_call_count["count"] == 1:
+            return []
+        return [SubtitleTrack(id=11, title="", lang="zh", is_default=True, is_forced=False, label="中文 (默认)")]
+
+    window.video_widget.load = lambda url, pause=False, start_seconds=0: load_calls.append((url, pause, start_seconds))
+    window.video_widget.set_speed = lambda speed: None
+    window.video_widget.set_volume = lambda value: None
+    window.video_widget.subtitle_tracks = fake_subtitle_tracks
+    window.video_widget.apply_subtitle_mode = (
+        lambda mode, track_id=None: subtitle_apply_calls.append((mode, track_id)) or (11 if mode == "auto" else track_id)
+    )
+    window.video_widget.position_seconds = lambda: 0
+
+    window.open_session(make_player_session(start_index=0))
+
+    assert load_calls == [("http://m/1.m3u8", False, 0)]
+    assert window.subtitle_combo.count() == 1
+    assert window.subtitle_combo.isEnabled() is False
+
+    window.video_widget.subtitle_tracks_changed.emit()
+
+    assert [window.subtitle_combo.itemText(index) for index in range(window.subtitle_combo.count())] == [
+        "自动选择",
+        "关闭字幕",
+        "中文 (默认)",
+    ]
+    assert window.subtitle_combo.isEnabled() is True
+    assert subtitle_apply_calls == [("auto", None)]
+
+
 def test_player_window_uses_distinct_seek_icons(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
@@ -1950,6 +2007,26 @@ def test_player_window_wide_button_hides_sidebar(qtbot) -> None:
 
     window.wide_button.click()
     assert window.sidebar_container.isHidden() is False
+
+
+def test_player_window_persists_pre_wide_splitter_state_when_saved_in_wide_mode(qtbot) -> None:
+    config = AppConfig()
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.show()
+    window.main_splitter.setSizes([900, 300])
+
+    expected_sizes = window.main_splitter.sizes()
+
+    window.wide_button.click()
+    window._persist_geometry()
+
+    restored = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(restored)
+    restored.show()
+
+    assert restored.sidebar_container.isHidden() is False
+    assert restored.main_splitter.sizes() == expected_sizes
 
 
 def test_player_window_persists_and_restores_main_splitter_state(qtbot) -> None:

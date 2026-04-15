@@ -93,6 +93,7 @@ class PlayerWindow(QWidget):
     _CURSOR_HIDE_DELAY_MS = 3000
     _POSTER_SIZE = QSize(180, 260)
     _POSTER_REQUEST_TIMEOUT_SECONDS = 10.0
+    _DEFAULT_MAIN_SPLITTER_SIZES = [960, 320]
 
     def __init__(self, controller, config=None, save_config=None) -> None:
         super().__init__()
@@ -310,6 +311,7 @@ class PlayerWindow(QWidget):
         self.toggle_details_button.clicked.connect(self._update_sidebar_visibility)
         self.video_widget.double_clicked.connect(self.toggle_fullscreen)
         self.video_widget.playback_finished.connect(self._handle_playback_finished)
+        self.video_widget.subtitle_tracks_changed.connect(self._refresh_subtitle_state)
         self.progress.sliderPressed.connect(self._handle_slider_pressed)
         self.progress.sliderReleased.connect(self._seek_from_slider)
         self.progress.clicked_value.connect(self._seek_to_position)
@@ -1009,17 +1011,31 @@ class PlayerWindow(QWidget):
 
     def _restore_main_splitter_state(self) -> None:
         if self.config is None or not self.config.player_main_splitter_state:
-            self.main_splitter.setSizes([960, 320])
+            self.main_splitter.setSizes(self._DEFAULT_MAIN_SPLITTER_SIZES)
             return
         restored = self.main_splitter.restoreState(QByteArray(self.config.player_main_splitter_state))
-        if not restored:
-            self.main_splitter.setSizes([960, 320])
+        if not restored or self._has_collapsed_main_splitter_sizes():
+            self.main_splitter.setSizes(self._DEFAULT_MAIN_SPLITTER_SIZES)
+
+    def _has_collapsed_main_splitter_sizes(self) -> bool:
+        sizes = self.main_splitter.sizes()
+        return len(sizes) != 2 or any(size <= 0 for size in sizes)
+
+    def _main_splitter_state_for_persistence(self) -> bytes:
+        if not self.wide_button.isChecked() or not hasattr(self, "_sidebar_sizes"):
+            return bytes(self.main_splitter.saveState())
+        current_sizes = self.main_splitter.sizes()
+        try:
+            self.main_splitter.setSizes(self._sidebar_sizes)
+            return bytes(self.main_splitter.saveState())
+        finally:
+            self.main_splitter.setSizes(current_sizes)
 
     def _persist_geometry(self) -> None:
         if self.config is None:
             return
         self.config.player_window_geometry = bytes(self.saveGeometry())
-        self.config.player_main_splitter_state = bytes(self.main_splitter.saveState())
+        self.config.player_main_splitter_state = self._main_splitter_state_for_persistence()
         self._save_config()
 
     def _quit_application(self) -> None:
@@ -1108,6 +1124,7 @@ class PlayerWindow(QWidget):
             self.report_timer.stop()
             self.progress_timer.stop()
             self._restore_video_cursor()
+            self.video_widget.shutdown()
             app = QApplication.instance()
             if self._app_event_filter_installed and app is not None:
                 app.removeEventFilter(self)

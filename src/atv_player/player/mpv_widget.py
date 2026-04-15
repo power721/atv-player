@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtGui import QCloseEvent, QMouseEvent
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 
@@ -20,6 +20,7 @@ class SubtitleTrack:
 class MpvWidget(QWidget):
     double_clicked = Signal()
     playback_finished = Signal()
+    subtitle_tracks_changed = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -47,6 +48,21 @@ class MpvWidget(QWidget):
         self._player = self._create_player()
         self._register_player_events()
 
+    def shutdown(self) -> None:
+        if self._player is None:
+            return
+        player, self._player = self._player, None
+        if getattr(player, "core_shutdown", False):
+            return
+        try:
+            terminate = getattr(player, "terminate", None)
+            if terminate is not None:
+                terminate()
+        except Exception:
+            if getattr(player, "core_shutdown", False):
+                return
+            raise
+
     def _register_player_events(self) -> None:
         if self._player is None:
             return
@@ -64,6 +80,15 @@ class MpvWidget(QWidget):
                 self.playback_finished.emit()
 
         self._end_file_handler = handle_end_file
+        observe_property = getattr(self._player, "observe_property", None)
+        if observe_property is None:
+            return
+
+        def handle_track_list(_property_name, _tracks) -> None:
+            self.subtitle_tracks_changed.emit()
+
+        observe_property("track-list", handle_track_list)
+        self._track_list_handler = handle_track_list
 
     def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
         self._ensure_player()
@@ -270,3 +295,7 @@ class MpvWidget(QWidget):
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         self.double_clicked.emit()
         super().mouseDoubleClickEvent(event)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self.shutdown()
+        super().closeEvent(event)

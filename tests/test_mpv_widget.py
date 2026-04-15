@@ -65,6 +65,26 @@ def test_mpv_widget_updates_native_cursor_autohide_property(qtbot) -> None:
     }
 
 
+def test_mpv_widget_close_terminates_active_player(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    terminated = {"count": 0}
+
+    class FakePlayer:
+        core_shutdown = False
+
+        def terminate(self) -> None:
+            terminated["count"] += 1
+
+    widget._player = FakePlayer()
+    widget.show()
+
+    widget.close()
+
+    assert terminated["count"] == 1
+    assert widget._player is None
+
+
 def test_mpv_widget_disables_mpv_keyboard_bindings_for_embedded_player(qtbot, monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -114,6 +134,40 @@ def test_mpv_widget_emits_playback_finished_only_for_natural_end(qtbot, monkeypa
 
     assert player.play_calls == ["http://m/1.m3u8"]
     assert finished["count"] == 1
+
+
+def test_mpv_widget_emits_subtitle_tracks_changed_when_mpv_track_list_updates(qtbot, monkeypatch) -> None:
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.play_calls: list[str] = []
+            self.pause = False
+            self._track_list_observer = None
+
+        def event_callback(self, *event_types):
+            def register(callback):
+                return callback
+
+            return register
+
+        def observe_property(self, name: str, handler) -> None:
+            assert name == "track-list"
+            self._track_list_observer = handler
+
+        def play(self, url: str) -> None:
+            self.play_calls.append(url)
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = FakePlayer()
+    monkeypatch.setattr(widget, "_create_player", lambda: player)
+    changes = {"count": 0}
+    widget.subtitle_tracks_changed.connect(lambda: changes.__setitem__("count", changes["count"] + 1))
+
+    widget.load("http://m/1.m3u8")
+    player._track_list_observer("track-list", [{"id": 1, "type": "sub"}])
+
+    assert player.play_calls == ["http://m/1.m3u8"]
+    assert changes["count"] == 1
 
 
 def test_mpv_widget_lists_embedded_subtitle_tracks_with_readable_labels(qtbot) -> None:
