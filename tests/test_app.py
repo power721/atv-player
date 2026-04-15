@@ -1,4 +1,6 @@
+import os
 import httpx
+import time
 from PySide6.QtGui import QIcon
 
 import atv_player.app as app_module
@@ -154,6 +156,61 @@ def test_build_application_sets_window_icon_and_creates_repo(monkeypatch, tmp_pa
     assert not app.window_icon.isNull()
     assert (tmp_path / ".local" / "share" / "atv-player" / "app.db").exists()
     assert repo.load_config().base_url == "http://127.0.0.1:4567"
+
+
+def test_build_application_creates_poster_cache_directory(monkeypatch, tmp_path) -> None:
+    class FakeApplication:
+        def __init__(self, args) -> None:
+            self.args = args
+            self.application_name = ""
+            self.window_icon = QIcon()
+
+        def setApplicationName(self, name: str) -> None:
+            self.application_name = name
+
+        def setWindowIcon(self, icon: QIcon) -> None:
+            self.window_icon = icon
+
+    monkeypatch.setattr(app_module, "QApplication", FakeApplication)
+    monkeypatch.setattr(app_module.Path, "home", staticmethod(lambda: tmp_path))
+
+    app_module.build_application()
+
+    assert (tmp_path / ".cache" / "atv-player" / "posters").is_dir()
+
+
+def test_build_application_deletes_poster_cache_files_older_than_seven_days(monkeypatch, tmp_path) -> None:
+    class FakeApplication:
+        def __init__(self, args) -> None:
+            self.args = args
+            self.application_name = ""
+            self.window_icon = QIcon()
+
+        def setApplicationName(self, name: str) -> None:
+            self.application_name = name
+
+        def setWindowIcon(self, icon: QIcon) -> None:
+            self.window_icon = icon
+
+    monkeypatch.setattr(app_module, "QApplication", FakeApplication)
+    monkeypatch.setattr(app_module.Path, "home", staticmethod(lambda: tmp_path))
+
+    cache_dir = tmp_path / ".cache" / "atv-player" / "posters"
+    cache_dir.mkdir(parents=True)
+    old_file = cache_dir / "old.img"
+    new_file = cache_dir / "new.img"
+    old_file.write_bytes(b"old")
+    new_file.write_bytes(b"new")
+    now = time.time()
+    stale_age = now - (8 * 24 * 60 * 60)
+    fresh_age = now - (2 * 24 * 60 * 60)
+    os.utime(old_file, (stale_age, stale_age))
+    os.utime(new_file, (fresh_age, fresh_age))
+
+    app_module.build_application()
+
+    assert old_file.exists() is False
+    assert new_file.exists() is True
 
 
 def test_app_coordinator_start_does_not_require_vod_root_probe(monkeypatch) -> None:

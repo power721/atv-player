@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QObject
@@ -16,6 +17,9 @@ from atv_player.models import AppConfig
 from atv_player.storage import SettingsRepository
 from atv_player.ui.login_window import LoginWindow
 from atv_player.ui.main_window import MainWindow
+from atv_player.ui.poster_loader import poster_cache_dir
+
+POSTER_CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 
 
 def decide_start_view(config: AppConfig) -> str:
@@ -26,12 +30,25 @@ def _app_icon_path() -> Path:
     return Path(__file__).resolve().parent / "icons" / "app.svg"
 
 
+def purge_stale_poster_cache(now: float | None = None) -> None:
+    cutoff = (now if now is not None else time.time()) - POSTER_CACHE_MAX_AGE_SECONDS
+    for entry in poster_cache_dir().iterdir():
+        try:
+            if not entry.is_file():
+                continue
+            if entry.stat().st_mtime < cutoff:
+                entry.unlink()
+        except OSError:
+            continue
+
+
 def build_application() -> tuple[QApplication, SettingsRepository]:
     app = QApplication([])
     app.setApplicationName("atv-player")
     app.setWindowIcon(QIcon(str(_app_icon_path())))
     data_dir = Path.home() / ".local" / "share" / "atv-player"
     repo = SettingsRepository(data_dir / "app.db")
+    purge_stale_poster_cache()
     return app, repo
 
 

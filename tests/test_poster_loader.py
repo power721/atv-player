@@ -1,3 +1,4 @@
+import atv_player.ui.poster_loader as poster_loader_module
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QImage
 
@@ -16,6 +17,19 @@ class FakeResponse:
         return None
 
 
+def _png_bytes(width: int = 20, height: int = 40) -> bytes:
+    png = QImage(width, height, QImage.Format.Format_RGB32)
+    png.fill(0x00FF00)
+
+    from PySide6.QtCore import QBuffer, QByteArray, QIODeviceBase
+
+    data = QByteArray()
+    qbuffer = QBuffer(data)
+    qbuffer.open(QIODeviceBase.OpenModeFlag.WriteOnly)
+    png.save(qbuffer, "PNG")
+    return bytes(data)
+
+
 def test_normalize_poster_url_upgrades_douban_ratio_path() -> None:
     result = normalize_poster_url("https://img3.doubanio.com/view/photo/s_ratio_poster/public/p123.jpg")
     assert result == "https://img3.doubanio.com/view/photo/m/public/p123.jpg"
@@ -29,16 +43,7 @@ def test_build_poster_request_headers_uses_site_specific_referers() -> None:
 
 def test_load_remote_poster_image_scales_downloaded_image() -> None:
     def fake_get(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
-        png = QImage(20, 40, QImage.Format.Format_RGB32)
-        png.fill(0x00FF00)
-
-        from PySide6.QtCore import QBuffer, QByteArray, QIODeviceBase
-
-        data = QByteArray()
-        qbuffer = QBuffer(data)
-        qbuffer.open(QIODeviceBase.OpenModeFlag.WriteOnly)
-        png.save(qbuffer, "PNG")
-        return FakeResponse(bytes(data))
+        return FakeResponse(_png_bytes())
 
     loaded = load_remote_poster_image(
         "https://img3.doubanio.com/view/photo/m/public/p123.jpg",
@@ -50,3 +55,77 @@ def test_load_remote_poster_image_scales_downloaded_image() -> None:
     assert loaded.isNull() is False
     assert loaded.width() <= 90
     assert loaded.height() <= 130
+
+
+def test_load_remote_poster_image_reuses_cached_file(monkeypatch, tmp_path) -> None:
+    cache_dir = tmp_path / "posters"
+    cache_dir.mkdir()
+    monkeypatch.setattr(poster_loader_module, "poster_cache_dir", lambda: cache_dir)
+
+    image_url = "https://img3.doubanio.com/view/photo/m/public/p123.jpg"
+    cache_path = poster_loader_module.poster_cache_path(image_url)
+    cache_path.write_bytes(_png_bytes())
+
+    def fail_get(*args, **kwargs):
+        raise AssertionError("network should not be used when cache file exists")
+
+    loaded = load_remote_poster_image(image_url, QSize(90, 130), get=fail_get)
+
+    assert loaded is not None
+    assert loaded.isNull() is False
+    assert loaded.width() <= 90
+    assert loaded.height() <= 130
+
+
+def test_load_remote_poster_image_writes_downloaded_bytes_to_cache(monkeypatch, tmp_path) -> None:
+    cache_dir = tmp_path / "posters"
+    monkeypatch.setattr(poster_loader_module, "poster_cache_dir", lambda: cache_dir)
+    poster_bytes = _png_bytes()
+
+    def fake_get(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+        return FakeResponse(poster_bytes)
+
+    image_url = "https://img3.doubanio.com/view/photo/m/public/p123.jpg"
+    loaded = load_remote_poster_image(image_url, QSize(90, 130), get=fake_get)
+    cache_path = poster_loader_module.poster_cache_path(image_url)
+
+    assert loaded is not None
+    assert loaded.isNull() is False
+    assert cache_path.read_bytes() == poster_bytes
+
+
+def test_load_remote_poster_image_returns_none_for_corrupt_cached_bytes(monkeypatch, tmp_path) -> None:
+    cache_dir = tmp_path / "posters"
+    cache_dir.mkdir()
+    monkeypatch.setattr(poster_loader_module, "poster_cache_dir", lambda: cache_dir)
+
+    image_url = "https://img3.doubanio.com/view/photo/m/public/p123.jpg"
+    poster_loader_module.poster_cache_path(image_url).write_bytes(b"not-an-image")
+
+    loaded = load_remote_poster_image(image_url, QSize(90, 130), get=lambda *args, **kwargs: None)
+
+    assert loaded is None
+
+
+def test_load_remote_poster_image_returns_image_when_cache_write_fails(monkeypatch, tmp_path) -> None:
+    cache_dir = tmp_path / "posters"
+    monkeypatch.setattr(poster_loader_module, "poster_cache_dir", lambda: cache_dir)
+    poster_bytes = _png_bytes()
+
+    def fake_get(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+        return FakeResponse(poster_bytes)
+
+    monkeypatch.setattr(
+        poster_loader_module,
+        "_write_poster_cache_bytes",
+        lambda cache_path, image_bytes: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    loaded = load_remote_poster_image(
+        "https://img3.doubanio.com/view/photo/m/public/p123.jpg",
+        QSize(90, 130),
+        get=fake_get,
+    )
+
+    assert loaded is not None
+    assert loaded.isNull() is False

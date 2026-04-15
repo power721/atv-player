@@ -6,6 +6,7 @@ from atv_player.controllers.player_controller import PlayerSession
 from atv_player.models import AppConfig, PlayItem, VodItem
 from atv_player.player.mpv_widget import AudioTrack, SubtitleTrack
 
+import atv_player.ui.poster_loader as poster_loader_module
 import atv_player.ui.player_window as player_window_module
 from atv_player.ui.player_window import PlayerWindow
 
@@ -429,6 +430,7 @@ def test_player_window_keeps_video_poster_overlay_hidden_when_no_poster_is_loade
 
 
 def test_player_window_renders_remote_poster_via_direct_request_headers(qtbot, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(poster_loader_module, "poster_cache_dir", lambda: tmp_path / "poster-cache")
     poster_path = tmp_path / "poster.png"
     pixmap = QPixmap(20, 30)
     pixmap.fill(QColor("blue"))
@@ -501,7 +503,8 @@ def test_player_window_renders_remote_poster_via_direct_request_headers(qtbot, m
     ]
 
 
-def test_player_window_uses_short_timeout_for_remote_poster_requests(qtbot, monkeypatch) -> None:
+def test_player_window_uses_short_timeout_for_remote_poster_requests(qtbot, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(poster_loader_module, "poster_cache_dir", lambda: tmp_path / "poster-cache")
     requested_timeouts: list[float] = []
 
     class FakeResponse:
@@ -555,7 +558,8 @@ def test_player_window_uses_short_timeout_for_remote_poster_requests(qtbot, monk
     assert requested_timeouts == [10.0]
 
 
-def test_player_window_uses_youtube_referer_for_ytimg_posters(qtbot, monkeypatch) -> None:
+def test_player_window_uses_youtube_referer_for_ytimg_posters(qtbot, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(poster_loader_module, "poster_cache_dir", lambda: tmp_path / "poster-cache")
     requested_headers: list[dict[str, str]] = []
 
     class FakeResponse:
@@ -610,7 +614,8 @@ def test_player_window_uses_youtube_referer_for_ytimg_posters(qtbot, monkeypatch
     ]
 
 
-def test_player_window_uses_netease_referer_for_netease_posters(qtbot, monkeypatch) -> None:
+def test_player_window_uses_netease_referer_for_netease_posters(qtbot, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(poster_loader_module, "poster_cache_dir", lambda: tmp_path / "poster-cache")
     requested_headers: list[dict[str, str]] = []
 
     class FakeResponse:

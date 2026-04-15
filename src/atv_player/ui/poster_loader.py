@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from hashlib import sha256
+from pathlib import Path
+
 import httpx
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QImage
@@ -31,23 +34,26 @@ def build_poster_request_headers(image_url: str) -> dict[str, str]:
     }
 
 
-def load_remote_poster_image(
-    image_url: str,
-    target_size: QSize,
-    timeout: float = POSTER_REQUEST_TIMEOUT_SECONDS,
-    get=httpx.get,
-) -> QImage | None:
-    try:
-        response = get(
-            image_url,
-            headers=build_poster_request_headers(image_url),
-            timeout=timeout,
-        )
-        response.raise_for_status()
-    except Exception:
-        return None
+def poster_cache_dir() -> Path:
+    cache_dir = Path.home() / ".cache" / "atv-player" / "posters"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
+
+def poster_cache_path(image_url: str) -> Path:
+    normalized_url = normalize_poster_url(image_url)
+    digest = sha256(normalized_url.encode("utf-8")).hexdigest()
+    return poster_cache_dir() / f"{digest}.img"
+
+
+def _write_poster_cache_bytes(cache_path: Path, image_bytes: bytes) -> None:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_bytes(image_bytes)
+
+
+def _load_scaled_image_from_bytes(image_bytes: bytes, target_size: QSize) -> QImage | None:
     image = QImage()
-    image.loadFromData(response.content)
+    image.loadFromData(image_bytes)
     if image.isNull():
         return None
     return image.scaled(
@@ -55,3 +61,41 @@ def load_remote_poster_image(
         Qt.AspectRatioMode.KeepAspectRatio,
         Qt.TransformationMode.SmoothTransformation,
     )
+
+
+def load_remote_poster_image(
+    image_url: str,
+    target_size: QSize,
+    timeout: float = POSTER_REQUEST_TIMEOUT_SECONDS,
+    get=httpx.get,
+) -> QImage | None:
+    normalized_url = normalize_poster_url(image_url)
+    if not normalized_url:
+        return None
+
+    cache_path = poster_cache_path(normalized_url)
+    try:
+        cached_bytes = cache_path.read_bytes()
+    except OSError:
+        cached_bytes = None
+    else:
+        return _load_scaled_image_from_bytes(cached_bytes, target_size)
+
+    try:
+        response = get(
+            normalized_url,
+            headers=build_poster_request_headers(normalized_url),
+            timeout=timeout,
+        )
+        response.raise_for_status()
+    except Exception:
+        return None
+
+    image = _load_scaled_image_from_bytes(response.content, target_size)
+    if image is None:
+        return None
+    try:
+        _write_poster_cache_bytes(cache_path, response.content)
+    except OSError:
+        pass
+    return image
