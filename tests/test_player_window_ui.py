@@ -849,6 +849,36 @@ def test_player_window_can_open_session_paused(qtbot) -> None:
     ).pixmap(24, 24).toImage()
 
 
+def test_player_window_shows_video_title_while_playing(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[PlayItem(title="Episode 2", url="http://m/2.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    assert window.windowTitle() == "Movie - Episode 2"
+
+
 def test_player_window_renders_title_metadata_in_expected_order(qtbot) -> None:
     class FakeVideo:
         def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
@@ -2514,6 +2544,18 @@ def test_player_window_toggle_playback_persists_last_player_paused(qtbot) -> Non
 
     assert config.last_player_paused is False
     assert saved["count"] >= 2
+
+
+def test_player_window_pausing_playback_restores_application_title(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session(start_index=1))
+
+    window.toggle_playback()
+
+    assert window.is_playing is False
+    assert window.windowTitle() == "alist-tvbox 播放器"
 
 
 def test_player_window_escape_shortcut_returns_to_main_when_not_fullscreen(qtbot) -> None:

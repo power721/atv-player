@@ -126,7 +126,7 @@ class PlayerWindow(QWidget):
         self._video_surface_ready = False
         self._poster_load_signals = _PosterLoadSignals()
         self._poster_load_signals.loaded.connect(self._handle_poster_load_finished)
-        self.setWindowTitle("alist-tvbox 播放器")
+        self.setWindowTitle(self._default_window_title())
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
         self.resize(1280, 800)
@@ -379,6 +379,25 @@ class PlayerWindow(QWidget):
         icon_name = "pause.svg" if self.is_playing else "play.svg"
         self.play_button.setIcon(QIcon(str(self._icons_dir / icon_name)))
 
+    def _default_window_title(self) -> str:
+        return "alist-tvbox 播放器"
+
+    def _active_playback_title(self) -> str:
+        if self.session is None or not self.session.playlist:
+            return self._default_window_title()
+        current_item = self.session.playlist[self.current_index]
+        parts = [self.session.vod.vod_name.strip(), current_item.title.strip()]
+        parts = [part for part in parts if part]
+        if not parts:
+            return self._default_window_title()
+        return " - ".join(parts)
+
+    def _refresh_window_title(self) -> None:
+        if not self.is_playing:
+            self.setWindowTitle(self._default_window_title())
+            return
+        self.setWindowTitle(self._active_playback_title())
+
     def _set_button_icon(self, button: QPushButton, icon_name: str) -> None:
         button.setIcon(QIcon(str(self._icons_dir / icon_name)))
 
@@ -503,6 +522,7 @@ class PlayerWindow(QWidget):
         self.is_playing = not start_paused
         self._set_last_player_paused(start_paused)
         self._update_play_button_icon()
+        self._refresh_window_title()
         self.playlist.clear()
         for item in session.playlist:
             self.playlist.addItem(QListWidgetItem(item.title))
@@ -1213,6 +1233,7 @@ class PlayerWindow(QWidget):
         self.is_playing = not self.is_playing
         self._set_last_player_paused(not self.is_playing)
         self._update_play_button_icon()
+        self._refresh_window_title()
         self._sync_video_cursor_autohide()
 
     def play_previous(self) -> None:
