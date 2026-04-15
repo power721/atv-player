@@ -64,6 +64,7 @@ class DoubanPage(QWidget):
         self._current_card_columns = self._MIN_CARD_COLUMNS
         self._categories_request_id = 0
         self._items_request_id = 0
+        self._poster_generation = 0
         self._signals = _DoubanSignals(self)
         self._signals.categories_loaded.connect(self._handle_categories_loaded)
         self._signals.items_loaded.connect(self._handle_items_loaded)
@@ -180,6 +181,7 @@ class DoubanPage(QWidget):
         self.unauthorized.emit()
 
     def _render_cards(self) -> None:
+        self._poster_generation += 1
         while self.cards_layout.count():
             item = self.cards_layout.takeAt(0)
             widget = item.widget()
@@ -247,9 +249,11 @@ class DoubanPage(QWidget):
         if not image_url:
             return
 
+        gen = self._poster_generation
+
         def load() -> None:
             image = load_remote_poster_image(image_url, self._CARD_POSTER_SIZE)
-            if image is not None:
+            if image is not None and gen == self._poster_generation:
                 self._signals.poster_loaded.emit(button, image)
 
         threading.Thread(target=load, daemon=True).start()
