@@ -417,6 +417,23 @@ def test_search_page_allows_empty_keyword_and_shows_loading_until_worker_finishe
     assert page.clear_button.isEnabled() is True
 
 
+def test_search_page_clear_results_clears_keyword(qtbot) -> None:
+    page = SearchPage(FakeSearchController())
+    qtbot.addWidget(page)
+
+    page.keyword_edit.setText("霸王别姬")
+    page._results = [VodItem(vod_id="1", vod_name="全集", type_name="阿里")]
+    page._filtered_results = list(page._results)
+    page.results_table.setRowCount(1)
+    page.status_label.setText("1 条结果")
+
+    page.clear_results()
+
+    assert page.keyword_edit.text() == ""
+    assert page.results_table.rowCount() == 0
+    assert page.status_label.text() == ""
+
+
 def test_browse_page_allows_empty_keyword_and_displays_loading_during_async_search(qtbot) -> None:
     controller = AsyncSearchController()
     page = BrowsePage(controller)
@@ -451,6 +468,53 @@ def test_browse_page_allows_empty_keyword_and_displays_loading_during_async_sear
     assert page.search_button.isEnabled() is True
     assert page.filter_combo.isEnabled() is True
     assert page.clear_button.isEnabled() is True
+
+
+def test_browse_page_clear_results_clears_keyword(qtbot) -> None:
+    page = BrowsePage(FakeBrowseController())
+    qtbot.addWidget(page)
+    page.show()
+
+    page.keyword_edit.setText("霸王别姬")
+    page._search_request_id = 1
+    page._handle_search_succeeded(1, [VodItem(vod_id="1", vod_name="全集", type_name="阿里")])
+
+    page.clear_results()
+
+    assert page.keyword_edit.text() == ""
+    assert page.results_table.rowCount() == 0
+    assert page.status_label.text() == ""
+    assert page.search_panel.isHidden() is True
+
+
+def test_browse_page_keeps_search_panel_visible_when_filter_has_no_matches(qtbot) -> None:
+    page = BrowsePage(FakeBrowseController())
+    qtbot.addWidget(page)
+    page.show()
+    page._search_request_id = 1
+
+    page._handle_search_succeeded(
+        1,
+        [VodItem(vod_id="1", vod_name="全集", share_type="0", type_name="阿里", vod_play_from="频道A", vod_time="2026-04-15")],
+    )
+
+    assert page.results_table.rowCount() == 1
+    assert page.search_panel.isHidden() is False
+    assert page.filter_combo.isHidden() is False
+
+    page.filter_combo.setCurrentIndex(page.filter_combo.findData("10"))
+
+    assert page.results_table.rowCount() == 0
+    assert page.search_panel.isHidden() is False
+    assert page.filter_combo.isHidden() is False
+    assert page.status_label.text() == "0 条结果"
+
+    page.filter_combo.setCurrentIndex(page.filter_combo.findData(""))
+
+    assert page.results_table.rowCount() == 1
+    assert page.search_panel.isHidden() is False
+    assert page.filter_combo.isHidden() is False
+    assert page.status_label.text() == "1 条结果"
 
 
 def test_browse_page_uses_latest_async_search_result(qtbot) -> None:

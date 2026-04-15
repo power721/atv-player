@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
 from PySide6.QtCore import QByteArray, QEvent, QObject, QSize, QTimer, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QCursor, QIcon, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPixmap, QShortcut
-from PySide6.QtWidgets import QApplication, QStyle, QStyleOptionSlider
+from PySide6.QtWidgets import QApplication, QStyle, QStyleOptionSlider, QToolTip
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -35,6 +36,10 @@ class ClickableSlider(QSlider):
 
     clicked_value = Signal(int)
 
+    def __init__(self, orientation: Qt.Orientation, parent: QWidget | None = None) -> None:
+        super().__init__(orientation, parent)
+        self._hover_tooltip_formatter: Callable[[int], str] | None = None
+
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
             option = QStyleOptionSlider()
@@ -58,6 +63,18 @@ class ClickableSlider(QSlider):
 
         super().mousePressEvent(event)
 
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        self._show_hover_tooltip(event)
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        QToolTip.hideText()
+        super().leaveEvent(event)
+
+    def set_hover_tooltip_formatter(self, formatter: Callable[[int], str] | None) -> None:
+        self._hover_tooltip_formatter = formatter
+        self.setMouseTracking(formatter is not None)
+
     def _pixel_pos_to_value(self, pos: int) -> int:
         groove_rect = self.rect()
         handle_width = 12
@@ -72,6 +89,16 @@ class ClickableSlider(QSlider):
         value_range = self.maximum() - self.minimum()
         value = self.minimum() + int((adjusted_pos / available_width) * value_range)
         return value
+
+    def _show_hover_tooltip(self, event: QMouseEvent) -> None:
+        if self._hover_tooltip_formatter is None:
+            return
+        value = self._pixel_pos_to_value(int(event.position().x()))
+        text = self._hover_tooltip_formatter(value)
+        if text:
+            QToolTip.showText(event.globalPosition().toPoint(), text, self)
+        else:
+            QToolTip.hideText()
 
 
 class _PosterLoadSignals(QObject):
@@ -177,9 +204,13 @@ class PlayerWindow(QWidget):
         self.duration_label = QLabel("00:00")
         self.duration_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.progress = ClickableSlider(Qt.Orientation.Horizontal)
+        self.progress.set_hover_tooltip_formatter(self._format_time)
         self.progress.setFixedHeight(24)
+        self.progress.setCursor(Qt.CursorShape.PointingHandCursor)
         self.volume_slider = ClickableSlider(Qt.Orientation.Horizontal)
+        self.volume_slider.set_hover_tooltip_formatter(lambda value: f"{value}%")
         self.volume_slider.setRange(0, 100)
+        self.volume_slider.setCursor(Qt.CursorShape.PointingHandCursor)
         initial_volume = 100
         if self.config is not None:
             initial_volume = max(

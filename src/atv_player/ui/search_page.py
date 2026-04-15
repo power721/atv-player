@@ -108,6 +108,7 @@ class SearchPage(QWidget):
 
     def clear_results(self) -> None:
         self._search_request_id += 1
+        self.keyword_edit.clear()
         self._results = []
         self._filtered_results = []
         self.results_table.setRowCount(0)

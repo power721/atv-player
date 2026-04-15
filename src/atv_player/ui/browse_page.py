@@ -310,6 +310,7 @@ class BrowsePage(QWidget):
 
     def clear_results(self) -> None:
         self._search_request_id += 1
+        self.keyword_edit.clear()
         self._results = []
         self._filtered_results = []
         self.results_table.setRowCount(0)
@@ -326,11 +327,9 @@ class BrowsePage(QWidget):
             name_item = QTableWidgetItem(item.vod_name)
             name_item.setToolTip(item.vod_name)
             self.results_table.setItem(row, 1, name_item)
-        if self._filtered_results:
-            self._show_search_results_panel()
-            self.status_label.show()
-        else:
-            self._hide_search_results_panel()
+        self._show_search_results_panel()
+        self.status_label.show()
+        self.status_label.setText(f"{len(self._filtered_results)} 条结果")
 
     def _open_search_result(self, row: int, _column: int) -> None:
         if not (0 <= row < len(self._filtered_results)):
@@ -451,13 +450,6 @@ class BrowsePage(QWidget):
             return
         self._set_search_loading(False)
         self._results = list(results)
-        if self._results:
-            self._show_search_results_panel()
-            self.status_label.show()
-        else:
-            self._hide_search_results_panel()
-            return
-        self.status_label.setText(f"{len(self._results)} 条结果")
         self._apply_filter()
 
     def _handle_search_failed(self, request_id: int, message: str) -> None:

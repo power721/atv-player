@@ -1,7 +1,7 @@
 from PySide6.QtCore import QByteArray, QEvent, Qt
 from PySide6.QtGui import QColor, QCursor, QImage, QKeyEvent, QMouseEvent, QPixmap
 from PySide6.QtWidgets import QApplication, QComboBox
-from PySide6.QtWidgets import QSplitter
+from PySide6.QtWidgets import QSplitter, QToolTip
 from atv_player.controllers.player_controller import PlayerSession
 from atv_player.models import AppConfig, PlayItem, VodItem
 from atv_player.player.mpv_widget import AudioTrack, SubtitleTrack
@@ -1112,6 +1112,75 @@ def test_player_window_clicking_progress_track_seeks_immediately(qtbot) -> None:
     window.progress.clicked_value.emit(48)
 
     assert window.video.seek_calls == [48]
+
+
+def test_player_window_progress_slider_hover_formats_time(qtbot, monkeypatch) -> None:
+    class FakeVideo:
+        def duration_seconds(self) -> int:
+            return 120
+
+        def position_seconds(self) -> int:
+            return 30
+
+    shown: list[str] = []
+    monkeypatch.setattr(
+        QToolTip,
+        "showText",
+        staticmethod(lambda _pos, text, *_args, **_kwargs: shown.append(text)),
+    )
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.resize(1200, 800)
+    window.show()
+    window.video = FakeVideo()
+    window._sync_progress_slider()
+
+    local_pos = window.progress.rect().center()
+    global_pos = window.progress.mapToGlobal(local_pos)
+    QApplication.sendEvent(
+        window.progress,
+        QMouseEvent(
+            QEvent.Type.MouseMove,
+            local_pos,
+            global_pos,
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+
+    assert shown == [window._format_time(window.progress._pixel_pos_to_value(local_pos.x()))]
+
+
+def test_player_window_volume_slider_hover_formats_percent(qtbot, monkeypatch) -> None:
+    shown: list[str] = []
+    monkeypatch.setattr(
+        QToolTip,
+        "showText",
+        staticmethod(lambda _pos, text, *_args, **_kwargs: shown.append(text)),
+    )
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.resize(1200, 800)
+    window.show()
+
+    local_pos = window.volume_slider.rect().center()
+    global_pos = window.volume_slider.mapToGlobal(local_pos)
+    QApplication.sendEvent(
+        window.volume_slider,
+        QMouseEvent(
+            QEvent.Type.MouseMove,
+            local_pos,
+            global_pos,
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+
+    assert shown == [f"{window.volume_slider._pixel_pos_to_value(local_pos.x())}%"]
 
 
 def test_player_window_exposes_extended_playback_controls(qtbot) -> None:
