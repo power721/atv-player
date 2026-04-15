@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -24,7 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from atv_player.player.mpv_widget import MpvWidget
+from atv_player.player.mpv_widget import MpvWidget, SubtitleTrack
 from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url
 
 
@@ -74,6 +75,15 @@ class ClickableSlider(QSlider):
 
 class _PosterLoadSignals(QObject):
     loaded = Signal(int, object)
+
+
+@dataclass(slots=True)
+class SubtitlePreference:
+    mode: str = "auto"
+    title: str = ""
+    lang: str = ""
+    is_default: bool = False
+    is_forced: bool = False
 
 
 class PlayerWindow(QWidget):
@@ -137,6 +147,11 @@ class PlayerWindow(QWidget):
         self.speed_combo = QComboBox()
         self.speed_combo.addItems(["0.5x", "0.75x", "1.0x", "1.25x", "1.5x", "2.0x"])
         self.speed_combo.setCurrentText("1.0x")
+        self._subtitle_tracks: list[SubtitleTrack] = []
+        self._subtitle_preference = SubtitlePreference()
+        self.subtitle_combo = QComboBox()
+        self.subtitle_combo.addItem("自动选择", ("auto", None))
+        self.subtitle_combo.setEnabled(False)
         self.opening_spin = self._create_skip_spinbox("片头 ")
         self.ending_spin = self._create_skip_spinbox("片尾 ")
 
@@ -227,6 +242,7 @@ class PlayerWindow(QWidget):
         control_group_layout.addWidget(self.wide_button)
         control_group_layout.addWidget(self.fullscreen_button)
         control_group_layout.addWidget(self.speed_combo)
+        control_group_layout.addWidget(self.subtitle_combo)
         control_group_layout.addWidget(self.opening_spin)
         control_group_layout.addWidget(self.ending_spin)
         controls.addWidget(control_group, 0, Qt.AlignmentFlag.AlignCenter)
@@ -285,6 +301,7 @@ class PlayerWindow(QWidget):
         self.wide_button.clicked.connect(self._toggle_wide_mode)
         self.fullscreen_button.clicked.connect(self.toggle_fullscreen)
         self.speed_combo.currentTextChanged.connect(self._change_speed)
+        self.subtitle_combo.currentIndexChanged.connect(self._change_subtitle_selection)
         self.opening_spin.valueChanged.connect(self._change_opening_seconds)
         self.ending_spin.valueChanged.connect(self._change_ending_seconds)
         self.volume_slider.valueChanged.connect(self._change_volume)
@@ -462,6 +479,7 @@ class PlayerWindow(QWidget):
             self.playlist.addItem(QListWidgetItem(item.title))
         self.playlist.setCurrentRow(self.current_index)
         self.progress.setValue(0)
+        self._reset_subtitle_combo()
         self._load_current_item(session.start_position_seconds, pause=start_paused)
         self.report_timer.start()
         self.progress_timer.start()
@@ -478,6 +496,7 @@ class PlayerWindow(QWidget):
             self.video.load(current_item.url, pause=pause, start_seconds=effective_start_seconds)
             self.video.set_speed(self.current_speed)
             self.video.set_volume(self.volume_slider.value())
+            self._refresh_subtitle_state()
         except Exception as exc:
             self._append_log(f"播放失败: {exc}")
 
@@ -704,6 +723,87 @@ class PlayerWindow(QWidget):
             return
         self.session.ending_seconds = value
         self.report_progress()
+
+    def _reset_subtitle_combo(self) -> None:
+        self.subtitle_combo.blockSignals(True)
+        self.subtitle_combo.clear()
+        self.subtitle_combo.addItem("自动选择", ("auto", None))
+        self.subtitle_combo.setCurrentIndex(0)
+        self.subtitle_combo.setEnabled(False)
+        self.subtitle_combo.blockSignals(False)
+
+    def _remember_track_preference(self, track: SubtitleTrack) -> None:
+        self._subtitle_preference = SubtitlePreference(
+            mode="track",
+            title=track.title,
+            lang=track.lang,
+            is_default=track.is_default,
+            is_forced=track.is_forced,
+        )
+
+    def _populate_subtitle_combo(self, tracks: list[SubtitleTrack]) -> None:
+        self.subtitle_combo.blockSignals(True)
+        self.subtitle_combo.clear()
+        self.subtitle_combo.addItem("自动选择", ("auto", None))
+        if tracks:
+            self.subtitle_combo.addItem("关闭字幕", ("off", None))
+            for track in tracks:
+                self.subtitle_combo.addItem(track.label, ("track", track.id))
+        self.subtitle_combo.setEnabled(bool(tracks))
+        self.subtitle_combo.setCurrentIndex(0)
+        self.subtitle_combo.blockSignals(False)
+
+    def _apply_subtitle_preference(self) -> None:
+        mode = self._subtitle_preference.mode
+        track_id = None
+        if mode == "track":
+            for track in self._subtitle_tracks:
+                if track.title == self._subtitle_preference.title and track.lang == self._subtitle_preference.lang:
+                    track_id = track.id
+                    break
+            if track_id is None and self._subtitle_tracks:
+                track_id = self._subtitle_tracks[0].id
+        applied_track_id = self.video.apply_subtitle_mode(mode if track_id is not None else "auto", track_id=track_id)
+        if applied_track_id is None:
+            self.subtitle_combo.setCurrentIndex(0)
+            if mode != "off":
+                self._subtitle_preference = SubtitlePreference()
+            return
+        for index, track in enumerate(self._subtitle_tracks, start=2):
+            if track.id == applied_track_id:
+                self.subtitle_combo.setCurrentIndex(index)
+                return
+
+    def _refresh_subtitle_state(self) -> None:
+        if not hasattr(self.video, "subtitle_tracks") or not hasattr(self.video, "apply_subtitle_mode"):
+            self._subtitle_tracks = []
+            self._reset_subtitle_combo()
+            return
+        self._subtitle_tracks = self.video.subtitle_tracks()
+        self._populate_subtitle_combo(self._subtitle_tracks)
+        if not self._subtitle_tracks:
+            self._subtitle_preference = SubtitlePreference()
+            return
+        self._apply_subtitle_preference()
+
+    def _change_subtitle_selection(self, index: int) -> None:
+        if index < 0:
+            return
+        item_data = self.subtitle_combo.itemData(index)
+        if item_data is None:
+            return
+        mode, track_id = item_data
+        if mode == "auto":
+            self._subtitle_preference = SubtitlePreference()
+            self.video.apply_subtitle_mode("auto")
+            return
+        if mode == "off":
+            self._subtitle_preference = SubtitlePreference(mode="off")
+            self.video.apply_subtitle_mode("off")
+            return
+        track = next(track for track in self._subtitle_tracks if track.id == track_id)
+        self._remember_track_preference(track)
+        self.video.apply_subtitle_mode("track", track_id=track_id)
 
     def _change_volume(self, value: int) -> None:
         try:
