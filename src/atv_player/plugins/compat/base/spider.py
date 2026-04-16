@@ -4,7 +4,7 @@ import json
 import re
 from abc import ABCMeta
 
-import httpx
+import requests
 
 
 class Spider(metaclass=ABCMeta):
@@ -43,13 +43,15 @@ class Spider(metaclass=ABCMeta):
         stream=False,
         allow_redirects=True,
     ):
-        response = httpx.get(
+        response = requests.get(
             url,
             params=params,
             cookies=cookies,
             headers=headers,
             timeout=timeout,
-            follow_redirects=allow_redirects,
+            verify=verify,
+            stream=stream,
+            allow_redirects=allow_redirects,
         )
         response.encoding = "utf-8"
         return response
@@ -67,7 +69,7 @@ class Spider(metaclass=ABCMeta):
         stream=False,
         allow_redirects=True,
     ):
-        response = httpx.post(
+        response = requests.post(
             url,
             params=params,
             data=data,
@@ -75,7 +77,9 @@ class Spider(metaclass=ABCMeta):
             cookies=cookies,
             headers=headers,
             timeout=timeout,
-            follow_redirects=allow_redirects,
+            verify=verify,
+            stream=stream,
+            allow_redirects=allow_redirects,
         )
         response.encoding = "utf-8"
         return response

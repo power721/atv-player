@@ -79,11 +79,11 @@ class SpiderPluginLoader:
         cache_path = self._cache_dir / f"plugin_{config.id}.py"
         if not force_refresh and config.cached_file_path:
             cached = Path(config.cached_file_path)
-            if cached.is_file():
+            if cached.is_file() and cached.stat().st_size > 0:
                 return cached
         try:
-            response = self._get(config.source_value, timeout=15.0)
-            if response.status_code >= 400:
+            response = self._get(config.source_value, timeout=15.0, follow_redirects=True)
+            if response.status_code >= 300:
                 raise httpx.HTTPStatusError(
                     f"Error response {response.status_code} while requesting {config.source_value}",
                     request=response.request,
@@ -92,6 +92,6 @@ class SpiderPluginLoader:
             cache_path.write_text(response.text, encoding="utf-8")
             return cache_path
         except Exception:
-            if cache_path.is_file():
+            if cache_path.is_file() and cache_path.stat().st_size > 0:
                 return cache_path
             raise

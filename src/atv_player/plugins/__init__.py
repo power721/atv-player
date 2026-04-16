@@ -73,7 +73,19 @@ class SpiderPluginManager:
 
     def refresh_plugin(self, plugin_id: int) -> None:
         plugin = self._repository.get_plugin(plugin_id)
-        loaded = self._loader.load(plugin, force_refresh=True)
+        try:
+            loaded = self._loader.load(plugin, force_refresh=True)
+        except Exception as exc:
+            self._repository.update_plugin(
+                plugin_id,
+                display_name=plugin.display_name,
+                enabled=plugin.enabled,
+                cached_file_path=plugin.cached_file_path,
+                last_loaded_at=plugin.last_loaded_at,
+                last_error=str(exc),
+            )
+            self._repository.append_log(plugin.id, "error", str(exc))
+            return
         self._repository.update_plugin(
             plugin_id,
             display_name=plugin.display_name,
