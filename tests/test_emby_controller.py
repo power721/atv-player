@@ -69,7 +69,8 @@ def test_search_items_maps_emby_search_payload() -> None:
                 "vod_id": "1-3281",
                 "vod_name": "黑袍纠察队",
                 "vod_pic": "poster.jpg",
-                "vod_remarks": "4K",
+                "vod_year": "2020",
+                "vod_remarks": "9.0",
             }
         ],
         "total": 31,
@@ -82,6 +83,7 @@ def test_search_items_maps_emby_search_payload() -> None:
     assert total == 31
     assert items[0].vod_id == "1-3281"
     assert items[0].vod_name == "黑袍纠察队"
+    assert items[0].vod_remarks == "2020 - 9.0"
 
 
 def test_load_folder_items_uses_t_query_and_first_page() -> None:
@@ -93,13 +95,15 @@ def test_load_folder_items_uses_t_query_and_first_page() -> None:
                 "vod_name": "Season 1",
                 "vod_pic": "folder.jpg",
                 "vod_tag": "folder",
+                "vod_year": "2020",
             },
             {
                 "vod_id": "file-1",
                 "vod_name": "Episode 1",
                 "vod_pic": "episode.jpg",
                 "vod_tag": "file",
-                "vod_remarks": "4K",
+                "vod_year": "2021",
+                "vod_remarks": "8.8",
             },
         ]
     }
@@ -114,6 +118,7 @@ def test_load_folder_items_uses_t_query_and_first_page() -> None:
         ("folder-1", "folder"),
         ("file-1", "file"),
     ]
+    assert [item.vod_remarks for item in items] == ["2020", "2021 - 8.8"]
 
 
 def test_build_request_from_detail_uses_ids_endpoint_and_playlist_parsing() -> None:

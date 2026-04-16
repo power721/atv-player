@@ -17,6 +17,7 @@ def _map_item(payload: dict) -> VodItem:
         vod_pic=str(payload.get("vod_pic") or ""),
         vod_tag=str(payload.get("vod_tag") or ""),
         vod_remarks=str(payload.get("vod_remarks") or ""),
+        vod_year=str(payload.get("vod_year") or ""),
         dbid=int(payload.get("dbid") or 0),
         type_name=str(payload.get("type_name") or ""),
         vod_content=str(payload.get("vod_content") or ""),

@@ -20,9 +20,17 @@ class EmbyController:
         categories = [category for category in categories if category.type_id != "0"]
         return [DoubanCategory(type_id="0", type_name="推荐"), *categories]
 
+    def _decorate_card_subtitle(self, item: VodItem) -> VodItem:
+        subtitle_parts = [item.vod_year.strip(), item.vod_remarks.strip()]
+        item.vod_remarks = " - ".join(part for part in subtitle_parts if part)
+        return item
+
+    def _map_emby_items(self, payload: dict) -> list[VodItem]:
+        return [self._decorate_card_subtitle(_map_item(item)) for item in payload.get("list", [])]
+
     def load_items(self, category_id: str, page: int) -> tuple[list[VodItem], int]:
         payload = self._api_client.list_emby_items(category_id, page=page)
-        items = [_map_item(item) for item in payload.get("list", [])]
+        items = self._map_emby_items(payload)
         total_raw = payload.get("total")
         if total_raw is not None:
             total = int(total_raw)
@@ -33,7 +41,7 @@ class EmbyController:
 
     def search_items(self, keyword: str, page: int) -> tuple[list[VodItem], int]:
         payload = self._api_client.search_emby_items(keyword, page=page)
-        items = [_map_item(item) for item in payload.get("list", [])]
+        items = self._map_emby_items(payload)
         total_raw = payload.get("total")
         if total_raw is not None:
             total = int(total_raw)
@@ -44,7 +52,7 @@ class EmbyController:
 
     def load_folder_items(self, vod_id: str) -> tuple[list[VodItem], int]:
         payload = self._api_client.list_emby_items(vod_id, page=1)
-        items = [_map_item(item) for item in payload.get("list", [])]
+        items = self._map_emby_items(payload)
         total_raw = payload.get("total")
         total = int(total_raw) if total_raw is not None else len(items)
         return items, total
