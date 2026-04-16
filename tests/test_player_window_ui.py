@@ -1978,6 +1978,38 @@ def test_player_window_restores_saved_volume_for_new_session(qtbot) -> None:
     assert window.video.set_volume_calls[-1] == 35
 
 
+def test_player_window_restores_saved_mute_for_new_session(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, int]] = []
+            self.set_speed_calls: list[float] = []
+            self.set_volume_calls: list[int] = []
+            self.set_muted_calls: list[bool] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            self.load_calls.append((url, start_seconds))
+
+        def set_speed(self, value: float) -> None:
+            self.set_speed_calls.append(value)
+
+        def set_volume(self, value: int) -> None:
+            self.set_volume_calls.append(value)
+
+        def set_muted(self, muted: bool) -> None:
+            self.set_muted_calls.append(muted)
+
+    config = AppConfig(player_muted=True)
+    window = PlayerWindow(FakePlayerController(), config=config)
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    expected_muted_icon = window._create_icon_button("volume-off.svg", "静音", "M").icon().pixmap(24, 24).toImage()
+
+    window.open_session(make_player_session(start_index=0))
+
+    assert window.video.set_muted_calls == [True]
+    assert window.mute_button.icon().pixmap(24, 24).toImage() == expected_muted_icon
+
+
 def test_player_window_volume_changes_persist_to_config(qtbot) -> None:
     config = AppConfig(player_volume=35)
     saved = {"count": 0}
@@ -1993,6 +2025,32 @@ def test_player_window_volume_changes_persist_to_config(qtbot) -> None:
 
     assert config.player_volume == 60
     assert window.video.set_volume_calls == [60]
+    assert saved["count"] >= 1
+
+
+def test_player_window_mute_changes_persist_to_config(qtbot) -> None:
+    config = AppConfig(player_muted=False)
+    saved = {"count": 0}
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.toggle_mute_calls = 0
+
+        def toggle_mute(self) -> None:
+            self.toggle_mute_calls += 1
+
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("count", saved["count"] + 1),
+    )
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.mute_button.click()
+
+    assert config.player_muted is True
+    assert window.video.toggle_mute_calls == 1
     assert saved["count"] >= 1
 
 
@@ -2729,3 +2787,21 @@ def test_player_window_return_to_main_restores_application_title(qtbot) -> None:
     window._return_to_main()
 
     assert window.windowTitle() == "alist-tvbox 播放器"
+
+
+def test_player_window_resume_from_main_resumes_playback_and_updates_state(qtbot) -> None:
+    config = AppConfig(last_active_window="main", last_player_paused=True)
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+    video = RecordingVideo()
+    window.video = video
+    window.open_session(make_player_session(start_index=0))
+
+    window._return_to_main()
+    window.resume_from_main()
+
+    assert video.pause_calls == 1
+    assert video.resume_calls == 1
+    assert window.is_playing is True
+    assert window.windowTitle() == "Movie - Episode 1"
+    assert config.last_player_paused is False

@@ -364,6 +364,8 @@ class MainWindow(QMainWindow):
         if self.player_window is not None and getattr(self.player_window, "session", None) is not None:
             self.config.last_active_window = "player"
             self._save_config()
+            if hasattr(self.player_window, "resume_from_main"):
+                self.player_window.resume_from_main()
             self.player_window.show()
             self.player_window.raise_()
             self.player_window.activateWindow()

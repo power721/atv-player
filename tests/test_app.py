@@ -1331,6 +1331,47 @@ def test_main_window_escape_shows_existing_player_window(qtbot) -> None:
     assert window.player_window.show_calls == 1
 
 
+def test_main_window_show_or_restore_player_resumes_existing_hidden_session(qtbot) -> None:
+    class ExistingPlayerWindow:
+        def __init__(self) -> None:
+            self.session = object()
+            self.show_calls = 0
+            self.raise_calls = 0
+            self.activate_calls = 0
+            self.resume_calls = 0
+
+        def show(self) -> None:
+            self.show_calls += 1
+
+        def raise_(self) -> None:
+            self.raise_calls += 1
+
+        def activateWindow(self) -> None:
+            self.activate_calls += 1
+
+        def resume_from_main(self) -> None:
+            self.resume_calls += 1
+
+    config = AppConfig(last_active_window="main")
+    window = MainWindow(
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    window.player_window = ExistingPlayerWindow()
+    window.show()
+
+    window.show_or_restore_player()
+
+    assert window.isHidden() is True
+    assert config.last_active_window == "player"
+    assert window.player_window.show_calls == 1
+    assert window.player_window.resume_calls == 1
+
+
 def test_main_window_ctrl_p_restores_last_player_when_missing(qtbot, monkeypatch) -> None:
     restored = {"called": 0}
     config = AppConfig(last_active_window="main", last_playback_mode="detail", last_playback_vod_id="vod-1")

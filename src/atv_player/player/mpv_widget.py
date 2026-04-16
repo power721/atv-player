@@ -203,6 +203,16 @@ class MpvWidget(QWidget):
                 return
             raise
 
+    def set_muted(self, muted: bool) -> None:
+        if self._player is None:
+            return
+        try:
+            self._player.mute = muted
+        except Exception:
+            if getattr(self._player, "core_shutdown", False):
+                return
+            raise
+
     def set_cursor_autohide(self, value: int | None) -> None:
         if self._player is None:
             return

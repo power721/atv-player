@@ -144,7 +144,7 @@ class PlayerWindow(QWidget):
         self.current_index = 0
         self.current_speed = 1.0
         self.is_playing = True
-        self._is_muted = False
+        self._is_muted = bool(getattr(self.config, "player_muted", False))
         self._was_maximized_before_fullscreen = False
         self._quit_requested = False
         self._video_pointer_inside = False
@@ -380,6 +380,7 @@ class PlayerWindow(QWidget):
         self._shortcut_bindings: list[QShortcut] = []
         self._register_shortcuts()
         self._update_play_button_icon()
+        self._update_mute_button_icon()
         self._apply_visibility_state()
         app = QApplication.instance()
         if app is not None:
@@ -614,6 +615,7 @@ class PlayerWindow(QWidget):
         self._configure_video_surface_widgets()
         self.video.set_speed(self.current_speed)
         self.video.set_volume(self.volume_slider.value())
+        self._apply_muted_state()
         self._refresh_subtitle_state()
         self._refresh_audio_state()
 
@@ -871,8 +873,19 @@ class PlayerWindow(QWidget):
             self.video.toggle_mute()
             self._is_muted = not self._is_muted
             self._update_mute_button_icon()
+            if self.config is not None and self.config.player_muted != self._is_muted:
+                self.config.player_muted = self._is_muted
+                self._save_config()
         except Exception as exc:
             self._append_log(f"静音失败: {exc}")
+
+    def _apply_muted_state(self) -> None:
+        if not hasattr(self.video, "set_muted"):
+            return
+        try:
+            self.video.set_muted(self._is_muted)
+        except Exception as exc:
+            self._append_log(f"静音恢复失败: {exc}")
 
     def _change_speed(self, text: str) -> None:
         try:
@@ -1314,6 +1327,17 @@ class PlayerWindow(QWidget):
         self._persist_geometry()
         self.hide()
         self.closed_to_main.emit()
+
+    def resume_from_main(self) -> None:
+        if self.session is None:
+            return
+        if not self.is_playing:
+            self.video.resume()
+            self.is_playing = True
+            self._set_last_player_paused(False)
+        self._update_play_button_icon()
+        self._refresh_window_title()
+        self._sync_video_cursor_autohide()
 
     def _handle_escape(self) -> None:
         if self.isFullScreen():
