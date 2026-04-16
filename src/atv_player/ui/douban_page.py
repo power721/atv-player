@@ -33,6 +33,7 @@ class _DoubanSignals(QObject):
 
 class DoubanPage(QWidget):
     search_requested = Signal(str)
+    open_requested = Signal(str)
     unauthorized = Signal()
     _CARD_WIDTH = 220
     _CARD_HEIGHT = 360
@@ -41,9 +42,10 @@ class DoubanPage(QWidget):
     _MIN_CARD_COLUMNS = 1
     _MAX_CARD_COLUMNS = 6
 
-    def __init__(self, controller) -> None:
+    def __init__(self, controller, click_action: str = "search") -> None:
         super().__init__()
         self.controller = controller
+        self._click_action = click_action
         self.category_list = QListWidget()
         self.status_label = QLabel("")
         self.prev_page_button = QPushButton("上一页")
@@ -155,7 +157,7 @@ class DoubanPage(QWidget):
         for category in self.categories:
             self.category_list.addItem(category.type_name)
         if not self.categories:
-            self.status_label.setText("暂无豆瓣分类")
+            self.status_label.setText("暂无分类")
             self._update_pagination()
             return
         self.category_list.setCurrentRow(0)
@@ -256,8 +258,14 @@ class DoubanPage(QWidget):
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setStyleSheet("padding: 10px;")
-        button.clicked.connect(lambda _checked=False, keyword=item.vod_name: self.search_requested.emit(keyword))
+        button.clicked.connect(lambda _checked=False, current_item=item: self._handle_card_clicked(current_item))
         return button
+
+    def _handle_card_clicked(self, item) -> None:
+        if self._click_action == "open":
+            self.open_requested.emit(item.vod_id)
+            return
+        self.search_requested.emit(item.vod_name)
 
     def _start_card_poster_load(self, button: QToolButton, item) -> None:
         image_url = normalize_poster_url(item.vod_pic)

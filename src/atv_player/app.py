@@ -13,6 +13,7 @@ from atv_player.controllers.douban_controller import DoubanController
 from atv_player.controllers.history_controller import HistoryController
 from atv_player.controllers.login_controller import LoginController
 from atv_player.controllers.player_controller import PlayerController
+from atv_player.controllers.telegram_search_controller import TelegramSearchController
 from atv_player.models import AppConfig
 from atv_player.storage import SettingsRepository
 from atv_player.ui.login_window import LoginWindow
@@ -112,6 +113,7 @@ class AppCoordinator(QObject):
         self._api_client = self._build_api_client()
         config = self.repo.load_config()
         douban_controller = DoubanController(self._api_client)
+        telegram_controller = TelegramSearchController(self._api_client)
         browse_controller = BrowseController(self._api_client)
         history_controller = HistoryController(self._api_client)
         player_controller = PlayerController(self._api_client)
@@ -122,6 +124,7 @@ class AppCoordinator(QObject):
             config=config,
             save_config=lambda: self.repo.save_config(config),
             douban_controller=douban_controller,
+            telegram_controller=telegram_controller,
         )
         self.main_window.logout_requested.connect(self._handle_logout_requested)
         if self.login_window is not None:

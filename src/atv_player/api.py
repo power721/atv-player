@@ -105,6 +105,18 @@ class ApiClient:
             params={"ac": "gui", "t": category_id, "pg": page, "size": size},
         )
 
+    def list_telegram_search_categories(self) -> dict[str, Any]:
+        return self._request("GET", f"/tg-search/{self._vod_token}", params={"web": True})
+
+    def list_telegram_search_items(self, category_id: str, page: int) -> dict[str, Any]:
+        params: dict[str, Any] = {"t": category_id, "web": True}
+        if category_id != "0":
+            params["pg"] = page
+        return self._request("GET", f"/tg-search/{self._vod_token}", params=params)
+
+    def get_telegram_search_detail(self, vod_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/tg-search/{self._vod_token}", params={"id": vod_id})
+
     def telegram_search(self, keyword: str) -> dict[str, Any]:
         return self._request("GET", "/api/telegram/search", params={"wd": keyword})
 

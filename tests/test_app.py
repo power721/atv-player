@@ -35,6 +35,17 @@ class FakeDoubanController:
         return [], 0
 
 
+class FakeTelegramController(FakeDoubanController):
+    def build_request(self, vod_id: str):
+        return OpenPlayerRequest(
+            vod=VodItem(vod_id=vod_id, vod_name="Telegram Movie"),
+            playlist=[PlayItem(title="Episode 1", url="", vod_id="ep-1")],
+            clicked_index=0,
+            source_mode="detail",
+            source_vod_id=vod_id,
+        )
+
+
 class FakePlayerController:
     def create_session(
         self,
@@ -56,6 +67,7 @@ class FakePlayerController:
 def test_main_window_starts_on_douban_tab(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -66,15 +78,17 @@ def test_main_window_starts_on_douban_tab(qtbot) -> None:
     window.show()
 
     assert window.nav_tabs.currentIndex() == 0
-    assert window.nav_tabs.count() == 3
+    assert window.nav_tabs.count() == 4
     assert window.nav_tabs.tabText(0) == "豆瓣电影"
-    assert window.nav_tabs.tabText(1) == "文件浏览"
-    assert window.nav_tabs.tabText(2) == "播放记录"
+    assert window.nav_tabs.tabText(1) == "电报影视"
+    assert window.nav_tabs.tabText(2) == "文件浏览"
+    assert window.nav_tabs.tabText(3) == "播放记录"
 
 
 def test_main_window_logout_button_emits_logout_requested(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -93,6 +107,7 @@ def test_main_window_passes_config_and_save_callback_to_browse_page(qtbot) -> No
     config = AppConfig()
     window = MainWindow(
         douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -109,6 +124,7 @@ def test_main_window_passes_config_and_save_callback_to_browse_page(qtbot) -> No
 def test_main_window_switches_to_browse_and_searches_from_douban_signal(qtbot, monkeypatch) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -124,6 +140,29 @@ def test_main_window_switches_to_browse_and_searches_from_douban_signal(qtbot, m
 
     assert window.nav_tabs.currentWidget() is window.browse_page
     assert searched == ["霸王别姬"]
+
+
+def test_main_window_opens_player_from_telegram_card_signal(qtbot, monkeypatch) -> None:
+    controller = FakeTelegramController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=controller,
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened = []
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+
+    window.telegram_page.open_requested.emit("https://pan.quark.cn/s/f518510ef92a")
+
+    assert opened
+    assert opened[0].vod.vod_name == "Telegram Movie"
+    assert opened[0].source_vod_id == "https://pan.quark.cn/s/f518510ef92a"
 
 
 def test_decide_start_view_prefers_login_without_token() -> None:

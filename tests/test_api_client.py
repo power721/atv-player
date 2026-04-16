@@ -195,3 +195,66 @@ def test_api_client_maps_transport_http_error_to_network_request_failed() -> Non
         client.telegram_search("movie")
 
     assert str(exc.value) == "网络请求失败"
+
+
+def test_api_client_lists_telegram_search_categories() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"class": []})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.list_telegram_search_categories()
+
+    assert seen == {"path": "/tg-search/Harold", "query": "web=true"}
+
+
+def test_api_client_lists_telegram_search_items() -> None:
+    seen_queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_queries.append(request.url.query.decode())
+        return httpx.Response(200, json={"list": [], "total": 0})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.list_telegram_search_items("0", page=1)
+    client.list_telegram_search_items("XiangxiuNBB", page=2)
+
+    assert seen_queries == ["t=0&web=true", "t=XiangxiuNBB&web=true&pg=2"]
+
+
+def test_api_client_gets_telegram_search_detail() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"list": []})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.get_telegram_search_detail("https://pan.quark.cn/s/f518510ef92a")
+
+    assert seen == {
+        "path": "/tg-search/Harold",
+        "query": "id=https%3A%2F%2Fpan.quark.cn%2Fs%2Ff518510ef92a",
+    }

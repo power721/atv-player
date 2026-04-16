@@ -63,6 +63,14 @@ def _load_scaled_image_from_bytes(image_bytes: bytes, target_size: QSize) -> QIm
     )
 
 
+def _load_cached_poster_image(cache_path: Path, target_size: QSize) -> QImage | None:
+    try:
+        cached_bytes = cache_path.read_bytes()
+    except OSError:
+        return None
+    return _load_scaled_image_from_bytes(cached_bytes, target_size)
+
+
 def load_remote_poster_image(
     image_url: str,
     target_size: QSize,
@@ -74,12 +82,9 @@ def load_remote_poster_image(
         return None
 
     cache_path = poster_cache_path(normalized_url)
-    try:
-        cached_bytes = cache_path.read_bytes()
-    except OSError:
-        cached_bytes = None
-    else:
-        return _load_scaled_image_from_bytes(cached_bytes, target_size)
+    cached_image = _load_cached_poster_image(cache_path, target_size)
+    if cached_image is not None:
+        return cached_image
 
     try:
         response = get(
