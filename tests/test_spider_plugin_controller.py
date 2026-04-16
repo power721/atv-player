@@ -46,6 +46,15 @@ class FakeSpider:
         }
 
 
+class JsonHeaderSpider(FakeSpider):
+    def playerContent(self, flag, id, vipFlags):
+        return {
+            "parse": 0,
+            "url": f"https://stream.example{id}.m3u8",
+            "header": '{"User-Agent":"PluginUA","Referer":"https://site.example"}',
+        }
+
+
 def test_controller_load_categories_prepends_home_when_home_list_exists() -> None:
     controller = SpiderPluginController(FakeSpider(), plugin_name="红果短剧", search_enabled=True)
 
@@ -76,6 +85,7 @@ def test_controller_build_request_defers_player_content_until_episode_load() -> 
     first = request.playlist[0]
     second = request.playlist[1]
 
+    assert request.use_local_history is False
     assert first.title == "备用线 | 第1集"
     assert first.url == ""
     assert first.play_source == "备用线"
@@ -87,3 +97,18 @@ def test_controller_build_request_defers_player_content_until_episode_load() -> 
 
     assert first.url == "https://stream.example/play/1.m3u8"
     assert first.headers == {"Referer": "https://site.example"}
+
+
+def test_controller_parses_json_string_headers_from_player_content() -> None:
+    controller = SpiderPluginController(JsonHeaderSpider(), plugin_name="红果短剧", search_enabled=True)
+
+    request = controller.build_request("/detail/1")
+    first = request.playlist[0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+
+    assert first.headers == {
+        "User-Agent": "PluginUA",
+        "Referer": "https://site.example",
+    }

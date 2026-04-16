@@ -1,3 +1,5 @@
+from PySide6.QtWidgets import QHeaderView
+
 from atv_player.models import SpiderPluginConfig, SpiderPluginLogEntry
 from atv_player.ui.plugin_manager_dialog import PluginManagerDialog
 
@@ -54,7 +56,23 @@ def test_plugin_manager_dialog_renders_rows_and_status(qtbot) -> None:
 
     assert dialog.plugin_table.rowCount() == 2
     assert dialog.plugin_table.item(0, 0).text() == "本地A"
+    assert dialog.plugin_table.item(0, 1).text() == "本地"
+    assert dialog.plugin_table.item(1, 1).text() == "远程"
     assert dialog.plugin_table.item(1, 4).text() == "下载失败"
+
+
+def test_plugin_manager_dialog_stretches_source_column_to_fill_width(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.resize(1200, 520)
+    dialog.show()
+    qtbot.wait(50)
+
+    header = dialog.plugin_table.horizontalHeader()
+
+    assert header.sectionResizeMode(2) == QHeaderView.ResizeMode.Stretch
+    assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.ResizeToContents
+    assert dialog.plugin_table.viewport().width() >= 900
 
 
 def test_plugin_manager_dialog_actions_call_manager(qtbot, monkeypatch) -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import time
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from atv_player.models import SpiderPluginConfig
 from atv_player.plugins.controller import SpiderPluginController
@@ -18,6 +19,16 @@ class SpiderPluginDefinition:
     search_enabled: bool
 
 
+def _default_plugin_name(source_type: str, source_value: str) -> str:
+    if source_type == "remote":
+        parsed = urlparse(source_value)
+        path = unquote(parsed.path or "")
+        name = Path(path).stem or Path(path).name.removesuffix(".py")
+        if name:
+            return name
+    return Path(source_value).stem or Path(source_value).name.removesuffix(".py")
+
+
 class SpiderPluginManager:
     def __init__(self, repository: SpiderPluginRepository, loader: SpiderPluginLoader) -> None:
         self._repository = repository
@@ -31,7 +42,7 @@ class SpiderPluginManager:
         self.refresh_plugin(plugin.id)
 
     def add_remote_plugin(self, url: str) -> None:
-        name = Path(url).stem or Path(url).name.removesuffix(".py")
+        name = _default_plugin_name("remote", url)
         plugin = self._repository.add_plugin("remote", url, name)
         self.refresh_plugin(plugin.id)
 
@@ -96,7 +107,9 @@ class SpiderPluginManager:
                 )
                 self._repository.append_log(plugin.id, "error", str(exc))
                 continue
-            title = plugin.display_name or loaded.plugin_name or Path(plugin.source_value).stem
+            title = plugin.display_name or loaded.plugin_name or _default_plugin_name(
+                plugin.source_type, plugin.source_value
+            )
             controller = SpiderPluginController(
                 loaded.spider,
                 plugin_name=title,

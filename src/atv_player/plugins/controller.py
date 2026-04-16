@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
+
 from atv_player.api import ApiError
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_category, _map_item
@@ -11,6 +14,22 @@ def _looks_like_media_url(value: str) -> bool:
     return candidate.startswith(("http://", "https://", "rtmp://", "rtsp://")) or any(
         ext in candidate for ext in (".m3u8", ".mp4", ".flv")
     )
+
+
+def _normalize_headers(raw_headers) -> dict[str, str]:
+    if not raw_headers:
+        return {}
+    if isinstance(raw_headers, Mapping):
+        return {str(key): str(value) for key, value in raw_headers.items()}
+    if isinstance(raw_headers, str):
+        try:
+            parsed = json.loads(raw_headers)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(parsed, Mapping):
+            return {str(key): str(value) for key, value in parsed.items()}
+        return {}
+    return {}
 
 
 class SpiderPluginController:
@@ -109,7 +128,7 @@ class SpiderPluginController:
         if not _looks_like_media_url(url):
             raise ValueError("插件未返回可播放地址")
         item.url = url
-        item.headers = dict(payload.get("header") or {})
+        item.headers = _normalize_headers(payload.get("header"))
 
     def build_request(self, vod_id: str) -> OpenPlayerRequest:
         try:
@@ -129,5 +148,6 @@ class SpiderPluginController:
             clicked_index=0,
             source_mode="detail",
             source_vod_id=detail.vod_id,
+            use_local_history=False,
             playback_loader=self._resolve_play_item,
         )

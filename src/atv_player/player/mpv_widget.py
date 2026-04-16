@@ -103,10 +103,15 @@ class MpvWidget(QWidget):
         observe_property("track-list", handle_track_list)
         self._track_list_handler = handle_track_list
 
-    def _format_http_header_fields(self, headers: dict[str, str] | None) -> str:
+    def _build_http_header_fields(self, headers: dict[str, str] | None) -> list[str]:
         if not headers:
-            return ""
-        return ",".join(f"{key}: {value}" for key, value in headers.items())
+            return []
+        return [f"{key}: {value}" for key, value in headers.items()]
+
+    def _apply_http_header_fields(self, player: Any, header_fields: list[str]) -> None:
+        if not hasattr(type(player), "__setitem__"):
+            return
+        player["http-header-fields"] = header_fields
 
     def load(
         self,
@@ -119,15 +124,13 @@ class MpvWidget(QWidget):
         player = self._player
         if player is None:
             return
-        load_options: dict[str, str] = {}
-        header_fields = self._format_http_header_fields(headers)
-        if header_fields:
-            load_options["http_header_fields"] = header_fields
+        header_fields = self._build_http_header_fields(headers)
         try:
+            self._apply_http_header_fields(player, header_fields)
             if start_seconds > 0:
-                player.loadfile(url, start=str(start_seconds), **load_options)
-            elif load_options:
-                player.loadfile(url, **load_options)
+                player.loadfile(url, start=str(start_seconds))
+            elif header_fields:
+                player.loadfile(url)
             else:
                 player.play(url)
         except Exception:
@@ -135,10 +138,11 @@ class MpvWidget(QWidget):
                 player = self._create_player()
                 self._player = player
                 self._register_player_events()
+                self._apply_http_header_fields(player, header_fields)
                 if start_seconds > 0:
-                    player.loadfile(url, start=str(start_seconds), **load_options)
-                elif load_options:
-                    player.loadfile(url, **load_options)
+                    player.loadfile(url, start=str(start_seconds))
+                elif header_fields:
+                    player.loadfile(url)
                 else:
                     player.play(url)
             else:

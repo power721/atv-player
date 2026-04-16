@@ -5,6 +5,7 @@ from datetime import datetime
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
+    QHeaderView,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -14,6 +15,13 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QVBoxLayout,
 )
+
+
+def _display_source_type(source_type: str) -> str:
+    return {
+        "local": "本地",
+        "remote": "远程",
+    }.get(source_type, source_type)
 
 
 class PluginManagerDialog(QDialog):
@@ -26,6 +34,14 @@ class PluginManagerDialog(QDialog):
 
         self.plugin_table = QTableWidget(0, 6, self)
         self.plugin_table.setHorizontalHeaderLabels(["名称", "来源", "地址", "启用", "状态", "最近加载"])
+        header = self.plugin_table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         self.add_local_button = QPushButton("添加本地插件")
         self.add_remote_button = QPushButton("添加远程插件")
         self.rename_button = QPushButton("编辑名称")
@@ -72,7 +88,7 @@ class PluginManagerDialog(QDialog):
         self.plugin_table.setRowCount(len(plugins))
         for row, plugin in enumerate(plugins):
             self.plugin_table.setItem(row, 0, QTableWidgetItem(plugin.display_name or ""))
-            self.plugin_table.setItem(row, 1, QTableWidgetItem(plugin.source_type))
+            self.plugin_table.setItem(row, 1, QTableWidgetItem(_display_source_type(plugin.source_type)))
             self.plugin_table.setItem(row, 2, QTableWidgetItem(plugin.source_value))
             self.plugin_table.setItem(row, 3, QTableWidgetItem("是" if plugin.enabled else "否"))
             self.plugin_table.setItem(row, 4, QTableWidgetItem(plugin.last_error or "正常"))

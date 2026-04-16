@@ -114,25 +114,73 @@ def test_mpv_widget_updates_volume_and_mute_state(qtbot) -> None:
     assert widget._player.mute is False
 
 
-def test_mpv_widget_passes_http_header_fields_to_mpv_load_options(qtbot) -> None:
+def test_mpv_widget_sets_http_header_fields_as_property_before_loading(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
 
     class FakePlayer:
         def __init__(self) -> None:
             self.pause = False
-            self.calls: list[tuple[str, str, str]] = []
+            self.calls: list[tuple[str, str, dict[str, object]]] = []
+            self.options: dict[str, object] = {}
 
         def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
-            self.calls.append((url, mode, options.get("http_header_fields", "")))
+            self.calls.append((url, mode, options))
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
 
     widget._player = FakePlayer()
 
-    widget.load("http://m/1.m3u8", headers={"User-Agent": "Yamby/1.5.7.18(Android"})
+    widget.load(
+        "http://m/1.m3u8",
+        headers={
+            "User-Agent": "Yamby/1.5.7.18(Android",
+            "Referer": "https://site.example",
+        },
+    )
 
     assert widget._player.calls == [
-        ("http://m/1.m3u8", "replace", "User-Agent: Yamby/1.5.7.18(Android")
+        ("http://m/1.m3u8", "replace", {})
     ]
+    assert widget._player.options == {
+        "http-header-fields": [
+            "User-Agent: Yamby/1.5.7.18(Android",
+            "Referer: https://site.example",
+        ]
+    }
+
+
+def test_mpv_widget_clears_previous_http_header_fields_when_loading_without_headers(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self.play_calls: list[str] = []
+            self.loadfile_calls: list[str] = []
+            self.options: dict[str, object] = {}
+
+        def play(self, url: str) -> None:
+            self.play_calls.append(url)
+
+        def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
+            self.loadfile_calls.append(url)
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    widget._player = FakePlayer()
+
+    widget.load("http://m/1.m3u8", headers={"Referer": "https://site.example"})
+    widget.load("http://m/2.m3u8")
+
+    assert widget._player.loadfile_calls == ["http://m/1.m3u8"]
+    assert widget._player.play_calls == ["http://m/2.m3u8"]
+    assert widget._player.options == {
+        "http-header-fields": []
+    }
 
 
 def test_mpv_widget_updates_native_cursor_autohide_property(qtbot) -> None:
