@@ -13,6 +13,10 @@ class SettingsRepository:
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self._db_path)
 
+    @property
+    def database_path(self) -> Path:
+        return self._db_path
+
     def _init_db(self) -> None:
         with self._connect() as conn:
             conn.execute(

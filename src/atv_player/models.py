@@ -32,6 +32,7 @@ class PlayItem:
     size: int = 0
     vod_id: str = ""
     headers: dict[str, str] = field(default_factory=dict)
+    play_source: str = ""
 
 
 @dataclass(slots=True)
@@ -79,6 +80,28 @@ class HistoryRecord:
     ending: int
     speed: float
     create_time: int
+
+
+@dataclass(slots=True)
+class SpiderPluginConfig:
+    id: int = 0
+    source_type: str = ""
+    source_value: str = ""
+    display_name: str = ""
+    enabled: bool = True
+    sort_order: int = 0
+    cached_file_path: str = ""
+    last_loaded_at: int = 0
+    last_error: str = ""
+
+
+@dataclass(slots=True)
+class SpiderPluginLogEntry:
+    id: int = 0
+    plugin_id: int = 0
+    level: str = "info"
+    message: str = ""
+    created_at: int = 0
 
 
 @dataclass(slots=True)
