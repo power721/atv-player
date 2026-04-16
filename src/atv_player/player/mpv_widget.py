@@ -103,14 +103,31 @@ class MpvWidget(QWidget):
         observe_property("track-list", handle_track_list)
         self._track_list_handler = handle_track_list
 
-    def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+    def _format_http_header_fields(self, headers: dict[str, str] | None) -> str:
+        if not headers:
+            return ""
+        return ",".join(f"{key}: {value}" for key, value in headers.items())
+
+    def load(
+        self,
+        url: str,
+        pause: bool = False,
+        start_seconds: int = 0,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self._ensure_player()
         player = self._player
         if player is None:
             return
+        load_options: dict[str, str] = {}
+        header_fields = self._format_http_header_fields(headers)
+        if header_fields:
+            load_options["http_header_fields"] = header_fields
         try:
             if start_seconds > 0:
-                player.loadfile(url, start=str(start_seconds))
+                player.loadfile(url, start=str(start_seconds), **load_options)
+            elif load_options:
+                player.loadfile(url, **load_options)
             else:
                 player.play(url)
         except Exception:
@@ -119,7 +136,9 @@ class MpvWidget(QWidget):
                 self._player = player
                 self._register_player_events()
                 if start_seconds > 0:
-                    player.loadfile(url, start=str(start_seconds))
+                    player.loadfile(url, start=str(start_seconds), **load_options)
+                elif load_options:
+                    player.loadfile(url, **load_options)
                 else:
                     player.play(url)
             else:

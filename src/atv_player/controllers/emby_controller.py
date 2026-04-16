@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_category, _map_item
 from atv_player.controllers.telegram_search_controller import _parse_playlist
@@ -14,7 +16,9 @@ class EmbyController:
 
     def load_categories(self) -> list[DoubanCategory]:
         payload = self._api_client.list_emby_categories()
-        return [_map_category(item) for item in payload.get("class", [])]
+        categories = [_map_category(item) for item in payload.get("class", [])]
+        categories = [category for category in categories if category.type_id != "0"]
+        return [DoubanCategory(type_id="0", type_name="推荐"), *categories]
 
     def load_items(self, category_id: str, page: int) -> tuple[list[VodItem], int]:
         payload = self._api_client.list_emby_items(category_id, page=page)
@@ -38,6 +42,13 @@ class EmbyController:
             total = pagecount * self._PAGE_SIZE
         return items, total
 
+    def load_folder_items(self, vod_id: str) -> tuple[list[VodItem], int]:
+        payload = self._api_client.list_emby_items(vod_id, page=1)
+        items = [_map_item(item) for item in payload.get("list", [])]
+        total_raw = payload.get("total")
+        total = int(total_raw) if total_raw is not None else len(items)
+        return items, total
+
     def resolve_playlist_item(self, item: PlayItem) -> VodItem | None:
         if not item.vod_id:
             return None
@@ -46,6 +57,38 @@ class EmbyController:
             return _map_vod_item(payload["list"][0])
         except (KeyError, IndexError):
             return None
+
+    def load_playback_item(self, item: PlayItem) -> None:
+        if not item.vod_id:
+            raise ValueError("缺少 Emby 播放 ID")
+        payload = self._api_client.get_emby_playback_source(item.vod_id)
+        raw_url = payload.get("url")
+        if isinstance(raw_url, list):
+            candidates = [str(value or "").strip() for index, value in enumerate(raw_url) if index % 2 == 1]
+            play_url = next((candidate for candidate in candidates if candidate), "")
+        else:
+            play_url = str(raw_url or "")
+        if not play_url:
+            raise ValueError(f"没有可用的播放地址: {item.title}")
+        headers = payload.get("header") or {}
+        if isinstance(headers, str):
+            try:
+                parsed_headers = json.loads(headers)
+            except json.JSONDecodeError:
+                parsed_headers = {}
+            headers = parsed_headers if isinstance(parsed_headers, dict) else {}
+        item.url = play_url
+        item.headers = {str(key): str(value) for key, value in headers.items()}
+
+    def report_playback_progress(self, item: PlayItem, position_ms: int) -> None:
+        if not item.vod_id:
+            return
+        self._api_client.report_emby_playback_progress(item.vod_id, position_ms)
+
+    def stop_playback(self, item: PlayItem) -> None:
+        if not item.vod_id:
+            return
+        self._api_client.stop_emby_playback(item.vod_id)
 
     def build_request(self, vod_id: str) -> OpenPlayerRequest:
         payload = self._api_client.get_emby_detail(vod_id)
@@ -62,4 +105,8 @@ class EmbyController:
             source_mode="detail",
             source_vod_id=detail.vod_id,
             detail_resolver=self.resolve_playlist_item,
+            use_local_history=False,
+            playback_loader=self.load_playback_item,
+            playback_progress_reporter=self.report_playback_progress,
+            playback_stopper=self.stop_playback,
         )

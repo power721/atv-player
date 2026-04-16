@@ -114,6 +114,27 @@ def test_mpv_widget_updates_volume_and_mute_state(qtbot) -> None:
     assert widget._player.mute is False
 
 
+def test_mpv_widget_passes_http_header_fields_to_mpv_load_options(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self.calls: list[tuple[str, str, str]] = []
+
+        def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
+            self.calls.append((url, mode, options.get("http_header_fields", "")))
+
+    widget._player = FakePlayer()
+
+    widget.load("http://m/1.m3u8", headers={"User-Agent": "Yamby/1.5.7.18(Android"})
+
+    assert widget._player.calls == [
+        ("http://m/1.m3u8", "replace", "User-Agent: Yamby/1.5.7.18(Android")
+    ]
+
+
 def test_mpv_widget_updates_native_cursor_autohide_property(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)

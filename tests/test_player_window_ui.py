@@ -26,10 +26,14 @@ class FakePlayerController:
     def resolve_play_item_detail(self, session, play_item):
         return None
 
+    def stop_playback(self, session, current_index: int) -> None:
+        return None
+
 
 class RecordingPlayerController(FakePlayerController):
     def __init__(self) -> None:
         self.progress_calls: list[tuple[int, int, float, int, int]] = []
+        self.stop_calls: list[int] = []
 
     def report_progress(
         self,
@@ -52,6 +56,9 @@ class RecordingPlayerController(FakePlayerController):
             session.resolved_vod_by_id[play_item.vod_id] = resolved_vod
         play_item.url = resolved_vod.items[0].url if resolved_vod.items else resolved_vod.vod_play_url
         return resolved_vod
+
+    def stop_playback(self, session, current_index: int) -> None:
+        self.stop_calls.append(current_index)
 
 
 class RecordingVideo:
@@ -2059,6 +2066,56 @@ def test_player_window_keeps_current_index_when_next_episode_detail_resolution_f
     assert window.current_index == 0
     assert window.video.load_calls == []
     assert "播放失败: detail failed" in window.log_view.toPlainText()
+
+
+def test_player_window_loads_play_item_via_session_loader_and_passes_headers(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int, dict[str, str]]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            self.load_calls.append((url, pause, start_seconds, headers or {}))
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    controller = RecordingPlayerController()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    session = make_player_session(start_index=0)
+    session.playlist = [PlayItem(title="Episode 1", url="", vod_id="1-3458")]
+    session.use_local_history = False
+    session.playback_loader = lambda item: (setattr(item, "url", "http://emby/1.mp4"), setattr(item, "headers", {"User-Agent": "Yamby"}))
+
+    window.open_session(session)
+
+    assert window.video.load_calls == [("http://emby/1.mp4", False, 0, {"User-Agent": "Yamby"})]
+
+
+def test_player_window_stops_session_when_switching_items(qtbot) -> None:
+    controller = RecordingPlayerController()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = make_player_session(start_index=0)
+
+    window.open_session(session)
+    controller.stop_calls.clear()
+    controller.progress_calls.clear()
+    window.video.load_calls.clear()
+
+    window.play_next()
+
+    assert controller.progress_calls == [(0, 30, 1.0, 0, 0)]
+    assert controller.stop_calls == [0]
+    assert window.video.load_calls == [("http://m/2.m3u8", 0)]
 
 
 def test_player_window_playback_controls_show_shortcuts_and_pointing_cursor(qtbot) -> None:

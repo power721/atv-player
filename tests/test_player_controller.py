@@ -6,8 +6,10 @@ class FakeApiClient:
     def __init__(self) -> None:
         self.saved_payloads: list[dict] = []
         self.history: HistoryRecord | None = None
+        self.history_calls: list[str] = []
 
     def get_history(self, key: str):
+        self.history_calls.append(key)
         return self.history
 
     def save_history(self, payload: dict) -> None:
@@ -140,3 +142,47 @@ def test_player_controller_resolve_play_item_detail_handles_missing_detail() -> 
     assert resolved is None
     assert playlist[0].url == "http://m/existing.m3u8"
     assert session.resolved_vod_by_id == {}
+
+
+def test_player_controller_skips_local_history_when_session_disables_it() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="emby-1", vod_name="Emby Movie")
+    playlist = [PlayItem(title="Episode 1", url="", vod_id="1-3458")]
+
+    session = controller.create_session(vod, playlist, clicked_index=0, use_local_history=False)
+
+    assert api.history_calls == []
+    assert session.start_index == 0
+    assert session.start_position_seconds == 0
+    assert session.speed == 1.0
+
+
+def test_player_controller_reports_progress_via_session_hook_without_saving_history() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="emby-1", vod_name="Emby Movie")
+    playlist = [PlayItem(title="Episode 1", url="", vod_id="1-3458")]
+    progress_calls: list[tuple[str, int]] = []
+
+    session = controller.create_session(
+        vod,
+        playlist,
+        clicked_index=0,
+        use_local_history=False,
+        playback_progress_reporter=lambda item, position_ms: progress_calls.append((item.vod_id, position_ms)),
+        playback_stopper=lambda item: progress_calls.append((item.vod_id, -1)),
+    )
+
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=90,
+        speed=1.25,
+        opening_seconds=15,
+        ending_seconds=30,
+    )
+    controller.stop_playback(session, current_index=0)
+
+    assert progress_calls == [("1-3458", 90000), ("1-3458", -1)]
+    assert api.saved_payloads == []

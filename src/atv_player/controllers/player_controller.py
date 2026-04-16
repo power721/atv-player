@@ -17,6 +17,10 @@ class PlayerSession:
     ending_seconds: int = 0
     detail_resolver: Callable[[PlayItem], VodItem | None] | None = None
     resolved_vod_by_id: dict[str, VodItem] = field(default_factory=dict)
+    use_local_history: bool = True
+    playback_loader: Callable[[PlayItem], None] | None = None
+    playback_progress_reporter: Callable[[PlayItem, int], None] | None = None
+    playback_stopper: Callable[[PlayItem], None] | None = None
 
 
 class PlayerController:
@@ -30,8 +34,12 @@ class PlayerController:
         clicked_index: int,
         detail_resolver: Callable[[PlayItem], VodItem | None] | None = None,
         resolved_vod_by_id: dict[str, VodItem] | None = None,
+        use_local_history: bool = True,
+        playback_loader: Callable[[PlayItem], None] | None = None,
+        playback_progress_reporter: Callable[[PlayItem, int], None] | None = None,
+        playback_stopper: Callable[[PlayItem], None] | None = None,
     ) -> PlayerSession:
-        history = self._api_client.get_history(vod.vod_id)
+        history = self._api_client.get_history(vod.vod_id) if use_local_history else None
         start_index = resolve_resume_index(history, playlist, clicked_index)
         matched_history = history and start_index == history.episode
         position_seconds = int((history.position if matched_history else 0) / 1000)
@@ -46,6 +54,10 @@ class PlayerController:
             ending_seconds=int((history.ending if history else 0) / 1000),
             detail_resolver=detail_resolver,
             resolved_vod_by_id=dict(resolved_vod_by_id or {}),
+            use_local_history=use_local_history,
+            playback_loader=playback_loader,
+            playback_progress_reporter=playback_progress_reporter,
+            playback_stopper=playback_stopper,
         )
 
     def resolve_play_item_detail(self, session: PlayerSession, play_item: PlayItem) -> VodItem | None:
@@ -79,6 +91,11 @@ class PlayerController:
         if not (0 <= current_index < len(session.playlist)):
             return
         current_item = session.playlist[current_index]
+        position_ms = position_seconds * 1000
+        if session.playback_progress_reporter is not None:
+            session.playback_progress_reporter(current_item, position_ms)
+        if not session.use_local_history:
+            return
         self._api_client.save_history(
             {
                 "cid": 0,
@@ -88,10 +105,17 @@ class PlayerController:
                 "vodRemarks": current_item.title,
                 "episode": current_index,
                 "episodeUrl": current_item.url,
-                "position": position_seconds * 1000,
+                "position": position_ms,
                 "opening": opening_seconds * 1000,
                 "ending": ending_seconds * 1000,
                 "speed": speed,
                 "createTime": int(time() * 1000),
             }
         )
+
+    def stop_playback(self, session: PlayerSession, current_index: int) -> None:
+        if session.playback_stopper is None:
+            return
+        if not (0 <= current_index < len(session.playlist)):
+            return
+        session.playback_stopper(session.playlist[current_index])

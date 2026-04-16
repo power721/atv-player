@@ -100,7 +100,7 @@ class MainWindow(QMainWindow):
         self.history_page.open_detail_requested.connect(self.open_history_detail)
         self.douban_page.search_requested.connect(self._handle_douban_search_requested)
         self.telegram_page.open_requested.connect(self._handle_telegram_open_requested)
-        self.emby_page.open_requested.connect(self._handle_emby_open_requested)
+        self.emby_page.item_open_requested.connect(self._handle_emby_item_open_requested)
 
         self.douban_page.unauthorized.connect(self.logout_requested.emit)
         self.telegram_page.unauthorized.connect(self.logout_requested.emit)
@@ -143,6 +143,17 @@ class MainWindow(QMainWindow):
             return
         self.open_player(request)
 
+    def _handle_emby_item_open_requested(self, item) -> None:
+        if getattr(item, "vod_tag", "") == "folder":
+            try:
+                items, total = self.emby_controller.load_folder_items(item.vod_id)
+            except Exception as exc:
+                self.show_error(str(exc))
+                return
+            self.emby_page.show_items(items, total, page=1, empty_message="当前文件夹暂无内容")
+            return
+        self._handle_emby_open_requested(item.vod_id)
+
     def open_history_detail(self, vod_id: str) -> None:
         try:
             request = self.browse_controller.build_request_from_detail(vod_id)
@@ -158,6 +169,10 @@ class MainWindow(QMainWindow):
             request.clicked_index,
             detail_resolver=request.detail_resolver,
             resolved_vod_by_id=request.resolved_vod_by_id,
+            use_local_history=request.use_local_history,
+            playback_loader=request.playback_loader,
+            playback_progress_reporter=request.playback_progress_reporter,
+            playback_stopper=request.playback_stopper,
         )
         if self.player_window is None:
             self.player_window = PlayerWindow(self.player_controller, self.config, self._save_config)

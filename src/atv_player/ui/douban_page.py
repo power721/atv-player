@@ -35,6 +35,7 @@ class _DoubanSignals(QObject):
 class DoubanPage(QWidget):
     search_requested = Signal(str)
     open_requested = Signal(str)
+    item_open_requested = Signal(object)
     unauthorized = Signal()
     _CARD_WIDTH = 220
     _CARD_HEIGHT = 360
@@ -195,11 +196,7 @@ class DoubanPage(QWidget):
     def _handle_items_loaded(self, request_id: int, items, total: int) -> None:
         if request_id != self._items_request_id:
             return
-        self.items = list(items)
-        self.total_items = total
-        self.status_label.setText("" if self.items else "当前分类暂无内容")
-        self._render_cards()
-        self._update_pagination()
+        self.show_items(items, total)
 
     def _handle_failed(self, message: str, request_id: int, request_kind: str) -> None:
         if request_kind == "categories" and request_id != self._categories_request_id:
@@ -321,6 +318,22 @@ class DoubanPage(QWidget):
 
         threading.Thread(target=run, daemon=True).start()
 
+    def show_items(
+        self,
+        items,
+        total: int,
+        page: int | None = None,
+        empty_message: str = "当前分类暂无内容",
+    ) -> None:
+        self._items_request_id += 1
+        if page is not None:
+            self.current_page = page
+        self.items = list(items)
+        self.total_items = total
+        self.status_label.setText("" if self.items else empty_message)
+        self._render_cards()
+        self._update_pagination()
+
     def _build_card_button(self, item) -> QToolButton:
         text = item.vod_name if not item.vod_remarks else f"{item.vod_name}\n{item.vod_remarks}"
         button = QToolButton()
@@ -336,6 +349,7 @@ class DoubanPage(QWidget):
 
     def _handle_card_clicked(self, item) -> None:
         if self._click_action == "open":
+            self.item_open_requested.emit(item)
             self.open_requested.emit(item.vod_id)
             return
         self.search_requested.emit(item.vod_name)

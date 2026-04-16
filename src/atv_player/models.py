@@ -30,6 +30,7 @@ class PlayItem:
     index: int = 0
     size: int = 0
     vod_id: str = ""
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -89,3 +90,7 @@ class OpenPlayerRequest:
     source_clicked_vod_id: str = ""
     detail_resolver: Callable[[PlayItem], VodItem | None] | None = None
     resolved_vod_by_id: dict[str, VodItem] = field(default_factory=dict)
+    use_local_history: bool = True
+    playback_loader: Callable[[PlayItem], None] | None = None
+    playback_progress_reporter: Callable[[PlayItem, int], None] | None = None
+    playback_stopper: Callable[[PlayItem], None] | None = None

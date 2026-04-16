@@ -47,6 +47,9 @@ class FakeTelegramController(FakeDoubanController):
 
 
 class FakeEmbyController(FakeDoubanController):
+    def __init__(self) -> None:
+        self.folder_calls: list[str] = []
+
     def build_request(self, vod_id: str):
         return OpenPlayerRequest(
             vod=VodItem(vod_id=vod_id, vod_name="Emby Movie"),
@@ -55,6 +58,10 @@ class FakeEmbyController(FakeDoubanController):
             source_mode="detail",
             source_vod_id=vod_id,
         )
+
+    def load_folder_items(self, vod_id: str):
+        self.folder_calls.append(vod_id)
+        return [VodItem(vod_id="child-1", vod_name="Episode 1", vod_tag="file")], 1
 
 
 class FakePlayerController:
@@ -65,6 +72,10 @@ class FakePlayerController:
         clicked_index: int,
         detail_resolver=None,
         resolved_vod_by_id=None,
+        use_local_history=True,
+        playback_loader=None,
+        playback_progress_reporter=None,
+        playback_stopper=None,
     ):
         return {
             "vod": vod,
@@ -72,6 +83,10 @@ class FakePlayerController:
             "clicked_index": clicked_index,
             "detail_resolver": detail_resolver,
             "resolved_vod_by_id": resolved_vod_by_id or {},
+            "use_local_history": use_local_history,
+            "playback_loader": playback_loader,
+            "playback_progress_reporter": playback_progress_reporter,
+            "playback_stopper": playback_stopper,
         }
 
 
@@ -230,11 +245,43 @@ def test_main_window_opens_player_from_emby_card_signal(qtbot, monkeypatch) -> N
     opened = []
     monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
 
-    window.emby_page.open_requested.emit("1-3281")
+    window.emby_page.item_open_requested.emit(VodItem(vod_id="1-3281", vod_name="Episode 1", vod_tag="file"))
 
     assert opened
     assert opened[0].vod.vod_name == "Emby Movie"
     assert opened[0].source_vod_id == "1-3281"
+
+
+def test_main_window_emby_folder_click_loads_folder_in_current_tab(qtbot, monkeypatch) -> None:
+    controller = FakeEmbyController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        emby_controller=controller,
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened = []
+    shown = []
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    monkeypatch.setattr(
+        window.emby_page,
+        "show_items",
+        lambda items, total, page=1, empty_message="当前分类暂无内容": shown.append((items, total, page, empty_message)),
+    )
+
+    window.emby_page.item_open_requested.emit(VodItem(vod_id="folder-1", vod_name="Season 1", vod_tag="folder"))
+
+    assert opened == []
+    assert controller.folder_calls == ["folder-1"]
+    assert len(shown) == 1
+    assert shown[0][1:] == (1, 1, "当前文件夹暂无内容")
+    assert shown[0][0][0].vod_id == "child-1"
 
 
 def test_decide_start_view_prefers_login_without_token() -> None:

@@ -364,3 +364,63 @@ def test_api_client_gets_emby_detail_by_ids() -> None:
     client.get_emby_detail("1-3281")
 
     assert seen == {"path": "/emby/Harold", "query": "ids=1-3281"}
+
+
+def test_api_client_gets_emby_playback_source() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"url": ["Episode 1", "http://m/1.mp4"], "header": {"User-Agent": "Yamby"}})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.get_emby_playback_source("1-3458")
+
+    assert seen == {"path": "/emby-play/Harold", "query": "t=0&id=1-3458"}
+
+
+def test_api_client_reports_emby_playback_progress() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"ok": True})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.report_emby_playback_progress("1-3458", 1000)
+
+    assert seen == {"path": "/emby-play/Harold", "query": "t=1000&id=1-3458"}
+
+
+def test_api_client_stops_emby_playback() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"ok": True})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.stop_emby_playback("1-3458")
+
+    assert seen == {"path": "/emby-play/Harold", "query": "t=-1&id=1-3458"}

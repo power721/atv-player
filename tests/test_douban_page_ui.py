@@ -151,6 +151,20 @@ def test_douban_page_clicking_card_can_emit_open_requested(qtbot) -> None:
     assert signal.args == ["m1"]
 
 
+def test_douban_page_clicking_card_can_emit_item_open_requested(qtbot) -> None:
+    page = DoubanPage(FakeDoubanController(), click_action="open")
+    qtbot.addWidget(page)
+    page.show()
+
+    qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
+
+    with qtbot.waitSignal(page.item_open_requested, timeout=1000) as signal:
+        page.card_buttons[0].click()
+
+    assert signal.args[0].vod_id == "m1"
+    assert signal.args[0].vod_name == "霸王别姬"
+
+
 def test_douban_page_can_show_search_controls_when_enabled(qtbot) -> None:
     page = DoubanPage(SearchableDoubanController(), click_action="open", search_enabled=True)
     qtbot.addWidget(page)

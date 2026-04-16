@@ -1,5 +1,5 @@
 from atv_player.controllers.emby_controller import EmbyController
-from atv_player.models import DoubanCategory
+from atv_player.models import DoubanCategory, PlayItem
 
 
 class FakeApiClient:
@@ -8,9 +8,13 @@ class FakeApiClient:
         self.items_payload = {"list": [], "total": 0}
         self.search_payload = {"list": [], "total": 0}
         self.detail_payload = {"list": []}
+        self.playback_payload = {"url": ["Episode 1", "http://m/1.mp4"], "header": {"User-Agent": "Yamby"}}
         self.item_calls: list[tuple[str, int]] = []
         self.search_calls: list[tuple[str, int]] = []
         self.detail_calls: list[str] = []
+        self.playback_source_calls: list[str] = []
+        self.playback_progress_calls: list[tuple[str, int]] = []
+        self.playback_stop_calls: list[str] = []
 
     def list_emby_categories(self) -> dict:
         return self.category_payload
@@ -27,8 +31,18 @@ class FakeApiClient:
         self.detail_calls.append(vod_id)
         return self.detail_payload
 
+    def get_emby_playback_source(self, vod_id: str) -> dict:
+        self.playback_source_calls.append(vod_id)
+        return self.playback_payload
 
-def test_load_categories_maps_emby_class_payload() -> None:
+    def report_emby_playback_progress(self, vod_id: str, position_ms: int) -> None:
+        self.playback_progress_calls.append((vod_id, position_ms))
+
+    def stop_emby_playback(self, vod_id: str) -> None:
+        self.playback_stop_calls.append(vod_id)
+
+
+def test_load_categories_inserts_recommendation_first() -> None:
     api = FakeApiClient()
     api.category_payload = {
         "class": [
@@ -41,6 +55,7 @@ def test_load_categories_maps_emby_class_payload() -> None:
     categories = controller.load_categories()
 
     assert categories == [
+        DoubanCategory(type_id="0", type_name="推荐"),
         DoubanCategory(type_id="Series", type_name="剧集"),
         DoubanCategory(type_id="Movie", type_name="电影"),
     ]
@@ -69,6 +84,38 @@ def test_search_items_maps_emby_search_payload() -> None:
     assert items[0].vod_name == "黑袍纠察队"
 
 
+def test_load_folder_items_uses_t_query_and_first_page() -> None:
+    api = FakeApiClient()
+    api.items_payload = {
+        "list": [
+            {
+                "vod_id": "folder-1",
+                "vod_name": "Season 1",
+                "vod_pic": "folder.jpg",
+                "vod_tag": "folder",
+            },
+            {
+                "vod_id": "file-1",
+                "vod_name": "Episode 1",
+                "vod_pic": "episode.jpg",
+                "vod_tag": "file",
+                "vod_remarks": "4K",
+            },
+        ]
+    }
+    controller = EmbyController(api)
+
+    items, total = controller.load_folder_items("folder-1")
+
+    assert api.item_calls == [("folder-1", 1)]
+    assert api.detail_calls == []
+    assert total == 2
+    assert [(item.vod_id, item.vod_tag) for item in items] == [
+        ("folder-1", "folder"),
+        ("file-1", "file"),
+    ]
+
+
 def test_build_request_from_detail_uses_ids_endpoint_and_playlist_parsing() -> None:
     api = FakeApiClient()
     api.detail_payload = {
@@ -89,3 +136,56 @@ def test_build_request_from_detail_uses_ids_endpoint_and_playlist_parsing() -> N
     assert request.vod.vod_id == "1-3281"
     assert [item.title for item in request.playlist] == ["Episode 1", "Episode 2"]
     assert [item.vod_id for item in request.playlist] == ["1-3282", "1-3283"]
+
+
+def test_build_request_disables_local_history_and_exposes_emby_playback_hooks() -> None:
+    api = FakeApiClient()
+    api.detail_payload = {
+        "list": [
+            {
+                "vod_id": "1-3281",
+                "vod_name": "Season 1",
+                "vod_pic": "poster.jpg",
+                "vod_play_url": "Episode 1$1-3458#Episode 2$1-3459",
+            }
+        ]
+    }
+    controller = EmbyController(api)
+
+    request = controller.build_request("1-3281")
+    first_item = request.playlist[0]
+
+    assert request.use_local_history is False
+    assert request.playback_loader is not None
+    assert request.playback_progress_reporter is not None
+    assert request.playback_stopper is not None
+
+    request.playback_loader(first_item)
+    request.playback_progress_reporter(first_item, 2000)
+    request.playback_stopper(first_item)
+
+    assert first_item.url == "http://m/1.mp4"
+    assert first_item.headers == {"User-Agent": "Yamby"}
+    assert api.playback_source_calls == ["1-3458"]
+    assert api.playback_progress_calls == [("1-3458", 2000)]
+    assert api.playback_stop_calls == ["1-3458"]
+
+
+def test_playback_loader_uses_first_stream_url_and_parses_stringified_header_json() -> None:
+    api = FakeApiClient()
+    api.playback_payload = {
+        "url": [
+            "源 1",
+            "http://m/first.mp4",
+            "源 2",
+            "http://m/second.mp4",
+        ],
+        "header": '{"User-Agent": "Yamby/1.5.7.18(Android"}',
+    }
+    controller = EmbyController(api)
+    item = PlayItem(title="Episode 1", url="", vod_id="1-3458")
+
+    controller.load_playback_item(item)
+
+    assert item.url == "http://m/first.mp4"
+    assert item.headers == {"User-Agent": "Yamby/1.5.7.18(Android"}
