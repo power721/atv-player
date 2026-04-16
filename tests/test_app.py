@@ -1,7 +1,10 @@
 import os
 import httpx
 import time
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QDialog, QTableWidget
 
 import atv_player.app as app_module
 import atv_player.ui.main_window as main_window_module
@@ -434,6 +437,80 @@ def test_main_window_keeps_search_controls_hidden_for_live_page(qtbot) -> None:
     assert window.live_page.keyword_edit.isHidden() is True
     assert window.live_page.search_button.isHidden() is True
     assert window.live_page.clear_button.isHidden() is True
+
+
+def visible_shortcut_help_dialogs() -> list[QDialog]:
+    return [
+        widget
+        for widget in QApplication.topLevelWidgets()
+        if isinstance(widget, QDialog)
+        and widget.windowTitle() == "快捷键帮助"
+        and widget.isVisible()
+    ]
+
+
+def shortcut_table_rows(dialog: QDialog) -> list[tuple[str, str]]:
+    table = dialog.findChild(QTableWidget, "shortcutHelpTable")
+    assert table is not None
+    rows: list[tuple[str, str]] = []
+    for row in range(table.rowCount()):
+        rows.append((table.item(row, 0).text(), table.item(row, 1).text()))
+    return rows
+
+
+def test_main_window_f1_opens_shortcut_help_dialog(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+
+    QTest.keyClick(window, Qt.Key.Key_F1)
+
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
+    rows = shortcut_table_rows(visible_shortcut_help_dialogs()[0])
+
+    assert ("F1", "打开快捷键帮助") in rows
+    assert ("Ctrl+P", "显示或返回播放器") in rows
+    assert ("Esc", "显示或返回播放器") in rows
+    assert any(description == "退出应用" for _, description in rows)
+
+
+def test_main_window_reuses_existing_shortcut_help_dialog(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+
+    QTest.keyClick(window, Qt.Key.Key_F1)
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
+    first_dialog = visible_shortcut_help_dialogs()[0]
+
+    QTest.keyClick(window, Qt.Key.Key_F1)
+
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
+    assert visible_shortcut_help_dialogs()[0] is first_dialog
 
 
 def test_main_window_enables_search_controls_for_emby_page(qtbot) -> None:
