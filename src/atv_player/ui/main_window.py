@@ -59,6 +59,8 @@ class MainWindow(QMainWindow):
             telegram_controller=None,
             emby_controller=None,
             jellyfin_controller=None,
+            show_emby_tab: bool = True,
+            show_jellyfin_tab: bool = True,
     ) -> None:
         super().__init__()
         self._save_config = save_config or (lambda: None)
@@ -71,16 +73,20 @@ class MainWindow(QMainWindow):
             click_action="open",
             search_enabled=True,
         )
-        self.emby_page = DoubanPage(
-            emby_controller or _EmptyEmbyController(),
-            click_action="open",
-            search_enabled=True,
-        )
-        self.jellyfin_page = DoubanPage(
-            jellyfin_controller or _EmptyJellyfinController(),
-            click_action="open",
-            search_enabled=True,
-        )
+        self.emby_page = None
+        if show_emby_tab:
+            self.emby_page = DoubanPage(
+                emby_controller or _EmptyEmbyController(),
+                click_action="open",
+                search_enabled=True,
+            )
+        self.jellyfin_page = None
+        if show_jellyfin_tab:
+            self.jellyfin_page = DoubanPage(
+                jellyfin_controller or _EmptyJellyfinController(),
+                click_action="open",
+                search_enabled=True,
+            )
         self.history_page = HistoryPage(history_controller)
         self.browse_controller = browse_controller
         self.telegram_controller = telegram_controller or _EmptyTelegramController()
@@ -92,8 +98,10 @@ class MainWindow(QMainWindow):
 
         self.nav_tabs.addTab(self.douban_page, "豆瓣电影")
         self.nav_tabs.addTab(self.telegram_page, "电报影视")
-        self.nav_tabs.addTab(self.emby_page, "Emby")
-        self.nav_tabs.addTab(self.jellyfin_page, "Jellyfin")
+        if self.emby_page is not None:
+            self.nav_tabs.addTab(self.emby_page, "Emby")
+        if self.jellyfin_page is not None:
+            self.nav_tabs.addTab(self.jellyfin_page, "Jellyfin")
         self.nav_tabs.addTab(self.browse_page, "文件浏览")
         self.nav_tabs.addTab(self.history_page, "播放记录")
         self.logout_button.clicked.connect(self.logout_requested.emit)
@@ -113,13 +121,17 @@ class MainWindow(QMainWindow):
         self.history_page.open_detail_requested.connect(self.open_history_detail)
         self.douban_page.search_requested.connect(self._handle_douban_search_requested)
         self.telegram_page.open_requested.connect(self._handle_telegram_open_requested)
-        self.emby_page.item_open_requested.connect(self._handle_emby_item_open_requested)
-        self.jellyfin_page.item_open_requested.connect(self._handle_jellyfin_item_open_requested)
+        if self.emby_page is not None:
+            self.emby_page.item_open_requested.connect(self._handle_emby_item_open_requested)
+        if self.jellyfin_page is not None:
+            self.jellyfin_page.item_open_requested.connect(self._handle_jellyfin_item_open_requested)
 
         self.douban_page.unauthorized.connect(self.logout_requested.emit)
         self.telegram_page.unauthorized.connect(self.logout_requested.emit)
-        self.emby_page.unauthorized.connect(self.logout_requested.emit)
-        self.jellyfin_page.unauthorized.connect(self.logout_requested.emit)
+        if self.emby_page is not None:
+            self.emby_page.unauthorized.connect(self.logout_requested.emit)
+        if self.jellyfin_page is not None:
+            self.jellyfin_page.unauthorized.connect(self.logout_requested.emit)
         self.browse_page.unauthorized.connect(self.logout_requested.emit)
         self.history_page.unauthorized.connect(self.logout_requested.emit)
         self.quit_shortcut = QShortcut(QKeySequence.StandardKey.Quit, self)
@@ -165,7 +177,8 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 self.show_error(str(exc))
                 return
-            self.emby_page.show_items(items, total, page=1, empty_message="当前文件夹暂无内容")
+            if self.emby_page is not None:
+                self.emby_page.show_items(items, total, page=1, empty_message="当前文件夹暂无内容")
             return
         self._handle_emby_open_requested(item.vod_id)
 
@@ -184,7 +197,8 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 self.show_error(str(exc))
                 return
-            self.jellyfin_page.show_items(items, total, page=1, empty_message="当前文件夹暂无内容")
+            if self.jellyfin_page is not None:
+                self.jellyfin_page.show_items(items, total, page=1, empty_message="当前文件夹暂无内容")
             return
         self._handle_jellyfin_open_requested(item.vod_id)
 

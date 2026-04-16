@@ -126,6 +126,26 @@ def test_api_client_fetches_vod_token_from_api_token() -> None:
     assert client.fetch_vod_token() == "vod-123"
 
 
+def test_api_client_gets_capabilities() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"emby": True, "jellyfin": False, "pansou": True})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="auth-123",
+        transport=httpx.MockTransport(handler),
+    )
+
+    capabilities = client.get_capabilities()
+
+    assert capabilities == {"emby": True, "jellyfin": False, "pansou": True}
+    assert seen == {"path": "/api/capabilities", "query": ""}
+
+
 def test_api_client_treats_successful_empty_delete_response_as_none() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "DELETE"

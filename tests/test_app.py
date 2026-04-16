@@ -133,6 +133,30 @@ def test_main_window_starts_on_douban_tab(qtbot) -> None:
     assert window.nav_tabs.tabText(5) == "播放记录"
 
 
+def test_main_window_hides_emby_and_jellyfin_tabs_when_disabled(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        show_emby_tab=False,
+        show_jellyfin_tab=False,
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    assert window.nav_tabs.count() == 4
+    assert window.nav_tabs.tabText(0) == "豆瓣电影"
+    assert window.nav_tabs.tabText(1) == "电报影视"
+    assert window.nav_tabs.tabText(2) == "文件浏览"
+    assert window.nav_tabs.tabText(3) == "播放记录"
+
+
 def test_main_window_logout_button_emits_logout_requested(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),
@@ -579,6 +603,61 @@ def test_app_coordinator_falls_back_to_main_when_player_restore_fails(monkeypatc
 
     assert isinstance(widget, FakeMainWindow)
     assert repo.config.last_active_window == "main"
+
+
+def test_app_coordinator_show_main_uses_capabilities_to_toggle_media_tabs(monkeypatch) -> None:
+    class FakeRepo:
+        def __init__(self) -> None:
+            self.config = AppConfig(
+                base_url="http://127.0.0.1:4567",
+                username="alice",
+                token="auth-123",
+                vod_token="vod-123",
+            )
+
+        def load_config(self) -> AppConfig:
+            return self.config
+
+        def save_config(self, config: AppConfig) -> None:
+            self.config = config
+
+        def clear_token(self) -> None:
+            self.config.token = ""
+            self.config.vod_token = ""
+
+    class FakeApiClient:
+        def __init__(self, base_url: str, token: str = "", vod_token: str = "") -> None:
+            self.base_url = base_url
+            self.token = token
+            self.vod_token = vod_token
+
+        def set_vod_token(self, vod_token: str) -> None:
+            self.vod_token = vod_token
+
+        def get_capabilities(self) -> dict[str, bool]:
+            return {"emby": False, "jellyfin": True, "pansou": False}
+
+    class FakeMainWindow:
+        logout_requested = type("SignalStub", (), {"connect": lambda self, cb: None})()
+
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    repo = FakeRepo()
+    coordinator = AppCoordinator(repo)
+
+    monkeypatch.setattr(app_module, "MainWindow", FakeMainWindow)
+    monkeypatch.setattr(
+        coordinator,
+        "_build_api_client",
+        lambda: FakeApiClient(repo.config.base_url, repo.config.token, repo.config.vod_token),
+    )
+
+    window = coordinator._show_main()
+
+    assert isinstance(window, FakeMainWindow)
+    assert window.kwargs["show_emby_tab"] is False
+    assert window.kwargs["show_jellyfin_tab"] is True
 
 
 def test_app_coordinator_show_main_keeps_window_open_when_initial_browse_times_out(

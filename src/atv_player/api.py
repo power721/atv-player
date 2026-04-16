@@ -228,3 +228,6 @@ class ApiClient:
         first = token.split(",")[0] if token else "-"
         self._vod_token = first
         return first
+
+    def get_capabilities(self) -> dict[str, Any]:
+        return self._request("GET", "/api/capabilities")

@@ -7,7 +7,7 @@ from PySide6.QtCore import QObject
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QWidget
 
-from atv_player.api import ApiClient, UnauthorizedError
+from atv_player.api import ApiClient, ApiError, UnauthorizedError
 from atv_player.controllers.browse_controller import BrowseController
 from atv_player.controllers.douban_controller import DoubanController
 from atv_player.controllers.emby_controller import EmbyController
@@ -114,6 +114,7 @@ class AppCoordinator(QObject):
     def _show_main(self):
         self._api_client = self._build_api_client()
         config = self.repo.load_config()
+        capabilities = self._load_capabilities(self._api_client)
         douban_controller = DoubanController(self._api_client)
         telegram_controller = TelegramSearchController(self._api_client)
         emby_controller = EmbyController(self._api_client)
@@ -131,6 +132,8 @@ class AppCoordinator(QObject):
             telegram_controller=telegram_controller,
             emby_controller=emby_controller,
             jellyfin_controller=jellyfin_controller,
+            show_emby_tab=bool(capabilities.get("emby")),
+            show_jellyfin_tab=bool(capabilities.get("jellyfin")),
         )
         self.main_window.logout_requested.connect(self._handle_logout_requested)
         if self.login_window is not None:
@@ -146,6 +149,22 @@ class AppCoordinator(QObject):
                 if restored is not None:
                     return restored
         return self.main_window
+
+    def _load_capabilities(self, api_client: ApiClient) -> dict[str, bool]:
+        default_capabilities = {"emby": True, "jellyfin": True}
+        get_capabilities = getattr(api_client, "get_capabilities", None)
+        if not callable(get_capabilities):
+            return default_capabilities
+        try:
+            response = get_capabilities()
+        except (ApiError, UnauthorizedError):
+            return default_capabilities
+        if not isinstance(response, dict):
+            return default_capabilities
+        capabilities = dict(default_capabilities)
+        capabilities["emby"] = bool(response.get("emby", capabilities["emby"]))
+        capabilities["jellyfin"] = bool(response.get("jellyfin", capabilities["jellyfin"]))
+        return capabilities
 
     def _handle_login_succeeded(self) -> None:
         widget = self._show_main()
