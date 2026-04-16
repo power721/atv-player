@@ -1,0 +1,173 @@
+from __future__ import annotations
+
+from datetime import datetime
+
+from PySide6.QtWidgets import (
+    QDialog,
+    QFileDialog,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QTextEdit,
+    QVBoxLayout,
+)
+
+
+class PluginManagerDialog(QDialog):
+    def __init__(self, plugin_manager, parent=None) -> None:
+        super().__init__(parent)
+        self.plugin_manager = plugin_manager
+        self.setWindowTitle("插件管理")
+        self.resize(920, 520)
+        self.warning_label = QLabel("远程插件会执行本地 Python 代码，请只加载受信任来源。")
+
+        self.plugin_table = QTableWidget(0, 6, self)
+        self.plugin_table.setHorizontalHeaderLabels(["名称", "来源", "地址", "启用", "状态", "最近加载"])
+        self.add_local_button = QPushButton("添加本地插件")
+        self.add_remote_button = QPushButton("添加远程插件")
+        self.rename_button = QPushButton("编辑名称")
+        self.toggle_button = QPushButton("启用/禁用")
+        self.up_button = QPushButton("上移")
+        self.down_button = QPushButton("下移")
+        self.refresh_button = QPushButton("刷新")
+        self.logs_button = QPushButton("查看日志")
+        self.delete_button = QPushButton("删除")
+
+        actions = QHBoxLayout()
+        for button in (
+            self.add_local_button,
+            self.add_remote_button,
+            self.rename_button,
+            self.toggle_button,
+            self.up_button,
+            self.down_button,
+            self.refresh_button,
+            self.logs_button,
+            self.delete_button,
+        ):
+            actions.addWidget(button)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.warning_label)
+        layout.addLayout(actions)
+        layout.addWidget(self.plugin_table)
+
+        self.add_local_button.clicked.connect(self._add_local_plugin)
+        self.add_remote_button.clicked.connect(self._add_remote_plugin)
+        self.rename_button.clicked.connect(self._rename_selected)
+        self.toggle_button.clicked.connect(self._toggle_selected_enabled)
+        self.up_button.clicked.connect(lambda: self._move_selected(-1))
+        self.down_button.clicked.connect(lambda: self._move_selected(1))
+        self.refresh_button.clicked.connect(self._refresh_selected)
+        self.logs_button.clicked.connect(self._show_logs)
+        self.delete_button.clicked.connect(self._delete_selected)
+
+        self.reload_plugins()
+
+    def reload_plugins(self) -> None:
+        plugins = self.plugin_manager.list_plugins()
+        self.plugin_table.setRowCount(len(plugins))
+        for row, plugin in enumerate(plugins):
+            self.plugin_table.setItem(row, 0, QTableWidgetItem(plugin.display_name or ""))
+            self.plugin_table.setItem(row, 1, QTableWidgetItem(plugin.source_type))
+            self.plugin_table.setItem(row, 2, QTableWidgetItem(plugin.source_value))
+            self.plugin_table.setItem(row, 3, QTableWidgetItem("是" if plugin.enabled else "否"))
+            self.plugin_table.setItem(row, 4, QTableWidgetItem(plugin.last_error or "正常"))
+            loaded_at = ""
+            if plugin.last_loaded_at:
+                loaded_at = datetime.fromtimestamp(plugin.last_loaded_at).strftime("%Y-%m-%d %H:%M:%S")
+            self.plugin_table.setItem(row, 5, QTableWidgetItem(loaded_at))
+            self.plugin_table.item(row, 0).setData(256, plugin.id)
+
+    def _selected_plugin_id(self) -> int | None:
+        row = self.plugin_table.currentRow()
+        if row < 0:
+            return None
+        item = self.plugin_table.item(row, 0)
+        if item is None:
+            return None
+        return int(item.data(256))
+
+    def _prompt_display_name(self, current: str) -> str:
+        value, accepted = QInputDialog.getText(self, "编辑名称", "显示名称", text=current)
+        return value.strip() if accepted else ""
+
+    def _pick_local_plugin_path(self) -> str:
+        path, _ = QFileDialog.getOpenFileName(self, "选择 Python 插件", "", "Python Files (*.py)")
+        return path.strip()
+
+    def _prompt_remote_url(self) -> str:
+        value, accepted = QInputDialog.getText(self, "添加远程插件", "Python 文件 URL")
+        return value.strip() if accepted else ""
+
+    def _add_local_plugin(self) -> None:
+        path = self._pick_local_plugin_path()
+        if not path:
+            return
+        self.plugin_manager.add_local_plugin(path)
+        self.reload_plugins()
+
+    def _add_remote_plugin(self) -> None:
+        url = self._prompt_remote_url()
+        if not url:
+            return
+        self.plugin_manager.add_remote_plugin(url)
+        self.reload_plugins()
+
+    def _rename_selected(self) -> None:
+        plugin_id = self._selected_plugin_id()
+        if plugin_id is None:
+            return
+        current = self.plugin_table.item(self.plugin_table.currentRow(), 0).text()
+        display_name = self._prompt_display_name(current)
+        if not display_name:
+            return
+        self.plugin_manager.rename_plugin(plugin_id, display_name)
+        self.reload_plugins()
+
+    def _toggle_selected_enabled(self) -> None:
+        plugin_id = self._selected_plugin_id()
+        if plugin_id is None:
+            return
+        enabled_text = self.plugin_table.item(self.plugin_table.currentRow(), 3).text()
+        self.plugin_manager.set_plugin_enabled(plugin_id, enabled_text != "是")
+        self.reload_plugins()
+
+    def _move_selected(self, direction: int) -> None:
+        plugin_id = self._selected_plugin_id()
+        if plugin_id is None:
+            return
+        self.plugin_manager.move_plugin(plugin_id, direction)
+        self.reload_plugins()
+
+    def _refresh_selected(self) -> None:
+        plugin_id = self._selected_plugin_id()
+        if plugin_id is None:
+            return
+        self.plugin_manager.refresh_plugin(plugin_id)
+        self.reload_plugins()
+
+    def _delete_selected(self) -> None:
+        plugin_id = self._selected_plugin_id()
+        if plugin_id is None:
+            return
+        self.plugin_manager.delete_plugin(plugin_id)
+        self.reload_plugins()
+
+    def _show_logs(self) -> None:
+        plugin_id = self._selected_plugin_id()
+        if plugin_id is None:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("插件日志")
+        dialog.resize(680, 420)
+        view = QTextEdit(dialog)
+        view.setReadOnly(True)
+        lines = [f"[{entry.level}] {entry.message}" for entry in self.plugin_manager.list_logs(plugin_id)]
+        view.setPlainText("\n".join(lines))
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(view)
+        dialog.exec()
