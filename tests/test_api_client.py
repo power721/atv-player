@@ -281,3 +281,86 @@ def test_api_client_searches_telegram_items_by_keyword() -> None:
         "web=true&wd=%E9%BB%91%E8%A2%8D%E7%BA%A0%E5%AF%9F%E9%98%9F",
         "web=true&wd=%E9%BB%91%E8%A2%8D%E7%BA%A0%E5%AF%9F%E9%98%9F&pg=3",
     ]
+
+
+def test_api_client_lists_emby_categories() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"class": []})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.list_emby_categories()
+
+    assert seen == {"path": "/emby/Harold", "query": ""}
+
+
+def test_api_client_lists_emby_items() -> None:
+    seen_queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_queries.append(request.url.query.decode())
+        return httpx.Response(200, json={"list": [], "total": 0})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.list_emby_items("Series", page=1)
+    client.list_emby_items("Series", page=3)
+
+    assert seen_queries == ["t=Series&pg=1", "t=Series&pg=3"]
+
+
+def test_api_client_searches_emby_items_by_keyword() -> None:
+    seen_queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_queries.append(request.url.query.decode())
+        return httpx.Response(200, json={"list": [], "total": 0})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.search_emby_items("黑袍纠察队", page=1)
+    client.search_emby_items("黑袍纠察队", page=2)
+
+    assert seen_queries == [
+        "wd=%E9%BB%91%E8%A2%8D%E7%BA%A0%E5%AF%9F%E9%98%9F",
+        "wd=%E9%BB%91%E8%A2%8D%E7%BA%A0%E5%AF%9F%E9%98%9F&pg=2",
+    ]
+
+
+def test_api_client_gets_emby_detail_by_ids() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"list": []})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.get_emby_detail("1-3281")
+
+    assert seen == {"path": "/emby/Harold", "query": "ids=1-3281"}

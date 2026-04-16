@@ -123,6 +123,25 @@ class ApiClient:
             params["pg"] = page
         return self._request("GET", f"/tg-search/{self._vod_token}", params=params)
 
+    def list_emby_categories(self) -> dict[str, Any]:
+        return self._request("GET", f"/emby/{self._vod_token}")
+
+    def list_emby_items(self, category_id: str, page: int) -> dict[str, Any]:
+        return self._request(
+            "GET",
+            f"/emby/{self._vod_token}",
+            params={"t": category_id, "pg": page},
+        )
+
+    def search_emby_items(self, keyword: str, page: int) -> dict[str, Any]:
+        params: dict[str, Any] = {"wd": keyword}
+        if page > 1:
+            params["pg"] = page
+        return self._request("GET", f"/emby/{self._vod_token}", params=params)
+
+    def get_emby_detail(self, vod_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/emby/{self._vod_token}", params={"ids": vod_id})
+
     def telegram_search(self, keyword: str) -> dict[str, Any]:
         return self._request("GET", "/api/telegram/search", params={"wd": keyword})
 

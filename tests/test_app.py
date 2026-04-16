@@ -46,6 +46,17 @@ class FakeTelegramController(FakeDoubanController):
         )
 
 
+class FakeEmbyController(FakeDoubanController):
+    def build_request(self, vod_id: str):
+        return OpenPlayerRequest(
+            vod=VodItem(vod_id=vod_id, vod_name="Emby Movie"),
+            playlist=[PlayItem(title="Episode 1", url="", vod_id="ep-emby-1")],
+            clicked_index=0,
+            source_mode="detail",
+            source_vod_id=vod_id,
+        )
+
+
 class FakePlayerController:
     def create_session(
         self,
@@ -68,6 +79,7 @@ def test_main_window_starts_on_douban_tab(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
+        emby_controller=FakeEmbyController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -78,17 +90,19 @@ def test_main_window_starts_on_douban_tab(qtbot) -> None:
     window.show()
 
     assert window.nav_tabs.currentIndex() == 0
-    assert window.nav_tabs.count() == 4
+    assert window.nav_tabs.count() == 5
     assert window.nav_tabs.tabText(0) == "豆瓣电影"
     assert window.nav_tabs.tabText(1) == "电报影视"
-    assert window.nav_tabs.tabText(2) == "文件浏览"
-    assert window.nav_tabs.tabText(3) == "播放记录"
+    assert window.nav_tabs.tabText(2) == "Emby"
+    assert window.nav_tabs.tabText(3) == "文件浏览"
+    assert window.nav_tabs.tabText(4) == "播放记录"
 
 
 def test_main_window_logout_button_emits_logout_requested(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
+        emby_controller=FakeEmbyController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -108,6 +122,7 @@ def test_main_window_passes_config_and_save_callback_to_browse_page(qtbot) -> No
     window = MainWindow(
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
+        emby_controller=FakeEmbyController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -125,6 +140,7 @@ def test_main_window_switches_to_browse_and_searches_from_douban_signal(qtbot, m
     window = MainWindow(
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
+        emby_controller=FakeEmbyController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -147,6 +163,7 @@ def test_main_window_opens_player_from_telegram_card_signal(qtbot, monkeypatch) 
     window = MainWindow(
         douban_controller=FakeDoubanController(),
         telegram_controller=controller,
+        emby_controller=FakeEmbyController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -169,6 +186,7 @@ def test_main_window_enables_search_controls_only_for_telegram_page(qtbot) -> No
     window = MainWindow(
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
+        emby_controller=FakeEmbyController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -178,6 +196,45 @@ def test_main_window_enables_search_controls_only_for_telegram_page(qtbot) -> No
 
     assert window.douban_page.keyword_edit.isHidden() is True
     assert window.telegram_page.keyword_edit.isHidden() is False
+
+
+def test_main_window_enables_search_controls_for_emby_page(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        emby_controller=FakeEmbyController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+
+    assert window.emby_page.keyword_edit.isHidden() is False
+
+
+def test_main_window_opens_player_from_emby_card_signal(qtbot, monkeypatch) -> None:
+    controller = FakeEmbyController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        emby_controller=controller,
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened = []
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+
+    window.emby_page.open_requested.emit("1-3281")
+
+    assert opened
+    assert opened[0].vod.vod_name == "Emby Movie"
+    assert opened[0].source_vod_id == "1-3281"
 
 
 def test_decide_start_view_prefers_login_without_token() -> None:

@@ -35,6 +35,11 @@ class _EmptyTelegramController(_EmptyDoubanController):
         raise ValueError(f"没有可播放的项目: {vod_id}")
 
 
+class _EmptyEmbyController(_EmptyDoubanController):
+    def build_request(self, vod_id: str):
+        raise ValueError(f"没有可播放的项目: {vod_id}")
+
+
 class MainWindow(QMainWindow):
     logout_requested = Signal()
 
@@ -47,6 +52,7 @@ class MainWindow(QMainWindow):
             save_config=None,
             douban_controller=None,
             telegram_controller=None,
+            emby_controller=None,
     ) -> None:
         super().__init__()
         self._save_config = save_config or (lambda: None)
@@ -59,15 +65,22 @@ class MainWindow(QMainWindow):
             click_action="open",
             search_enabled=True,
         )
+        self.emby_page = DoubanPage(
+            emby_controller or _EmptyEmbyController(),
+            click_action="open",
+            search_enabled=True,
+        )
         self.history_page = HistoryPage(history_controller)
         self.browse_controller = browse_controller
         self.telegram_controller = telegram_controller or _EmptyTelegramController()
+        self.emby_controller = emby_controller or _EmptyEmbyController()
         self.player_controller = player_controller
         self.player_window: PlayerWindow | None = None
         self.config = config
 
         self.nav_tabs.addTab(self.douban_page, "豆瓣电影")
         self.nav_tabs.addTab(self.telegram_page, "电报影视")
+        self.nav_tabs.addTab(self.emby_page, "Emby")
         self.nav_tabs.addTab(self.browse_page, "文件浏览")
         self.nav_tabs.addTab(self.history_page, "播放记录")
         self.logout_button.clicked.connect(self.logout_requested.emit)
@@ -87,9 +100,11 @@ class MainWindow(QMainWindow):
         self.history_page.open_detail_requested.connect(self.open_history_detail)
         self.douban_page.search_requested.connect(self._handle_douban_search_requested)
         self.telegram_page.open_requested.connect(self._handle_telegram_open_requested)
+        self.emby_page.open_requested.connect(self._handle_emby_open_requested)
 
         self.douban_page.unauthorized.connect(self.logout_requested.emit)
         self.telegram_page.unauthorized.connect(self.logout_requested.emit)
+        self.emby_page.unauthorized.connect(self.logout_requested.emit)
         self.browse_page.unauthorized.connect(self.logout_requested.emit)
         self.history_page.unauthorized.connect(self.logout_requested.emit)
         self.quit_shortcut = QShortcut(QKeySequence.StandardKey.Quit, self)
@@ -115,6 +130,14 @@ class MainWindow(QMainWindow):
     def _handle_telegram_open_requested(self, vod_id: str) -> None:
         try:
             request = self.telegram_controller.build_request(vod_id)
+        except Exception as exc:
+            self.show_error(str(exc))
+            return
+        self.open_player(request)
+
+    def _handle_emby_open_requested(self, vod_id: str) -> None:
+        try:
+            request = self.emby_controller.build_request(vod_id)
         except Exception as exc:
             self.show_error(str(exc))
             return
