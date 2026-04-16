@@ -112,10 +112,15 @@ class SearchableDoubanController(FakeDoubanController):
         return self.search_results
 
 
-def test_douban_page_loads_categories_and_first_page(qtbot) -> None:
-    page = DoubanPage(FakeDoubanController())
+def show_loaded_page(qtbot, page: DoubanPage) -> DoubanPage:
     qtbot.addWidget(page)
     page.show()
+    page.ensure_loaded()
+    return page
+
+
+def test_douban_page_loads_categories_and_first_page(qtbot) -> None:
+    page = show_loaded_page(qtbot, DoubanPage(FakeDoubanController()))
 
     qtbot.waitUntil(lambda: page.category_list.count() == 2)
     qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
@@ -126,9 +131,7 @@ def test_douban_page_loads_categories_and_first_page(qtbot) -> None:
 
 
 def test_douban_page_clicking_card_emits_search_requested(qtbot) -> None:
-    page = DoubanPage(FakeDoubanController())
-    qtbot.addWidget(page)
-    page.show()
+    page = show_loaded_page(qtbot, DoubanPage(FakeDoubanController()))
 
     qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
 
@@ -139,9 +142,7 @@ def test_douban_page_clicking_card_emits_search_requested(qtbot) -> None:
 
 
 def test_douban_page_clicking_card_can_emit_open_requested(qtbot) -> None:
-    page = DoubanPage(FakeDoubanController(), click_action="open")
-    qtbot.addWidget(page)
-    page.show()
+    page = show_loaded_page(qtbot, DoubanPage(FakeDoubanController(), click_action="open"))
 
     qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
 
@@ -152,9 +153,7 @@ def test_douban_page_clicking_card_can_emit_open_requested(qtbot) -> None:
 
 
 def test_douban_page_clicking_card_can_emit_item_open_requested(qtbot) -> None:
-    page = DoubanPage(FakeDoubanController(), click_action="open")
-    qtbot.addWidget(page)
-    page.show()
+    page = show_loaded_page(qtbot, DoubanPage(FakeDoubanController(), click_action="open"))
 
     qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
 
@@ -166,9 +165,7 @@ def test_douban_page_clicking_card_can_emit_item_open_requested(qtbot) -> None:
 
 
 def test_douban_page_can_show_search_controls_when_enabled(qtbot) -> None:
-    page = DoubanPage(SearchableDoubanController(), click_action="open", search_enabled=True)
-    qtbot.addWidget(page)
-    page.show()
+    page = show_loaded_page(qtbot, DoubanPage(SearchableDoubanController(), click_action="open", search_enabled=True))
     qtbot.waitUntil(lambda: page.category_list.count() == 2)
 
     assert page.keyword_edit.isHidden() is False
@@ -178,9 +175,7 @@ def test_douban_page_can_show_search_controls_when_enabled(qtbot) -> None:
 
 def test_douban_page_search_replaces_category_cards_and_clear_restores_category(qtbot) -> None:
     controller = SearchableDoubanController()
-    page = DoubanPage(controller, click_action="open", search_enabled=True)
-    qtbot.addWidget(page)
-    page.show()
+    page = show_loaded_page(qtbot, DoubanPage(controller, click_action="open", search_enabled=True))
 
     qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
     assert page.card_buttons[0].text() == "霸王别姬\n9.6"
@@ -200,9 +195,7 @@ def test_douban_page_search_replaces_category_cards_and_clear_restores_category(
 
 def test_douban_page_clicking_search_result_can_emit_open_requested(qtbot) -> None:
     controller = SearchableDoubanController()
-    page = DoubanPage(controller, click_action="open", search_enabled=True)
-    qtbot.addWidget(page)
-    page.show()
+    page = show_loaded_page(qtbot, DoubanPage(controller, click_action="open", search_enabled=True))
 
     qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
     page.keyword_edit.setText("黑袍纠察队")
@@ -217,9 +210,7 @@ def test_douban_page_clicking_search_result_can_emit_open_requested(qtbot) -> No
 
 def test_douban_page_category_change_resets_to_first_page(qtbot) -> None:
     controller = FakeDoubanController()
-    page = DoubanPage(controller)
-    qtbot.addWidget(page)
-    page.show()
+    page = show_loaded_page(qtbot, DoubanPage(controller))
 
     qtbot.waitUntil(lambda: page.category_list.count() == 2)
     page.current_page = 3
@@ -231,9 +222,7 @@ def test_douban_page_category_change_resets_to_first_page(qtbot) -> None:
 
 def test_douban_page_ignores_stale_item_response(qtbot) -> None:
     controller = AsyncDoubanController()
-    page = DoubanPage(controller)
-    qtbot.addWidget(page)
-    page.show()
+    page = show_loaded_page(qtbot, DoubanPage(controller))
 
     qtbot.waitUntil(lambda: page.category_list.count() == 2)
     controller.release("movie", 1)
@@ -249,9 +238,7 @@ def test_douban_page_ignores_stale_item_response(qtbot) -> None:
 
 def test_douban_page_ignores_stale_failed_item_response(qtbot) -> None:
     controller = AsyncFailingDoubanController()
-    page = DoubanPage(controller)
-    qtbot.addWidget(page)
-    page.show()
+    page = show_loaded_page(qtbot, DoubanPage(controller))
 
     qtbot.waitUntil(lambda: page.category_list.count() == 2)
     controller.release("movie", 1)
@@ -269,9 +256,7 @@ def test_douban_page_ignores_stale_failed_item_response(qtbot) -> None:
 
 def test_douban_page_ignores_stale_unauthorized_response(qtbot) -> None:
     controller = AsyncUnauthorizedDoubanController()
-    page = DoubanPage(controller)
-    qtbot.addWidget(page)
-    page.show()
+    page = show_loaded_page(qtbot, DoubanPage(controller))
     unauthorized = {"count": 0}
     page.unauthorized.connect(lambda: unauthorized.__setitem__("count", unauthorized["count"] + 1))
 
@@ -290,9 +275,7 @@ def test_douban_page_ignores_stale_unauthorized_response(qtbot) -> None:
 
 
 def test_douban_page_keeps_previous_cards_when_new_load_fails(qtbot) -> None:
-    page = DoubanPage(FailingDoubanController())
-    qtbot.addWidget(page)
-    page.show()
+    page = show_loaded_page(qtbot, DoubanPage(FailingDoubanController()))
 
     qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
     assert page.card_buttons[0].text() == "霸王别姬\n9.6"
@@ -319,18 +302,14 @@ def test_douban_page_renders_loaded_poster_icon_on_card(qtbot, monkeypatch) -> N
     monkeypatch.setattr(douban_page_module, "load_remote_poster_image", lambda *args, **kwargs: image)
     monkeypatch.setattr(douban_page_module.threading, "Thread", ImmediateThread)
 
-    page = DoubanPage(FakeDoubanController())
-    qtbot.addWidget(page)
-    page.show()
+    page = show_loaded_page(qtbot, DoubanPage(FakeDoubanController()))
     qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
 
     assert page.card_buttons[0].icon().isNull() is False
 
 
 def test_douban_page_cards_use_wider_size_and_pointing_cursor(qtbot) -> None:
-    page = DoubanPage(FakeDoubanController())
-    qtbot.addWidget(page)
-    page.show()
+    page = show_loaded_page(qtbot, DoubanPage(FakeDoubanController()))
 
     qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
     button = page.card_buttons[0]
@@ -354,6 +333,7 @@ def test_douban_page_reduces_columns_when_width_is_tighter(qtbot) -> None:
     qtbot.addWidget(page)
     page.resize(1300, 900)
     page.show()
+    page.ensure_loaded()
 
     qtbot.waitUntil(lambda: len(page.card_buttons) == 6)
     narrow_columns = page._current_card_columns
@@ -373,6 +353,7 @@ def test_douban_page_centers_content_container(qtbot) -> None:
     qtbot.addWidget(page)
     page.resize(2200, 1000)
     page.show()
+    page.ensure_loaded()
 
     qtbot.waitUntil(lambda: page.category_list.count() == 2)
 

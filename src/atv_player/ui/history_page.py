@@ -28,6 +28,7 @@ class HistoryPage(QWidget):
     def __init__(self, controller) -> None:
         super().__init__()
         self.controller = controller
+        self._initial_load_started = False
         self.delete_button = QPushButton("删除")
         self.clear_button = QPushButton("清空")
         self.refresh_button = QPushButton("刷新")
@@ -85,7 +86,14 @@ class HistoryPage(QWidget):
         self.page_size_combo.currentIndexChanged.connect(self._change_page_size)
         self._update_pagination_controls()
 
+    def ensure_loaded(self) -> None:
+        if self._initial_load_started:
+            return
+        self._initial_load_started = True
+        self.load_history()
+
     def load_history(self) -> None:
+        self._initial_load_started = True
         try:
             records, total = self.controller.load_page(page=self.current_page, size=self.page_size)
         except UnauthorizedError:

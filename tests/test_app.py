@@ -7,7 +7,7 @@ import atv_player.app as app_module
 import atv_player.ui.main_window as main_window_module
 from atv_player.api import ApiClient
 from atv_player.app import AppCoordinator, decide_start_view
-from atv_player.models import AppConfig, OpenPlayerRequest, PlayItem, VodItem
+from atv_player.models import AppConfig, DoubanCategory, OpenPlayerRequest, PlayItem, VodItem
 from atv_player.ui.main_window import MainWindow
 
 
@@ -80,6 +80,38 @@ class FakeJellyfinController(FakeDoubanController):
     def load_folder_items(self, vod_id: str):
         self.folder_calls.append(vod_id)
         return [VodItem(vod_id="jf-child-1", vod_name="Episode 1", vod_tag="file")], 1
+
+
+class RecordingDoubanController(FakeDoubanController):
+    def __init__(self) -> None:
+        self.category_calls = 0
+        self.item_calls: list[tuple[str, int]] = []
+
+    def load_categories(self):
+        self.category_calls += 1
+        return [DoubanCategory(type_id="1", type_name="推荐")]
+
+    def load_items(self, category_id: str, page: int):
+        self.item_calls.append((category_id, page))
+        return [], 0
+
+
+class RecordingBrowseController(FakeBrowseController):
+    def __init__(self) -> None:
+        self.load_calls: list[tuple[str, int, int]] = []
+
+    def load_folder(self, path: str, page: int = 1, size: int = 50):
+        self.load_calls.append((path, page, size))
+        return [], 0
+
+
+class RecordingHistoryController(FakeHistoryController):
+    def __init__(self) -> None:
+        self.load_calls: list[tuple[int, int]] = []
+
+    def load_page(self, page: int, size: int):
+        self.load_calls.append((page, size))
+        return [], 0
 
 
 class FakePlayerController:
@@ -155,6 +187,76 @@ def test_main_window_hides_emby_and_jellyfin_tabs_when_disabled(qtbot) -> None:
     assert window.nav_tabs.tabText(1) == "电报影视"
     assert window.nav_tabs.tabText(2) == "文件浏览"
     assert window.nav_tabs.tabText(3) == "播放记录"
+
+
+def test_main_window_loads_only_default_tab_on_startup_and_lazy_loads_others(qtbot) -> None:
+    douban_controller = RecordingDoubanController()
+    telegram_controller = RecordingDoubanController()
+    browse_controller = RecordingBrowseController()
+    history_controller = RecordingHistoryController()
+    window = MainWindow(
+        douban_controller=douban_controller,
+        telegram_controller=telegram_controller,
+        emby_controller=RecordingDoubanController(),
+        jellyfin_controller=RecordingDoubanController(),
+        browse_controller=browse_controller,
+        history_controller=history_controller,
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    qtbot.waitUntil(lambda: douban_controller.category_calls == 1 and douban_controller.item_calls == [("1", 1)])
+    assert telegram_controller.category_calls == 0
+    assert browse_controller.load_calls == []
+    assert history_controller.load_calls == []
+
+    window.nav_tabs.setCurrentWidget(window.telegram_page)
+    qtbot.waitUntil(lambda: telegram_controller.category_calls == 1 and telegram_controller.item_calls == [("1", 1)])
+
+    window.nav_tabs.setCurrentWidget(window.browse_page)
+    assert browse_controller.load_calls == [("/", 1, 50)]
+
+    window.nav_tabs.setCurrentWidget(window.history_page)
+    assert history_controller.load_calls == [(1, 100)]
+
+
+def test_main_window_only_auto_loads_each_tab_once(qtbot) -> None:
+    telegram_controller = RecordingDoubanController()
+    browse_controller = RecordingBrowseController()
+    history_controller = RecordingHistoryController()
+    window = MainWindow(
+        douban_controller=RecordingDoubanController(),
+        telegram_controller=telegram_controller,
+        emby_controller=RecordingDoubanController(),
+        jellyfin_controller=RecordingDoubanController(),
+        browse_controller=browse_controller,
+        history_controller=history_controller,
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    window.nav_tabs.setCurrentWidget(window.telegram_page)
+    qtbot.waitUntil(lambda: telegram_controller.category_calls == 1 and telegram_controller.item_calls == [("1", 1)])
+    window.nav_tabs.setCurrentWidget(window.browse_page)
+    assert browse_controller.load_calls == [("/", 1, 50)]
+    window.nav_tabs.setCurrentWidget(window.history_page)
+    assert history_controller.load_calls == [(1, 100)]
+
+    window.nav_tabs.setCurrentWidget(window.douban_page)
+    window.nav_tabs.setCurrentWidget(window.telegram_page)
+    qtbot.waitUntil(lambda: telegram_controller.category_calls == 1)
+    window.nav_tabs.setCurrentWidget(window.browse_page)
+    window.nav_tabs.setCurrentWidget(window.history_page)
+
+    assert telegram_controller.item_calls == [("1", 1)]
+    assert browse_controller.load_calls == [("/", 1, 50)]
+    assert history_controller.load_calls == [(1, 100)]
 
 
 def test_main_window_logout_button_emits_logout_requested(qtbot) -> None:
@@ -698,6 +800,7 @@ def test_app_coordinator_show_main_keeps_window_open_when_initial_browse_times_o
 
     window = coordinator._show_main()
     qtbot.addWidget(window)
+    window.nav_tabs.setCurrentWidget(window.browse_page)
 
     assert isinstance(window, MainWindow)
     status_widget = window.browse_page.breadcrumb_layout.itemAt(0).widget()

@@ -113,6 +113,7 @@ class BrowsePage(QWidget):
         self.controller = controller
         self.config = config
         self._save_config = save_config or (lambda: None)
+        self._initial_load_started = False
         self.keyword_edit = QLineEdit()
         self.search_button = QPushButton("搜索")
         self.filter_combo = QComboBox()
@@ -242,7 +243,14 @@ class BrowsePage(QWidget):
         layout.addLayout(centered_row)
         self._update_pagination_controls()
 
+    def ensure_loaded(self, path: str | None = None) -> None:
+        if self._initial_load_started:
+            return
+        self._initial_load_started = True
+        self.load_path(path or self.current_path or "/")
+
     def load_path(self, path: str) -> None:
+        self._initial_load_started = True
         target_path = path or "/"
         if target_path != self.current_path:
             saved_page, saved_size = self._page_state_by_path.get(target_path, (1, self.page_size))

@@ -117,6 +117,7 @@ class MainWindow(QMainWindow):
         if self.config.main_window_geometry:
             self.restoreGeometry(to_qbytearray(self.config.main_window_geometry))
 
+        self.nav_tabs.currentChanged.connect(self._handle_tab_changed)
         self.browse_page.open_requested.connect(self.open_player)
         self.history_page.open_detail_requested.connect(self.open_history_detail)
         self.douban_page.search_requested.connect(self._handle_douban_search_requested)
@@ -141,14 +142,35 @@ class MainWindow(QMainWindow):
         self.escape_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
         self.escape_shortcut.activated.connect(self.show_or_restore_player)
 
-        if hasattr(browse_controller, "load_folder"):
-            self.browse_page.load_path(config.last_path or "/")
-        if hasattr(history_controller, "load_page"):
-            self.history_page.load_history()
+        self._handle_tab_changed(self.nav_tabs.currentIndex())
 
     def show_browse_path(self, path: str) -> None:
-        self.nav_tabs.setCurrentWidget(self.browse_page)
         self.browse_page.load_path(path)
+        self.nav_tabs.setCurrentWidget(self.browse_page)
+
+    def _handle_tab_changed(self, index: int) -> None:
+        widget = self.nav_tabs.widget(index)
+        if widget is None:
+            return
+        if widget is self.douban_page:
+            self.douban_page.ensure_loaded()
+            return
+        if widget is self.telegram_page:
+            self.telegram_page.ensure_loaded()
+            return
+        if widget is self.emby_page and self.emby_page is not None:
+            self.emby_page.ensure_loaded()
+            return
+        if widget is self.jellyfin_page and self.jellyfin_page is not None:
+            self.jellyfin_page.ensure_loaded()
+            return
+        if widget is self.browse_page:
+            if hasattr(self.browse_controller, "load_folder"):
+                self.browse_page.ensure_loaded(self.config.last_path or "/")
+            return
+        if widget is self.history_page:
+            if hasattr(self.history_page.controller, "load_page"):
+                self.history_page.ensure_loaded()
 
     def _handle_douban_search_requested(self, keyword: str) -> None:
         self.nav_tabs.setCurrentWidget(self.browse_page)

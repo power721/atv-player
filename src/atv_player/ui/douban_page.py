@@ -49,6 +49,7 @@ class DoubanPage(QWidget):
         self.controller = controller
         self._click_action = click_action
         self._search_enabled = search_enabled
+        self._initial_load_started = False
         self._search_mode = False
         self._search_keyword = ""
         self.category_list = QListWidget()
@@ -133,6 +134,10 @@ class DoubanPage(QWidget):
             self.clear_button.clicked.connect(self.clear_search)
             self.keyword_edit.returnPressed.connect(self.search)
 
+    def ensure_loaded(self) -> None:
+        if self._initial_load_started:
+            return
+        self._initial_load_started = True
         self.reload_categories()
 
     def reload_categories(self) -> None:
