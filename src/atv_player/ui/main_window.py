@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.ui.browse_page import BrowsePage
+from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.poster_grid_page import PosterGridPage
 from atv_player.ui.history_page import HistoryPage
 from atv_player.ui.player_window import PlayerWindow
@@ -111,6 +112,7 @@ class MainWindow(QMainWindow):
         self.jellyfin_controller = jellyfin_controller or _EmptyJellyfinController()
         self.player_controller = player_controller
         self.player_window: PlayerWindow | None = None
+        self.help_dialog: ShortcutHelpDialog | None = None
         self.config = config
 
         self.nav_tabs.addTab(self.douban_page, "豆瓣电影")
@@ -188,6 +190,9 @@ class MainWindow(QMainWindow):
         self.player_shortcut.activated.connect(self.show_or_restore_player)
         self.escape_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
         self.escape_shortcut.activated.connect(self.show_or_restore_player)
+        self.help_shortcut = QShortcut(QKeySequence(Qt.Key.Key_F1), self)
+        self.help_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        self.help_shortcut.activated.connect(self._show_shortcut_help)
 
         self._handle_tab_changed(self.nav_tabs.currentIndex())
 
@@ -413,6 +418,21 @@ class MainWindow(QMainWindow):
     def show_error(self, message: str) -> None:
         QMessageBox.critical(self, "错误", message)
 
+    def _show_shortcut_help(self) -> None:
+        dialog = show_shortcut_help_dialog(
+            self,
+            context="main_window",
+            existing_dialog=self.help_dialog,
+            quit_sequence=self.quit_shortcut.key(),
+        )
+        if dialog is self.help_dialog:
+            return
+        self.help_dialog = dialog
+        dialog.destroyed.connect(self._clear_help_dialog_reference)
+
+    def _clear_help_dialog_reference(self, *_args) -> None:
+        self.help_dialog = None
+
     def _quit_application(self) -> None:
         self.config.last_active_window = "main"
         self.config.main_window_geometry = qbytearray_to_bytes(self.saveGeometry())
@@ -420,6 +440,13 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             app.quit()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_F1:
+            self._show_shortcut_help()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self.config.main_window_geometry = qbytearray_to_bytes(self.saveGeometry())
