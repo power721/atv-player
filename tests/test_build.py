@@ -195,6 +195,43 @@ def test_prepare_linux_appdir_copies_bundle_and_launcher_assets(monkeypatch, tmp
     assert (appdir_path / "usr" / "lib" / "atv-player" / "atv-player").exists()
 
 
+def test_prepare_linux_appdir_preserves_qt_fallback_launcher(monkeypatch, tmp_path) -> None:
+    project_root = tmp_path / "project"
+    bundle_dir = project_root / "dist" / "atv-player"
+    bundle_dir.mkdir(parents=True)
+    (bundle_dir / "atv-player").write_text("binary", encoding="utf-8")
+    icons_dir = project_root / "src" / "atv_player" / "icons"
+    icons_dir.mkdir(parents=True)
+    (icons_dir / "app.svg").write_text("<svg />", encoding="utf-8")
+    packaging_dir = project_root / "packaging" / "linux"
+    packaging_dir.mkdir(parents=True)
+    repo_root = Path(__file__).resolve().parents[1]
+    (packaging_dir / "AppRun").write_text((repo_root / "packaging" / "linux" / "AppRun").read_text(encoding="utf-8"))
+    (packaging_dir / "atv-player.desktop").write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=atv-player\n"
+        "Exec=atv-player\n"
+        "Icon=atv-player\n"
+        "Terminal=false\n"
+        "Categories=AudioVideo;Player;\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(build, "PROJECT_ROOT", project_root)
+    monkeypatch.setattr(build, "BUILD_DIR", project_root / "build")
+    monkeypatch.setattr(build, "DIST_DIR", project_root / "dist")
+    monkeypatch.setattr(build, "ICONS_DIR", icons_dir)
+
+    appdir_path = build.prepare_linux_appdir(bundle_dir, "x86_64")
+
+    launcher = (appdir_path / "AppRun").read_text(encoding="utf-8")
+
+    assert 'QT_QPA_PLATFORM_PLUGIN_PATH="$HERE/usr/lib/atv-player/_internal/PySide6/Qt/plugins/platforms"' in launcher
+    assert ': "${QT_QPA_PLATFORM:=xcb}"' in launcher
+    assert ': "${QT_OPENGL:=software}"' in launcher
+    assert ': "${QT_XCB_GL_INTEGRATION:=none}"' in launcher
+
+
 def test_build_linux_uses_artifact_version_for_appimage_output(monkeypatch, tmp_path) -> None:
     project_root = tmp_path / "project"
     dist_dir = project_root / "dist"

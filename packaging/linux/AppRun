@@ -1,3 +1,10 @@
 #!/bin/sh
 HERE="$(dirname "$(readlink -f "$0")")"
+export QT_QPA_PLATFORM_PLUGIN_PATH="$HERE/usr/lib/atv-player/_internal/PySide6/Qt/plugins/platforms"
+: "${QT_QPA_PLATFORM:=xcb}"
+export QT_QPA_PLATFORM
+: "${QT_OPENGL:=software}"
+export QT_OPENGL
+: "${QT_XCB_GL_INTEGRATION:=none}"
+export QT_XCB_GL_INTEGRATION
 exec "$HERE/usr/lib/atv-player/atv-player" "$@"
