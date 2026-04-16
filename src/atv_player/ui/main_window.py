@@ -19,6 +19,7 @@ from atv_player.ui.browse_page import BrowsePage
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.poster_grid_page import PosterGridPage
 from atv_player.ui.history_page import HistoryPage
+from atv_player.ui.plugin_manager_dialog import PluginManagerDialog
 from atv_player.ui.player_window import PlayerWindow
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
 
@@ -54,6 +55,12 @@ class _EmptyJellyfinController(_EmptyDoubanController):
         raise ValueError(f"没有可播放的项目: {vod_id}")
 
 
+def _plugin_value(definition: Any, key: str):
+    if isinstance(definition, dict):
+        return definition.get(key)
+    return getattr(definition, key)
+
+
 class MainWindow(QMainWindow):
     logout_requested = Signal()
 
@@ -69,12 +76,18 @@ class MainWindow(QMainWindow):
             live_controller=None,
             emby_controller=None,
             jellyfin_controller=None,
+            spider_plugins=None,
+            plugin_manager=None,
             show_emby_tab: bool = True,
             show_jellyfin_tab: bool = True,
     ) -> None:
         super().__init__()
         self._save_config = save_config or (lambda: None)
+        self._plugin_definitions = list(spider_plugins or [])
+        self._plugin_manager = plugin_manager
+        self._plugin_pages: list[tuple[PosterGridPage, object]] = []
         self.nav_tabs = QTabWidget()
+        self.plugin_manager_button = QPushButton("插件管理")
         self.logout_button = QPushButton("退出登录")
         self.browse_page = BrowsePage(browse_controller, config=config, save_config=self._save_config)
         self.douban_page = PosterGridPage(douban_controller or _EmptyDoubanController())
@@ -124,9 +137,12 @@ class MainWindow(QMainWindow):
             self.nav_tabs.addTab(self.jellyfin_page, "Jellyfin")
         self.nav_tabs.addTab(self.browse_page, "文件浏览")
         self.nav_tabs.addTab(self.history_page, "播放记录")
+        self._rebuild_spider_plugin_tabs()
         self.logout_button.clicked.connect(self.logout_requested.emit)
+        self.plugin_manager_button.clicked.connect(self._open_plugin_manager)
         header_layout = QHBoxLayout()
         header_layout.addStretch(1)
+        header_layout.addWidget(self.plugin_manager_button)
         header_layout.addWidget(self.logout_button)
         container = QWidget()
         container_layout = QVBoxLayout(container)
@@ -219,6 +235,10 @@ class MainWindow(QMainWindow):
         if widget is self.jellyfin_page and self.jellyfin_page is not None:
             self.jellyfin_page.ensure_loaded()
             return
+        for page, _controller in self._plugin_pages:
+            if widget is page:
+                page.ensure_loaded()
+                return
         if widget is self.browse_page:
             if hasattr(self.browse_controller, "load_folder"):
                 self.browse_page.ensure_loaded(self.config.last_path or "/")
@@ -282,6 +302,47 @@ class MainWindow(QMainWindow):
                 self._open_media_folder(self.jellyfin_page, self.jellyfin_controller, item)
             return
         self._handle_jellyfin_open_requested(item.vod_id)
+
+    def _rebuild_spider_plugin_tabs(self) -> None:
+        for page, _controller in self._plugin_pages:
+            index = self.nav_tabs.indexOf(page)
+            if index >= 0:
+                self.nav_tabs.removeTab(index)
+            page.deleteLater()
+        self._plugin_pages = []
+        insert_index = self.nav_tabs.indexOf(self.browse_page)
+        for definition in self._plugin_definitions:
+            controller = _plugin_value(definition, "controller")
+            page = PosterGridPage(
+                controller,
+                click_action="open",
+                search_enabled=bool(_plugin_value(definition, "search_enabled")),
+            )
+            page.open_requested.connect(
+                lambda vod_id, controller=controller: self._open_spider_request(controller, vod_id)
+            )
+            page.unauthorized.connect(self.logout_requested.emit)
+            self.nav_tabs.insertTab(insert_index, page, str(_plugin_value(definition, "title") or "插件"))
+            self._plugin_pages.append((page, controller))
+            insert_index += 1
+
+    def _open_spider_request(self, controller, vod_id: str) -> None:
+        try:
+            request = controller.build_request(vod_id)
+        except Exception as exc:
+            self.show_error(str(exc))
+            return
+        self.open_player(request)
+
+    def _open_plugin_manager(self) -> None:
+        if self._plugin_manager is None:
+            return
+        dialog = PluginManagerDialog(self._plugin_manager, self)
+        dialog.exec()
+        load_enabled_plugins = getattr(self._plugin_manager, "load_enabled_plugins", None)
+        if callable(load_enabled_plugins):
+            self._plugin_definitions = list(load_enabled_plugins())
+            self._rebuild_spider_plugin_tabs()
 
     def _open_media_folder(self, page: PosterGridPage, controller: Any, item: Any) -> None:
         try:

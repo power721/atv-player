@@ -199,6 +199,42 @@ def test_main_window_starts_on_douban_tab(qtbot) -> None:
     assert window.nav_tabs.tabText(6) == "播放记录"
 
 
+def test_app_coordinator_passes_loaded_spider_plugins_into_main_window(monkeypatch, tmp_path) -> None:
+    repo = app_module.SettingsRepository(tmp_path / "app.db")
+    repo.save_config(
+        AppConfig(
+            base_url="http://127.0.0.1:4567",
+            username="alice",
+            token="token-123",
+            vod_token="vod-123",
+        )
+    )
+
+    loaded_plugins = [
+        {"title": "红果短剧", "controller": object(), "search_enabled": True},
+    ]
+
+    class FakePluginManager:
+        def load_enabled_plugins(self):
+            return loaded_plugins
+
+    def api_factory(*args, **kwargs):
+        return ApiClient(
+            "http://127.0.0.1:4567",
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"token": "vod-123"})),
+        )
+
+    monkeypatch.setattr(app_module, "ApiClient", api_factory)
+    monkeypatch.setattr(app_module, "SpiderPluginManager", lambda repository, loader: FakePluginManager())
+    monkeypatch.setattr(app_module, "SpiderPluginRepository", lambda db_path: object())
+    monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
+
+    coordinator = AppCoordinator(repo)
+    widget = coordinator._show_main()
+
+    assert widget.nav_tabs.tabText(5) == "红果短剧"
+
+
 def test_main_window_hides_emby_and_jellyfin_tabs_when_disabled(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),

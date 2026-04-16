@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import time
 from pathlib import Path
 
 from atv_player.models import SpiderPluginConfig
+from atv_player.plugins.controller import SpiderPluginController
 from atv_player.plugins.loader import LoadedSpiderPlugin, SpiderPluginLoader
 from atv_player.plugins.repository import SpiderPluginRepository
+
+
+@dataclass(slots=True)
+class SpiderPluginDefinition:
+    id: int
+    title: str
+    controller: object
+    search_enabled: bool
 
 
 class SpiderPluginManager:
@@ -68,9 +78,44 @@ class SpiderPluginManager:
     def list_logs(self, plugin_id: int):
         return self._repository.list_logs(plugin_id)
 
+    def load_enabled_plugins(self) -> list[SpiderPluginDefinition]:
+        definitions: list[SpiderPluginDefinition] = []
+        for plugin in self._repository.list_plugins():
+            if not plugin.enabled:
+                continue
+            try:
+                loaded = self._loader.load(plugin)
+            except Exception as exc:
+                self._repository.update_plugin(
+                    plugin.id,
+                    display_name=plugin.display_name,
+                    enabled=plugin.enabled,
+                    cached_file_path=plugin.cached_file_path,
+                    last_loaded_at=plugin.last_loaded_at,
+                    last_error=str(exc),
+                )
+                self._repository.append_log(plugin.id, "error", str(exc))
+                continue
+            title = plugin.display_name or loaded.plugin_name or Path(plugin.source_value).stem
+            controller = SpiderPluginController(
+                loaded.spider,
+                plugin_name=title,
+                search_enabled=loaded.search_enabled,
+            )
+            definitions.append(
+                SpiderPluginDefinition(
+                    id=plugin.id,
+                    title=title,
+                    controller=controller,
+                    search_enabled=loaded.search_enabled,
+                )
+            )
+        return definitions
+
 
 __all__ = [
     "LoadedSpiderPlugin",
     "SpiderPluginLoader",
+    "SpiderPluginDefinition",
     "SpiderPluginManager",
 ]

@@ -18,12 +18,19 @@ from atv_player.controllers.login_controller import LoginController
 from atv_player.controllers.player_controller import PlayerController
 from atv_player.controllers.telegram_search_controller import TelegramSearchController
 from atv_player.models import AppConfig
+from atv_player.plugins import SpiderPluginLoader, SpiderPluginManager
+from atv_player.plugins.repository import SpiderPluginRepository
 from atv_player.storage import SettingsRepository
 from atv_player.ui.login_window import LoginWindow
 from atv_player.ui.main_window import MainWindow
 from atv_player.ui.poster_loader import poster_cache_dir
 
 POSTER_CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+
+
+class _NullPluginManager:
+    def load_enabled_plugins(self) -> list:
+        return []
 
 
 def decide_start_view(config: AppConfig) -> str:
@@ -63,6 +70,15 @@ class AppCoordinator(QObject):
         self.login_window: LoginWindow | None = None
         self.main_window: MainWindow | None = None
         self._api_client: ApiClient | None = None
+        if hasattr(repo, "database_path"):
+            self._plugin_repository = SpiderPluginRepository(repo.database_path)
+            cache_dir = repo.database_path.parent / "plugins" / "cache"
+            self._plugin_loader = SpiderPluginLoader(cache_dir)
+            self._plugin_manager = SpiderPluginManager(self._plugin_repository, self._plugin_loader)
+        else:
+            self._plugin_repository = None
+            self._plugin_loader = None
+            self._plugin_manager = _NullPluginManager()
 
     def start(self) -> QWidget:
         config = self.repo.load_config()
@@ -116,6 +132,7 @@ class AppCoordinator(QObject):
         self._api_client = self._build_api_client()
         config = self.repo.load_config()
         capabilities = self._load_capabilities(self._api_client)
+        spider_plugins = self._plugin_manager.load_enabled_plugins()
         douban_controller = DoubanController(self._api_client)
         telegram_controller = TelegramSearchController(self._api_client)
         live_controller = LiveController(self._api_client)
@@ -135,6 +152,8 @@ class AppCoordinator(QObject):
             live_controller=live_controller,
             emby_controller=emby_controller,
             jellyfin_controller=jellyfin_controller,
+            spider_plugins=spider_plugins,
+            plugin_manager=self._plugin_manager,
             show_emby_tab=bool(capabilities.get("emby")),
             show_jellyfin_tab=bool(capabilities.get("jellyfin")),
         )
