@@ -1,6 +1,6 @@
 from PySide6.QtCore import QByteArray, QEvent, Qt
 from PySide6.QtGui import QColor, QCursor, QImage, QKeyEvent, QMouseEvent, QPixmap
-from PySide6.QtWidgets import QApplication, QComboBox
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QTableWidget
 from PySide6.QtWidgets import QSplitter, QToolTip
 from atv_player.controllers.player_controller import PlayerSession
 from atv_player.models import AppConfig, PlayItem, VodItem
@@ -2617,6 +2617,66 @@ def test_player_window_quit_application_preserves_current_paused_state(qtbot, mo
     window._quit_application()
 
     assert config.last_player_paused is True
+
+
+def visible_shortcut_help_dialogs() -> list[QDialog]:
+    return [
+        widget
+        for widget in QApplication.topLevelWidgets()
+        if isinstance(widget, QDialog)
+        and widget.windowTitle() == "快捷键帮助"
+        and widget.isVisible()
+    ]
+
+
+def shortcut_table_rows(dialog: QDialog) -> list[tuple[str, str]]:
+    table = dialog.findChild(QTableWidget, "shortcutHelpTable")
+    assert table is not None
+    rows: list[tuple[str, str]] = []
+    for row in range(table.rowCount()):
+        rows.append((table.item(row, 0).text(), table.item(row, 1).text()))
+    return rows
+
+
+def test_player_window_f1_opens_shortcut_help_dialog(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session())
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+
+    send_key(window, Qt.Key.Key_F1)
+
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
+    rows = shortcut_table_rows(visible_shortcut_help_dialogs()[0])
+
+    assert ("F1", "打开快捷键帮助") in rows
+    assert ("Space", "播放/暂停") in rows
+    assert ("Left", "后退 15 秒") in rows
+    assert ("Ctrl+Right", "前进 60 秒") in rows
+    assert ("M", "静音") in rows
+    assert ("Enter", "切换全屏") in rows
+
+
+def test_player_window_reuses_existing_shortcut_help_dialog(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session())
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+
+    send_key(window, Qt.Key.Key_F1)
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
+    first_dialog = visible_shortcut_help_dialogs()[0]
+
+    send_key(window, Qt.Key.Key_F1)
+
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
+    assert visible_shortcut_help_dialogs()[0] is first_dialog
 
 
 def test_player_window_keyboard_shortcuts_control_playback_navigation_and_view(qtbot) -> None:
