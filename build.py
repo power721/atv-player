@@ -11,9 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 APP_NAME = "atv-player"
+DEFAULT_ARTIFACT_VERSION = "dev"
 PROJECT_ROOT = Path(__file__).resolve().parent
 ENTRYPOINT = PROJECT_ROOT / "src" / "atv_player" / "main.py"
 ICONS_DIR = PROJECT_ROOT / "src" / "atv_player" / "icons"
+PACKAGING_ICONS_DIR = PROJECT_ROOT / "packaging" / "icons"
 DIST_DIR = PROJECT_ROOT / "dist"
 BUILD_DIR = PROJECT_ROOT / "build"
 
@@ -54,6 +56,11 @@ def normalize_arch(value: str | None = None) -> str:
     }.get(normalized, normalized)
 
 
+def resolve_artifact_version(value: str | None = None) -> str:
+    normalized = (value or "").strip()
+    return normalized or DEFAULT_ARTIFACT_VERSION
+
+
 def build_target(value: str | None) -> BuildTarget:
     platform_id = normalize_target_platform(value)
     if platform_id == "linux":
@@ -81,17 +88,36 @@ def build_target(value: str | None) -> BuildTarget:
     )
 
 
-def build_archive_name(target_platform: str, arch: str | None = None) -> str:
+def build_archive_name(target_platform: str, arch: str | None = None, version: str | None = None) -> str:
     target = build_target(target_platform)
-    return f"{APP_NAME}-{target.platform_id}-{normalize_arch(arch)}.{target.archive_ext}"
+    return (
+        f"{APP_NAME}-"
+        f"{resolve_artifact_version(version)}-"
+        f"{target.platform_id}-"
+        f"{normalize_arch(arch)}."
+        f"{target.archive_ext}"
+    )
 
 
-def release_artifact_path_for_target(target_platform: str, arch: str | None = None) -> Path:
-    return DIST_DIR / build_archive_name(target_platform, arch)
+def release_artifact_path_for_target(
+    target_platform: str,
+    arch: str | None = None,
+    version: str | None = None,
+) -> Path:
+    return DIST_DIR / build_archive_name(target_platform, arch, version)
 
 
 def data_mapping(source: Path, destination: str, target_platform: str) -> str:
     return f"{source}{build_target(target_platform).data_separator}{destination}"
+
+
+def pyinstaller_icon_path(target_platform: str) -> Path | None:
+    platform_id = normalize_target_platform(target_platform)
+    if platform_id == "windows":
+        return PACKAGING_ICONS_DIR / "app.ico"
+    if platform_id == "macos":
+        return PACKAGING_ICONS_DIR / "app.icns"
+    return None
 
 
 def find_libmpv(target_platform: str) -> list[tuple[Path, str]]:
@@ -216,6 +242,9 @@ def build_pyinstaller_command(target_platform: str) -> list[str]:
         "--add-binary",
         data_mapping(find_libmpv(target.platform_id)[0][0], ".", target.platform_id),
     ]
+    icon_path = pyinstaller_icon_path(target.platform_id)
+    if icon_path is not None:
+        command.extend(["--icon", str(icon_path)])
     if target.windowed:
         command.append("--windowed")
     command.append(str(ENTRYPOINT))
@@ -236,6 +265,9 @@ def build(target_platform: str) -> Path:
         raise FileNotFoundError(f"Missing entrypoint: {ENTRYPOINT}")
     if not ICONS_DIR.exists():
         raise FileNotFoundError(f"Missing icons directory: {ICONS_DIR}")
+    icon_path = pyinstaller_icon_path(target_platform)
+    if icon_path is not None and not icon_path.exists():
+        raise FileNotFoundError(f"Missing PyInstaller icon: {icon_path}")
 
     command = build_pyinstaller_command(target_platform)
     subprocess.run(command, check=True, cwd=PROJECT_ROOT)

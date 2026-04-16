@@ -16,10 +16,26 @@ def test_normalize_target_platform_maps_runtime_names(monkeypatch) -> None:
     assert build.normalize_target_platform("win32") == "windows"
 
 
-def test_build_archive_name_uses_normalized_architecture() -> None:
-    assert build.build_archive_name("linux", "x86_64") == "atv-player-linux-x64.AppImage"
-    assert build.build_archive_name("Darwin", "aarch64") == "atv-player-macos-arm64.zip"
-    assert build.build_archive_name("windows", "AMD64") == "atv-player-windows-x64.exe"
+def test_resolve_artifact_version_prefers_explicit_value() -> None:
+    assert build.resolve_artifact_version("1.2.3") == "1.2.3"
+    assert build.resolve_artifact_version(" 2.0.0 ") == "2.0.0"
+
+
+def test_resolve_artifact_version_falls_back_to_default() -> None:
+    assert build.resolve_artifact_version(None) == "dev"
+    assert build.resolve_artifact_version("") == "dev"
+    assert build.resolve_artifact_version("   ") == "dev"
+
+
+def test_build_archive_name_includes_explicit_version() -> None:
+    assert build.build_archive_name("linux", "x86_64", "1.2.3") == "atv-player-1.2.3-linux-x64.AppImage"
+    assert build.build_archive_name("Darwin", "aarch64", "2.0.0") == "atv-player-2.0.0-macos-arm64.zip"
+    assert build.build_archive_name("windows", "AMD64", "3.4.5") == "atv-player-3.4.5-windows-x64.exe"
+
+
+def test_build_archive_name_uses_default_version_when_missing() -> None:
+    assert build.build_archive_name("linux", "x86_64") == "atv-player-dev-linux-x64.AppImage"
+    assert build.build_archive_name("windows", "AMD64", "   ") == "atv-player-dev-windows-x64.exe"
 
 
 def test_build_target_linux_uses_appimage_release_format() -> None:
@@ -91,6 +107,7 @@ def test_build_pyinstaller_command_collects_icons_and_libmpv(monkeypatch, tmp_pa
     assert f"{build.ICONS_DIR}:atv_player/icons" in command
     assert "--add-binary" in command
     assert f"{libmpv}:." in command
+    assert "--icon" not in command
     assert command[-1] == str(build.ENTRYPOINT)
 
 
@@ -105,6 +122,22 @@ def test_build_pyinstaller_command_windows_uses_onefile_mode(monkeypatch, tmp_pa
     assert "--onefile" in command
     assert "--onedir" not in command
     assert f"{build.ICONS_DIR};atv_player/icons" in command
+    assert "--icon" in command
+    assert command[command.index("--icon") + 1] == str(build.PROJECT_ROOT / "packaging" / "icons" / "app.ico")
+
+
+def test_build_pyinstaller_command_macos_uses_native_app_icon(monkeypatch, tmp_path) -> None:
+    dylib_path = tmp_path / "libmpv.dylib"
+    dylib_path.write_bytes(b"dylib")
+    monkeypatch.setattr(build, "find_libmpv", lambda target_platform: [(dylib_path, ".")])
+
+    command = build.build_pyinstaller_command("macos")
+
+    assert "--windowed" in command
+    assert "--onedir" in command
+    assert "--onefile" not in command
+    assert "--icon" in command
+    assert command[command.index("--icon") + 1] == str(build.PROJECT_ROOT / "packaging" / "icons" / "app.icns")
 
 
 def test_bundle_path_for_target_matches_platform_output() -> None:
@@ -113,10 +146,14 @@ def test_bundle_path_for_target_matches_platform_output() -> None:
     assert build.bundle_path_for_target("windows") == build.DIST_DIR / "atv-player.exe"
 
 
-def test_release_artifact_path_for_target_matches_platform_output() -> None:
-    assert build.release_artifact_path_for_target("linux", "x86_64") == build.DIST_DIR / "atv-player-linux-x64.AppImage"
-    assert build.release_artifact_path_for_target("macos", "arm64") == build.DIST_DIR / "atv-player-macos-arm64.zip"
-    assert build.release_artifact_path_for_target("windows", "AMD64") == build.DIST_DIR / "atv-player-windows-x64.exe"
+def test_release_artifact_path_for_target_includes_version() -> None:
+    assert build.release_artifact_path_for_target("linux", "x86_64", "1.2.3") == (
+        build.DIST_DIR / "atv-player-1.2.3-linux-x64.AppImage"
+    )
+    assert build.release_artifact_path_for_target("macos", "arm64") == build.DIST_DIR / "atv-player-dev-macos-arm64.zip"
+    assert build.release_artifact_path_for_target("windows", "AMD64", "9.9.9") == (
+        build.DIST_DIR / "atv-player-9.9.9-windows-x64.exe"
+    )
 
 
 def test_prepare_linux_appdir_copies_bundle_and_launcher_assets(monkeypatch, tmp_path) -> None:
@@ -234,3 +271,13 @@ def test_github_workflow_uploads_linux_appimage_and_releases_it() -> None:
     assert "release_artifact_path_for_target" in workflow
     assert '-name "*.AppImage"' in workflow
     assert 'tar -C dist -czf "dist/$ARCHIVE_NAME" atv-player' not in workflow
+
+
+def test_github_workflow_resolves_versioned_artifact_names() -> None:
+    workflow = Path(".github/workflows/build.yml").read_text(encoding="utf-8")
+
+    assert 'if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then' in workflow
+    assert 'ARTIFACT_VERSION="${GITHUB_REF_NAME#v}"' in workflow
+    assert "ARTIFACT_VERSION=dev" in workflow
+    assert "build.build_archive_name('${{ matrix.platform }}', version=os.environ['ARTIFACT_VERSION'])" in workflow
+    assert "build.release_artifact_path_for_target('${{ matrix.platform }}', version=os.environ['ARTIFACT_VERSION'])" in workflow

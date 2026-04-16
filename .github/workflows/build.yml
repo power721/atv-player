@@ -76,12 +76,33 @@ jobs:
       - name: Build application
         run: uv run python build.py ${{ matrix.platform }}
 
+      - name: Resolve artifact version (POSIX)
+        if: matrix.platform != 'windows'
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            ARTIFACT_VERSION="${GITHUB_REF_NAME#v}"
+          else
+            ARTIFACT_VERSION=dev
+          fi
+          echo "ARTIFACT_VERSION=$ARTIFACT_VERSION" >> "$GITHUB_ENV"
+
+      - name: Resolve artifact version (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $artifactVersion = $env:GITHUB_REF_NAME.Substring(1)
+          } else {
+            $artifactVersion = 'dev'
+          }
+          "ARTIFACT_VERSION=$artifactVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Resolve artifact paths (POSIX)
         if: matrix.platform != 'windows'
         run: |
-          ARCHIVE_NAME=$(uv run python -c "import build; print(build.build_archive_name('${{ matrix.platform }}'))")
+          ARCHIVE_NAME=$(uv run python -c "import build, os; print(build.build_archive_name('${{ matrix.platform }}', version=os.environ['ARTIFACT_VERSION']))")
           BUNDLE_PATH=$(uv run python -c "import build; print(build.bundle_path_for_target('${{ matrix.platform }}'))")
-          RELEASE_ASSET_PATH=$(uv run python -c "import build; print(build.release_artifact_path_for_target('${{ matrix.platform }}'))")
+          RELEASE_ASSET_PATH=$(uv run python -c "import build, os; print(build.release_artifact_path_for_target('${{ matrix.platform }}', version=os.environ['ARTIFACT_VERSION']))")
           echo "ARCHIVE_NAME=$ARCHIVE_NAME" >> "$GITHUB_ENV"
           echo "BUNDLE_PATH=$BUNDLE_PATH" >> "$GITHUB_ENV"
           echo "RELEASE_ASSET_PATH=$RELEASE_ASSET_PATH" >> "$GITHUB_ENV"
@@ -90,7 +111,7 @@ jobs:
         if: matrix.platform == 'windows'
         shell: pwsh
         run: |
-          $archiveName = uv run python -c "import build; print(build.build_archive_name('${{ matrix.platform }}'))"
+          $archiveName = uv run python -c "import build, os; print(build.build_archive_name('${{ matrix.platform }}', version=os.environ['ARTIFACT_VERSION']))"
           $bundlePath = uv run python -c "import build; print(build.bundle_path_for_target('${{ matrix.platform }}'))"
           "ARCHIVE_NAME=$archiveName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "BUNDLE_PATH=$bundlePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
