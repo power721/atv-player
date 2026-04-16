@@ -36,7 +36,7 @@ def test_load_categories_inserts_recommendation_first() -> None:
     categories = controller.load_categories()
 
     assert categories == [
-        DoubanCategory(type_id="recommend", type_name="推荐"),
+        DoubanCategory(type_id="0", type_name="推荐"),
         DoubanCategory(type_id="bili", type_name="哔哩哔哩"),
         DoubanCategory(type_id="douyu", type_name="斗鱼"),
     ]
@@ -114,4 +114,36 @@ def test_build_request_prefers_detail_items_when_item_urls_exist() -> None:
     assert [item.url for item in request.playlist] == [
         "https://stream.example/hd.m3u8",
         "https://stream.example/uhd.m3u8",
+    ]
+
+
+def test_build_request_prefixes_titles_with_route_name_from_vod_play_from() -> None:
+    from atv_player.controllers.live_controller import LiveController
+
+    api = FakeApiClient()
+    api.detail_payload = {
+        "list": [
+            {
+                "vod_id": "bili$1785607569",
+                "vod_name": "主播直播间",
+                "vod_play_from": "线路1$$$线路2",
+                "vod_play_url": (
+                    "原画-flv-avc-1$https://stream.example/main.m3u8"
+                    "$$$"
+                    "蓝光-fmp4-hevc-1$https://backup.example/live.m3u8"
+                ),
+            }
+        ]
+    }
+    controller = LiveController(api)
+
+    request = controller.build_request("bili$1785607569")
+
+    assert [item.title for item in request.playlist] == [
+        "线路1 | 原画-flv-avc-1",
+        "线路2 | 蓝光-fmp4-hevc-1",
+    ]
+    assert [item.url for item in request.playlist] == [
+        "https://stream.example/main.m3u8",
+        "https://backup.example/live.m3u8",
     ]

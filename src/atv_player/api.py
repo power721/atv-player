@@ -130,7 +130,7 @@ class ApiClient:
         return self._request(
             "GET",
             f"/live/{self._vod_token}",
-            params={"t": category_id, "pg": page},
+            params={"t": category_id, "ac": "gui", "pg": page},
         )
 
     def get_live_detail(self, vod_id: str) -> dict[str, Any]:

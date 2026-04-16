@@ -341,7 +341,11 @@ def test_api_client_lists_live_items() -> None:
     client.list_live_items("bili-9", page=1)
     client.list_live_items("bili-9-744", page=2)
 
-    assert seen_queries == ["t=bili&pg=1", "t=bili-9&pg=1", "t=bili-9-744&pg=2"]
+    assert seen_queries == [
+        "t=bili&ac=gui&pg=1",
+        "t=bili-9&ac=gui&pg=1",
+        "t=bili-9-744&ac=gui&pg=2",
+    ]
 
 
 def test_api_client_gets_live_detail_by_ids() -> None:

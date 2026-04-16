@@ -20,26 +20,32 @@ def _looks_like_stream_url(value: str) -> bool:
     ) or any(ext in candidate for ext in (".m3u8", ".flv", ".mp4"))
 
 
-def _parse_live_playlist(vod_play_url: str) -> list[PlayItem]:
+def _parse_live_playlist(vod_play_from: str, vod_play_url: str) -> list[PlayItem]:
     playlist: list[PlayItem] = []
-    for raw_chunk in (vod_play_url or "").split("#"):
-        chunk = raw_chunk.strip()
-        if not chunk:
-            continue
-        title, separator, value = chunk.partition("$")
-        if not separator:
-            title = chunk
-            value = chunk
-        title = title.strip() or value.strip() or f"线路 {len(playlist) + 1}"
-        value = value.strip()
-        playlist.append(
-            PlayItem(
-                title=title,
-                url=value if _looks_like_stream_url(value) else "",
-                vod_id="" if _looks_like_stream_url(value) else value,
-                index=len(playlist),
+    route_names = [name.strip() for name in (vod_play_from or "").split("$$$")]
+    route_groups = (vod_play_url or "").split("$$$")
+    for group_index, raw_group in enumerate(route_groups):
+        route_name = route_names[group_index] if group_index < len(route_names) else ""
+        for raw_chunk in raw_group.split("#"):
+            chunk = raw_chunk.strip()
+            if not chunk:
+                continue
+            title, separator, value = chunk.partition("$")
+            if not separator:
+                title = chunk
+                value = chunk
+            title = title.strip() or value.strip() or f"线路 {len(playlist) + 1}"
+            if route_name:
+                title = f"{route_name} | {title}"
+            value = value.strip()
+            playlist.append(
+                PlayItem(
+                    title=title,
+                    url=value if _looks_like_stream_url(value) else "",
+                    vod_id="" if _looks_like_stream_url(value) else value,
+                    index=len(playlist),
+                )
             )
-        )
     return playlist
 
 
@@ -89,7 +95,7 @@ class LiveController:
                 )
                 for index, item in enumerate(detail_items)
             ]
-        return [item for item in _parse_live_playlist(detail.vod_play_url) if item.url]
+        return [item for item in _parse_live_playlist(detail.vod_play_from, detail.vod_play_url) if item.url]
 
     def build_request(self, vod_id: str) -> OpenPlayerRequest:
         payload = self._api_client.get_live_detail(vod_id)
