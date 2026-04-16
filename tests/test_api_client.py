@@ -303,6 +303,67 @@ def test_api_client_searches_telegram_items_by_keyword() -> None:
     ]
 
 
+def test_api_client_lists_live_categories() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"class": []})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.list_live_categories()
+
+    assert seen == {"path": "/live/Harold", "query": ""}
+
+
+def test_api_client_lists_live_items() -> None:
+    seen_queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_queries.append(request.url.query.decode())
+        return httpx.Response(200, json={"list": [], "total": 0})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.list_live_items("bili", page=1)
+    client.list_live_items("bili-9", page=1)
+    client.list_live_items("bili-9-744", page=2)
+
+    assert seen_queries == ["t=bili&pg=1", "t=bili-9&pg=1", "t=bili-9-744&pg=2"]
+
+
+def test_api_client_gets_live_detail_by_ids() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"list": []})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.get_live_detail("bili$1785607569")
+
+    assert seen == {"path": "/live/Harold", "query": "ids=bili%241785607569"}
+
+
 def test_api_client_lists_emby_categories() -> None:
     seen = {"path": "", "query": ""}
 

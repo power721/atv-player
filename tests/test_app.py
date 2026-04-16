@@ -46,6 +46,24 @@ class FakeTelegramController(FakeDoubanController):
         )
 
 
+class FakeLiveController(FakeDoubanController):
+    def __init__(self) -> None:
+        self.folder_calls: list[str] = []
+
+    def build_request(self, vod_id: str):
+        return OpenPlayerRequest(
+            vod=VodItem(vod_id=vod_id, vod_name="Live Room"),
+            playlist=[PlayItem(title="线路 1", url="https://stream.example/live.m3u8", vod_id="line-1")],
+            clicked_index=0,
+            source_mode="detail",
+            source_vod_id=vod_id,
+        )
+
+    def load_folder_items(self, vod_id: str):
+        self.folder_calls.append(vod_id)
+        return [VodItem(vod_id="child-live-1", vod_name="直播间", vod_tag="file")], 1
+
+
 class FakeEmbyController(FakeDoubanController):
     def __init__(self) -> None:
         self.folder_calls: list[str] = []
@@ -144,6 +162,7 @@ def test_main_window_starts_on_douban_tab(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
         emby_controller=FakeEmbyController(),
         jellyfin_controller=FakeJellyfinController(),
         browse_controller=FakeBrowseController(),
@@ -156,19 +175,21 @@ def test_main_window_starts_on_douban_tab(qtbot) -> None:
     window.show()
 
     assert window.nav_tabs.currentIndex() == 0
-    assert window.nav_tabs.count() == 6
+    assert window.nav_tabs.count() == 7
     assert window.nav_tabs.tabText(0) == "豆瓣电影"
     assert window.nav_tabs.tabText(1) == "电报影视"
-    assert window.nav_tabs.tabText(2) == "Emby"
-    assert window.nav_tabs.tabText(3) == "Jellyfin"
-    assert window.nav_tabs.tabText(4) == "文件浏览"
-    assert window.nav_tabs.tabText(5) == "播放记录"
+    assert window.nav_tabs.tabText(2) == "网络直播"
+    assert window.nav_tabs.tabText(3) == "Emby"
+    assert window.nav_tabs.tabText(4) == "Jellyfin"
+    assert window.nav_tabs.tabText(5) == "文件浏览"
+    assert window.nav_tabs.tabText(6) == "播放记录"
 
 
 def test_main_window_hides_emby_and_jellyfin_tabs_when_disabled(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
         emby_controller=FakeEmbyController(),
         jellyfin_controller=FakeJellyfinController(),
         browse_controller=FakeBrowseController(),
@@ -182,21 +203,24 @@ def test_main_window_hides_emby_and_jellyfin_tabs_when_disabled(qtbot) -> None:
     qtbot.addWidget(window)
     window.show()
 
-    assert window.nav_tabs.count() == 4
+    assert window.nav_tabs.count() == 5
     assert window.nav_tabs.tabText(0) == "豆瓣电影"
     assert window.nav_tabs.tabText(1) == "电报影视"
-    assert window.nav_tabs.tabText(2) == "文件浏览"
-    assert window.nav_tabs.tabText(3) == "播放记录"
+    assert window.nav_tabs.tabText(2) == "网络直播"
+    assert window.nav_tabs.tabText(3) == "文件浏览"
+    assert window.nav_tabs.tabText(4) == "播放记录"
 
 
 def test_main_window_loads_only_default_tab_on_startup_and_lazy_loads_others(qtbot) -> None:
     douban_controller = RecordingDoubanController()
     telegram_controller = RecordingDoubanController()
+    live_controller = RecordingDoubanController()
     browse_controller = RecordingBrowseController()
     history_controller = RecordingHistoryController()
     window = MainWindow(
         douban_controller=douban_controller,
         telegram_controller=telegram_controller,
+        live_controller=live_controller,
         emby_controller=RecordingDoubanController(),
         jellyfin_controller=RecordingDoubanController(),
         browse_controller=browse_controller,
@@ -210,11 +234,15 @@ def test_main_window_loads_only_default_tab_on_startup_and_lazy_loads_others(qtb
 
     qtbot.waitUntil(lambda: douban_controller.category_calls == 1 and douban_controller.item_calls == [("1", 1)])
     assert telegram_controller.category_calls == 0
+    assert live_controller.category_calls == 0
     assert browse_controller.load_calls == []
     assert history_controller.load_calls == []
 
     window.nav_tabs.setCurrentWidget(window.telegram_page)
     qtbot.waitUntil(lambda: telegram_controller.category_calls == 1 and telegram_controller.item_calls == [("1", 1)])
+
+    window.nav_tabs.setCurrentWidget(window.live_page)
+    qtbot.waitUntil(lambda: live_controller.category_calls == 1 and live_controller.item_calls == [("1", 1)])
 
     window.nav_tabs.setCurrentWidget(window.browse_page)
     assert browse_controller.load_calls == [("/", 1, 50)]
@@ -225,11 +253,13 @@ def test_main_window_loads_only_default_tab_on_startup_and_lazy_loads_others(qtb
 
 def test_main_window_only_auto_loads_each_tab_once(qtbot) -> None:
     telegram_controller = RecordingDoubanController()
+    live_controller = RecordingDoubanController()
     browse_controller = RecordingBrowseController()
     history_controller = RecordingHistoryController()
     window = MainWindow(
         douban_controller=RecordingDoubanController(),
         telegram_controller=telegram_controller,
+        live_controller=live_controller,
         emby_controller=RecordingDoubanController(),
         jellyfin_controller=RecordingDoubanController(),
         browse_controller=browse_controller,
@@ -243,6 +273,8 @@ def test_main_window_only_auto_loads_each_tab_once(qtbot) -> None:
 
     window.nav_tabs.setCurrentWidget(window.telegram_page)
     qtbot.waitUntil(lambda: telegram_controller.category_calls == 1 and telegram_controller.item_calls == [("1", 1)])
+    window.nav_tabs.setCurrentWidget(window.live_page)
+    qtbot.waitUntil(lambda: live_controller.category_calls == 1 and live_controller.item_calls == [("1", 1)])
     window.nav_tabs.setCurrentWidget(window.browse_page)
     assert browse_controller.load_calls == [("/", 1, 50)]
     window.nav_tabs.setCurrentWidget(window.history_page)
@@ -251,10 +283,13 @@ def test_main_window_only_auto_loads_each_tab_once(qtbot) -> None:
     window.nav_tabs.setCurrentWidget(window.douban_page)
     window.nav_tabs.setCurrentWidget(window.telegram_page)
     qtbot.waitUntil(lambda: telegram_controller.category_calls == 1)
+    window.nav_tabs.setCurrentWidget(window.live_page)
+    qtbot.waitUntil(lambda: live_controller.category_calls == 1)
     window.nav_tabs.setCurrentWidget(window.browse_page)
     window.nav_tabs.setCurrentWidget(window.history_page)
 
     assert telegram_controller.item_calls == [("1", 1)]
+    assert live_controller.item_calls == [("1", 1)]
     assert browse_controller.load_calls == [("/", 1, 50)]
     assert history_controller.load_calls == [(1, 100)]
 
@@ -351,6 +386,7 @@ def test_main_window_enables_search_controls_only_for_telegram_page(qtbot) -> No
     window = MainWindow(
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
         emby_controller=FakeEmbyController(),
         jellyfin_controller=FakeJellyfinController(),
         browse_controller=FakeBrowseController(),
@@ -362,12 +398,33 @@ def test_main_window_enables_search_controls_only_for_telegram_page(qtbot) -> No
 
     assert window.douban_page.keyword_edit.isHidden() is True
     assert window.telegram_page.keyword_edit.isHidden() is False
+    assert window.live_page.keyword_edit.isHidden() is True
+
+
+def test_main_window_keeps_search_controls_hidden_for_live_page(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+
+    assert window.live_page.keyword_edit.isHidden() is True
+    assert window.live_page.search_button.isHidden() is True
+    assert window.live_page.clear_button.isHidden() is True
 
 
 def test_main_window_enables_search_controls_for_emby_page(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
         emby_controller=FakeEmbyController(),
         jellyfin_controller=FakeJellyfinController(),
         browse_controller=FakeBrowseController(),
@@ -385,6 +442,7 @@ def test_main_window_opens_player_from_emby_card_signal(qtbot, monkeypatch) -> N
     window = MainWindow(
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
         emby_controller=controller,
         jellyfin_controller=FakeJellyfinController(),
         browse_controller=FakeBrowseController(),
@@ -410,6 +468,7 @@ def test_main_window_emby_folder_click_loads_folder_in_current_tab(qtbot, monkey
     window = MainWindow(
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
         emby_controller=controller,
         jellyfin_controller=FakeJellyfinController(),
         browse_controller=FakeBrowseController(),
@@ -438,10 +497,71 @@ def test_main_window_emby_folder_click_loads_folder_in_current_tab(qtbot, monkey
     assert shown[0][0][0].vod_id == "child-1"
 
 
+def test_main_window_opens_player_from_live_card_signal(qtbot, monkeypatch) -> None:
+    controller = FakeLiveController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=controller,
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened = []
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+
+    window.live_page.item_open_requested.emit(VodItem(vod_id="bili$1785607569", vod_name="直播间", vod_tag="file"))
+
+    assert opened
+    assert opened[0].vod.vod_name == "Live Room"
+    assert opened[0].source_vod_id == "bili$1785607569"
+
+
+def test_main_window_live_folder_click_loads_folder_in_current_tab(qtbot, monkeypatch) -> None:
+    controller = FakeLiveController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=controller,
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened = []
+    shown = []
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    monkeypatch.setattr(
+        window.live_page,
+        "show_items",
+        lambda items, total, page=1, empty_message="当前分类暂无内容": shown.append((items, total, page, empty_message)),
+    )
+
+    window.live_page.item_open_requested.emit(VodItem(vod_id="bili-9", vod_name="分区", vod_tag="folder"))
+
+    assert opened == []
+    assert controller.folder_calls == ["bili-9"]
+    assert len(shown) == 1
+    assert shown[0][1:] == (1, 1, "当前文件夹暂无内容")
+    assert shown[0][0][0].vod_id == "child-live-1"
+
+
 def test_main_window_enables_search_controls_for_jellyfin_page(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
         emby_controller=FakeEmbyController(),
         jellyfin_controller=FakeJellyfinController(),
         browse_controller=FakeBrowseController(),
@@ -459,6 +579,7 @@ def test_main_window_opens_player_from_jellyfin_card_signal(qtbot, monkeypatch) 
     window = MainWindow(
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
         emby_controller=FakeEmbyController(),
         jellyfin_controller=controller,
         browse_controller=FakeBrowseController(),
@@ -484,6 +605,7 @@ def test_main_window_jellyfin_folder_click_loads_folder_in_current_tab(qtbot, mo
     window = MainWindow(
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
         emby_controller=FakeEmbyController(),
         jellyfin_controller=controller,
         browse_controller=FakeBrowseController(),

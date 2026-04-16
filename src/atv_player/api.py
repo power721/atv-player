@@ -123,6 +123,19 @@ class ApiClient:
             params["pg"] = page
         return self._request("GET", f"/tg-search/{self._vod_token}", params=params)
 
+    def list_live_categories(self) -> dict[str, Any]:
+        return self._request("GET", f"/live/{self._vod_token}")
+
+    def list_live_items(self, category_id: str, page: int) -> dict[str, Any]:
+        return self._request(
+            "GET",
+            f"/live/{self._vod_token}",
+            params={"t": category_id, "pg": page},
+        )
+
+    def get_live_detail(self, vod_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/live/{self._vod_token}", params={"ids": vod_id})
+
     def list_emby_categories(self) -> dict[str, Any]:
         return self._request("GET", f"/emby/{self._vod_token}")
 

@@ -35,6 +35,14 @@ class _EmptyTelegramController(_EmptyDoubanController):
         raise ValueError(f"没有可播放的项目: {vod_id}")
 
 
+class _EmptyLiveController(_EmptyDoubanController):
+    def build_request(self, vod_id: str):
+        raise ValueError(f"没有可播放的项目: {vod_id}")
+
+    def load_folder_items(self, vod_id: str):
+        return [], 0
+
+
 class _EmptyEmbyController(_EmptyDoubanController):
     def build_request(self, vod_id: str):
         raise ValueError(f"没有可播放的项目: {vod_id}")
@@ -57,6 +65,7 @@ class MainWindow(QMainWindow):
             save_config=None,
             douban_controller=None,
             telegram_controller=None,
+            live_controller=None,
             emby_controller=None,
             jellyfin_controller=None,
             show_emby_tab: bool = True,
@@ -72,6 +81,10 @@ class MainWindow(QMainWindow):
             telegram_controller or _EmptyTelegramController(),
             click_action="open",
             search_enabled=True,
+        )
+        self.live_page = DoubanPage(
+            live_controller or _EmptyLiveController(),
+            click_action="open",
         )
         self.emby_page = None
         if show_emby_tab:
@@ -90,6 +103,7 @@ class MainWindow(QMainWindow):
         self.history_page = HistoryPage(history_controller)
         self.browse_controller = browse_controller
         self.telegram_controller = telegram_controller or _EmptyTelegramController()
+        self.live_controller = live_controller or _EmptyLiveController()
         self.emby_controller = emby_controller or _EmptyEmbyController()
         self.jellyfin_controller = jellyfin_controller or _EmptyJellyfinController()
         self.player_controller = player_controller
@@ -98,6 +112,7 @@ class MainWindow(QMainWindow):
 
         self.nav_tabs.addTab(self.douban_page, "豆瓣电影")
         self.nav_tabs.addTab(self.telegram_page, "电报影视")
+        self.nav_tabs.addTab(self.live_page, "网络直播")
         if self.emby_page is not None:
             self.nav_tabs.addTab(self.emby_page, "Emby")
         if self.jellyfin_page is not None:
@@ -122,6 +137,7 @@ class MainWindow(QMainWindow):
         self.history_page.open_detail_requested.connect(self.open_history_detail)
         self.douban_page.search_requested.connect(self._handle_douban_search_requested)
         self.telegram_page.open_requested.connect(self._handle_telegram_open_requested)
+        self.live_page.item_open_requested.connect(self._handle_live_item_open_requested)
         if self.emby_page is not None:
             self.emby_page.item_open_requested.connect(self._handle_emby_item_open_requested)
         if self.jellyfin_page is not None:
@@ -129,6 +145,7 @@ class MainWindow(QMainWindow):
 
         self.douban_page.unauthorized.connect(self.logout_requested.emit)
         self.telegram_page.unauthorized.connect(self.logout_requested.emit)
+        self.live_page.unauthorized.connect(self.logout_requested.emit)
         if self.emby_page is not None:
             self.emby_page.unauthorized.connect(self.logout_requested.emit)
         if self.jellyfin_page is not None:
@@ -158,6 +175,9 @@ class MainWindow(QMainWindow):
         if widget is self.telegram_page:
             self.telegram_page.ensure_loaded()
             return
+        if widget is self.live_page:
+            self.live_page.ensure_loaded()
+            return
         if widget is self.emby_page and self.emby_page is not None:
             self.emby_page.ensure_loaded()
             return
@@ -183,6 +203,25 @@ class MainWindow(QMainWindow):
             self.show_error(str(exc))
             return
         self.open_player(request)
+
+    def _handle_live_open_requested(self, vod_id: str) -> None:
+        try:
+            request = self.live_controller.build_request(vod_id)
+        except Exception as exc:
+            self.show_error(str(exc))
+            return
+        self.open_player(request)
+
+    def _handle_live_item_open_requested(self, item) -> None:
+        if getattr(item, "vod_tag", "") == "folder":
+            try:
+                items, total = self.live_controller.load_folder_items(item.vod_id)
+            except Exception as exc:
+                self.show_error(str(exc))
+                return
+            self.live_page.show_items(items, total, page=1, empty_message="当前文件夹暂无内容")
+            return
+        self._handle_live_open_requested(item.vod_id)
 
     def _handle_emby_open_requested(self, vod_id: str) -> None:
         try:
