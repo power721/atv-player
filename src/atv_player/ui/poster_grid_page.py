@@ -24,7 +24,7 @@ from atv_player.api import ApiError, UnauthorizedError
 from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url
 
 
-class _DoubanSignals(QObject):
+class _PosterGridSignals(QObject):
     categories_loaded = Signal(int, object)
     items_loaded = Signal(int, object, int)
     failed = Signal(str, int, str)
@@ -32,10 +32,11 @@ class _DoubanSignals(QObject):
     poster_loaded = Signal(object, object)
 
 
-class DoubanPage(QWidget):
+class PosterGridPage(QWidget):
     search_requested = Signal(str)
     open_requested = Signal(str)
     item_open_requested = Signal(object)
+    folder_breadcrumb_requested = Signal(str, str, int)
     unauthorized = Signal()
     _CARD_WIDTH = 220
     _CARD_HEIGHT = 360
@@ -44,11 +45,18 @@ class DoubanPage(QWidget):
     _MIN_CARD_COLUMNS = 1
     _MAX_CARD_COLUMNS = 6
 
-    def __init__(self, controller, click_action: str = "search", search_enabled: bool = False) -> None:
+    def __init__(
+        self,
+        controller,
+        click_action: str = "search",
+        search_enabled: bool = False,
+        folder_navigation_enabled: bool = False,
+    ) -> None:
         super().__init__()
         self.controller = controller
         self._click_action = click_action
         self._search_enabled = search_enabled
+        self._folder_navigation_enabled = folder_navigation_enabled
         self._initial_load_started = False
         self._search_mode = False
         self._search_keyword = ""
@@ -56,6 +64,11 @@ class DoubanPage(QWidget):
         self.keyword_edit = QLineEdit()
         self.search_button = QPushButton("搜索")
         self.clear_button = QPushButton("清空")
+        self.breadcrumb_bar = QWidget()
+        self.breadcrumb_layout = QHBoxLayout(self.breadcrumb_bar)
+        self.breadcrumb_layout.setContentsMargins(0, 0, 0, 0)
+        self.breadcrumb_layout.setSpacing(4)
+        self.breadcrumb_buttons: list[QPushButton] = []
         self.status_label = QLabel("")
         self.prev_page_button = QPushButton("上一页")
         self.next_page_button = QPushButton("下一页")
@@ -68,6 +81,7 @@ class DoubanPage(QWidget):
         self.cards_scroll.setWidgetResizable(True)
         self.cards_scroll.setWidget(self.cards_widget)
         self.card_buttons: list[QToolButton] = []
+        self._folder_breadcrumbs: list[dict[str, str]] = []
         self.categories = []
         self.items = []
         self.selected_category_id = ""
@@ -79,7 +93,7 @@ class DoubanPage(QWidget):
         self._items_request_id = 0
         self._poster_generation = 0
         self._poster_semaphore = BoundedSemaphore(value=6)
-        self._signals = _DoubanSignals(self)
+        self._signals = _PosterGridSignals(self)
         self._signals.categories_loaded.connect(self._handle_categories_loaded)
         self._signals.items_loaded.connect(self._handle_items_loaded)
         self._signals.failed.connect(self._handle_failed)
@@ -88,6 +102,7 @@ class DoubanPage(QWidget):
 
         self.category_list.setMinimumWidth(180)
         self.status_label.setWordWrap(True)
+        self.breadcrumb_bar.setVisible(self._folder_navigation_enabled)
 
         right = QVBoxLayout()
         if self._search_enabled:
@@ -100,6 +115,7 @@ class DoubanPage(QWidget):
             self.keyword_edit.hide()
             self.search_button.hide()
             self.clear_button.hide()
+        right.addWidget(self.breadcrumb_bar)
         right.addWidget(self.status_label)
         right.addWidget(self.cards_scroll, 1)
         paging = QHBoxLayout()
@@ -161,7 +177,7 @@ class DoubanPage(QWidget):
     def load_items(self, category_id: str, page: int) -> None:
         self._items_request_id += 1
         request_id = self._items_request_id
-        self.status_label.setText("加载电影中...")
+        self.status_label.setText("加载中...")
 
         def run() -> None:
             try:
@@ -194,6 +210,7 @@ class DoubanPage(QWidget):
             return
         self.selected_category_id = self.categories[row].type_id
         self.current_page = 1
+        self.reset_folder_breadcrumbs_to_root()
         if self._search_mode:
             return
         self.load_items(self.selected_category_id, self.current_page)
@@ -338,6 +355,68 @@ class DoubanPage(QWidget):
         self.status_label.setText("" if self.items else empty_message)
         self._render_cards()
         self._update_pagination()
+
+    def reset_folder_breadcrumbs_to_root(self) -> None:
+        if not self._folder_navigation_enabled:
+            return
+        row = self.category_list.currentRow()
+        if not (0 <= row < len(self.categories)):
+            self._set_folder_breadcrumbs([])
+            return
+        category = self.categories[row]
+        self._set_folder_breadcrumbs(
+            [
+                {"id": "", "label": "首页", "kind": "home"},
+                {"id": category.type_id, "label": category.type_name, "kind": "category"},
+            ]
+        )
+
+    def push_folder_breadcrumb(self, breadcrumb_id: str, label: str) -> None:
+        if not self._folder_navigation_enabled:
+            return
+        breadcrumbs = list(self._folder_breadcrumbs)
+        breadcrumbs.append({"id": breadcrumb_id, "label": label, "kind": "folder"})
+        self._set_folder_breadcrumbs(breadcrumbs)
+
+    def trim_folder_breadcrumbs(self, index: int) -> None:
+        if not self._folder_navigation_enabled:
+            return
+        self._set_folder_breadcrumbs(self._folder_breadcrumbs[: index + 1])
+
+    def _set_folder_breadcrumbs(self, breadcrumbs: list[dict[str, str]]) -> None:
+        self._folder_breadcrumbs = list(breadcrumbs)
+        self._render_folder_breadcrumbs()
+
+    def _render_folder_breadcrumbs(self) -> None:
+        while self.breadcrumb_layout.count():
+            item = self.breadcrumb_layout.takeAt(0)
+            if item is None:
+                continue
+            widget = cast(QWidget | None, item.widget())
+            if widget is not None:
+                widget.deleteLater()
+        self.breadcrumb_buttons = []
+        self.breadcrumb_bar.setVisible(self._folder_navigation_enabled and bool(self._folder_breadcrumbs))
+        if not self._folder_navigation_enabled:
+            return
+        for index, breadcrumb in enumerate(self._folder_breadcrumbs):
+            if index > 0:
+                self.breadcrumb_layout.addWidget(QLabel("/"))
+            button = QPushButton(breadcrumb["label"])
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setFlat(True)
+            button.clicked.connect(
+                lambda _checked=False, current_index=index: self._handle_folder_breadcrumb_clicked(current_index)
+            )
+            self.breadcrumb_buttons.append(button)
+            self.breadcrumb_layout.addWidget(button)
+        self.breadcrumb_layout.addStretch(1)
+
+    def _handle_folder_breadcrumb_clicked(self, index: int) -> None:
+        if not (0 <= index < len(self._folder_breadcrumbs)):
+            return
+        breadcrumb = self._folder_breadcrumbs[index]
+        self.folder_breadcrumb_requested.emit(breadcrumb["id"], breadcrumb["kind"], index)
 
     def _build_card_button(self, item) -> QToolButton:
         text = item.vod_name if not item.vod_remarks else f"{item.vod_name}\n{item.vod_remarks}"

@@ -28,10 +28,17 @@ class FakeHistoryController:
 
 
 class FakeDoubanController:
+    def __init__(self) -> None:
+        self.category_calls = 0
+        self.item_calls: list[tuple[str, int]] = []
+        self.categories = [DoubanCategory(type_id="suggestion", type_name="推荐")]
+
     def load_categories(self):
-        return []
+        self.category_calls += 1
+        return self.categories
 
     def load_items(self, category_id: str, page: int):
+        self.item_calls.append((category_id, page))
         return [], 0
 
 
@@ -48,6 +55,7 @@ class FakeTelegramController(FakeDoubanController):
 
 class FakeLiveController(FakeDoubanController):
     def __init__(self) -> None:
+        super().__init__()
         self.folder_calls: list[str] = []
 
     def build_request(self, vod_id: str):
@@ -67,6 +75,7 @@ class FakeLiveController(FakeDoubanController):
 
 class FakeEmbyController(FakeDoubanController):
     def __init__(self) -> None:
+        super().__init__()
         self.folder_calls: list[str] = []
 
     def build_request(self, vod_id: str):
@@ -85,6 +94,7 @@ class FakeEmbyController(FakeDoubanController):
 
 class FakeJellyfinController(FakeDoubanController):
     def __init__(self) -> None:
+        super().__init__()
         self.folder_calls: list[str] = []
 
     def build_request(self, vod_id: str):
@@ -574,6 +584,59 @@ def test_main_window_live_folder_click_loads_folder_in_current_tab(qtbot, monkey
     assert shown[0][0][0].vod_id == "child-live-1"
 
 
+def test_main_window_live_folder_click_updates_breadcrumbs(qtbot, monkeypatch) -> None:
+    controller = FakeLiveController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=controller,
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.live_page.ensure_loaded()
+
+    qtbot.waitUntil(lambda: len(window.live_page.breadcrumb_buttons) == 2)
+    monkeypatch.setattr(window.live_page, "show_items", lambda items, total, page=1, empty_message="当前分类暂无内容": None)
+
+    window.live_page.item_open_requested.emit(VodItem(vod_id="bili-9", vod_name="分区", vod_tag="folder"))
+
+    qtbot.waitUntil(lambda: [button.text() for button in window.live_page.breadcrumb_buttons] == ["首页", "推荐", "分区"])
+
+
+def test_main_window_live_breadcrumb_click_loads_category_root(qtbot, monkeypatch) -> None:
+    controller = FakeLiveController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=controller,
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.live_page.ensure_loaded()
+
+    qtbot.waitUntil(lambda: controller.item_calls == [("suggestion", 1)])
+    monkeypatch.setattr(window.live_page, "show_items", lambda items, total, page=1, empty_message="当前分类暂无内容": None)
+    window.live_page.item_open_requested.emit(VodItem(vod_id="bili-9", vod_name="分区", vod_tag="folder"))
+    qtbot.waitUntil(lambda: [button.text() for button in window.live_page.breadcrumb_buttons] == ["首页", "推荐", "分区"])
+
+    window.live_page.breadcrumb_buttons[1].click()
+
+    qtbot.waitUntil(lambda: controller.item_calls[-1] == ("suggestion", 1))
+    qtbot.waitUntil(lambda: [button.text() for button in window.live_page.breadcrumb_buttons] == ["首页", "推荐"])
+
+
 def test_main_window_enables_search_controls_for_jellyfin_page(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),
@@ -654,6 +717,112 @@ def test_main_window_jellyfin_folder_click_loads_folder_in_current_tab(qtbot, mo
     assert len(shown) == 1
     assert shown[0][1:] == (1, 1, "当前文件夹暂无内容")
     assert shown[0][0][0].vod_id == "jf-child-1"
+
+
+def test_main_window_emby_folder_click_updates_breadcrumbs(qtbot, monkeypatch) -> None:
+    controller = FakeEmbyController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=controller,
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.emby_page.ensure_loaded()
+
+    qtbot.waitUntil(lambda: len(window.emby_page.breadcrumb_buttons) == 2)
+    monkeypatch.setattr(window.emby_page, "show_items", lambda items, total, page=1, empty_message="当前分类暂无内容": None)
+
+    window.emby_page.item_open_requested.emit(VodItem(vod_id="folder-1", vod_name="Season 1", vod_tag="folder"))
+
+    qtbot.waitUntil(lambda: [button.text() for button in window.emby_page.breadcrumb_buttons] == ["首页", "推荐", "Season 1"])
+
+
+def test_main_window_emby_breadcrumb_click_loads_category_root(qtbot, monkeypatch) -> None:
+    controller = FakeEmbyController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=controller,
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.emby_page.ensure_loaded()
+
+    qtbot.waitUntil(lambda: controller.item_calls == [("suggestion", 1)])
+    monkeypatch.setattr(window.emby_page, "show_items", lambda items, total, page=1, empty_message="当前分类暂无内容": None)
+    window.emby_page.item_open_requested.emit(VodItem(vod_id="folder-1", vod_name="Season 1", vod_tag="folder"))
+    qtbot.waitUntil(lambda: [button.text() for button in window.emby_page.breadcrumb_buttons] == ["首页", "推荐", "Season 1"])
+
+    window.emby_page.breadcrumb_buttons[1].click()
+
+    qtbot.waitUntil(lambda: controller.item_calls[-1] == ("suggestion", 1))
+    qtbot.waitUntil(lambda: [button.text() for button in window.emby_page.breadcrumb_buttons] == ["首页", "推荐"])
+
+
+def test_main_window_jellyfin_folder_click_updates_breadcrumbs(qtbot, monkeypatch) -> None:
+    controller = FakeJellyfinController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=controller,
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.jellyfin_page.ensure_loaded()
+
+    qtbot.waitUntil(lambda: len(window.jellyfin_page.breadcrumb_buttons) == 2)
+    monkeypatch.setattr(window.jellyfin_page, "show_items", lambda items, total, page=1, empty_message="当前分类暂无内容": None)
+
+    window.jellyfin_page.item_open_requested.emit(VodItem(vod_id="folder-1", vod_name="Season 1", vod_tag="folder"))
+
+    qtbot.waitUntil(lambda: [button.text() for button in window.jellyfin_page.breadcrumb_buttons] == ["首页", "推荐", "Season 1"])
+
+
+def test_main_window_jellyfin_breadcrumb_click_loads_category_root(qtbot, monkeypatch) -> None:
+    controller = FakeJellyfinController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=controller,
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.jellyfin_page.ensure_loaded()
+
+    qtbot.waitUntil(lambda: controller.item_calls == [("suggestion", 1)])
+    monkeypatch.setattr(window.jellyfin_page, "show_items", lambda items, total, page=1, empty_message="当前分类暂无内容": None)
+    window.jellyfin_page.item_open_requested.emit(VodItem(vod_id="folder-1", vod_name="Season 1", vod_tag="folder"))
+    qtbot.waitUntil(lambda: [button.text() for button in window.jellyfin_page.breadcrumb_buttons] == ["首页", "推荐", "Season 1"])
+
+    window.jellyfin_page.breadcrumb_buttons[1].click()
+
+    qtbot.waitUntil(lambda: controller.item_calls[-1] == ("suggestion", 1))
+    qtbot.waitUntil(lambda: [button.text() for button in window.jellyfin_page.breadcrumb_buttons] == ["首页", "推荐"])
 
 
 def test_decide_start_view_prefers_login_without_token() -> None:

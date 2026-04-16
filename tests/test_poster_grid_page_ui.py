@@ -4,8 +4,8 @@ from PySide6.QtCore import Qt
 
 from atv_player.api import ApiError, UnauthorizedError
 from atv_player.models import DoubanCategory, VodItem
-import atv_player.ui.douban_page as douban_page_module
-from atv_player.ui.douban_page import DoubanPage
+import atv_player.ui.poster_grid_page as poster_grid_page_module
+from atv_player.ui.poster_grid_page import PosterGridPage
 
 
 class FakeDoubanController:
@@ -112,15 +112,15 @@ class SearchableDoubanController(FakeDoubanController):
         return self.search_results
 
 
-def show_loaded_page(qtbot, page: DoubanPage) -> DoubanPage:
+def show_loaded_page(qtbot, page: PosterGridPage) -> PosterGridPage:
     qtbot.addWidget(page)
     page.show()
     page.ensure_loaded()
     return page
 
 
-def test_douban_page_loads_categories_and_first_page(qtbot) -> None:
-    page = show_loaded_page(qtbot, DoubanPage(FakeDoubanController()))
+def test_poster_grid_page_loads_categories_and_first_page(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(FakeDoubanController()))
 
     qtbot.waitUntil(lambda: page.category_list.count() == 2)
     qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
@@ -130,8 +130,8 @@ def test_douban_page_loads_categories_and_first_page(qtbot) -> None:
     assert page.card_buttons[0].text() == "霸王别姬\n9.6"
 
 
-def test_douban_page_clicking_card_emits_search_requested(qtbot) -> None:
-    page = show_loaded_page(qtbot, DoubanPage(FakeDoubanController()))
+def test_poster_grid_page_clicking_card_emits_search_requested(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(FakeDoubanController()))
 
     qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
 
@@ -141,8 +141,8 @@ def test_douban_page_clicking_card_emits_search_requested(qtbot) -> None:
     assert signal.args == ["霸王别姬"]
 
 
-def test_douban_page_clicking_card_can_emit_open_requested(qtbot) -> None:
-    page = show_loaded_page(qtbot, DoubanPage(FakeDoubanController(), click_action="open"))
+def test_poster_grid_page_clicking_card_can_emit_open_requested(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(FakeDoubanController(), click_action="open"))
 
     qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
 
@@ -152,8 +152,8 @@ def test_douban_page_clicking_card_can_emit_open_requested(qtbot) -> None:
     assert signal.args == ["m1"]
 
 
-def test_douban_page_clicking_card_can_emit_item_open_requested(qtbot) -> None:
-    page = show_loaded_page(qtbot, DoubanPage(FakeDoubanController(), click_action="open"))
+def test_poster_grid_page_clicking_card_can_emit_item_open_requested(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(FakeDoubanController(), click_action="open"))
 
     qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
 
@@ -164,8 +164,8 @@ def test_douban_page_clicking_card_can_emit_item_open_requested(qtbot) -> None:
     assert signal.args[0].vod_name == "霸王别姬"
 
 
-def test_douban_page_can_show_search_controls_when_enabled(qtbot) -> None:
-    page = show_loaded_page(qtbot, DoubanPage(SearchableDoubanController(), click_action="open", search_enabled=True))
+def test_poster_grid_page_can_show_search_controls_when_enabled(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(SearchableDoubanController(), click_action="open", search_enabled=True))
     qtbot.waitUntil(lambda: page.category_list.count() == 2)
 
     assert page.keyword_edit.isHidden() is False
@@ -173,9 +173,44 @@ def test_douban_page_can_show_search_controls_when_enabled(qtbot) -> None:
     assert page.clear_button.isHidden() is False
 
 
-def test_douban_page_search_replaces_category_cards_and_clear_restores_category(qtbot) -> None:
+def test_poster_grid_page_navigation_enabled_shows_root_breadcrumbs(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(FakeDoubanController(), folder_navigation_enabled=True))
+
+    qtbot.waitUntil(lambda: page.category_list.count() == 2)
+    qtbot.waitUntil(lambda: len(page.breadcrumb_buttons) == 2)
+
+    assert page.breadcrumb_bar.isHidden() is False
+    assert [button.text() for button in page.breadcrumb_buttons] == ["首页", "推荐"]
+
+
+def test_poster_grid_page_clicking_breadcrumb_emits_folder_navigation_request(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(FakeDoubanController(), folder_navigation_enabled=True))
+
+    qtbot.waitUntil(lambda: page.category_list.count() == 2)
+    page.push_folder_breadcrumb("folder-1", "分区")
+    qtbot.waitUntil(lambda: len(page.breadcrumb_buttons) == 3)
+
+    with qtbot.waitSignal(page.folder_breadcrumb_requested, timeout=1000) as signal:
+        page.breadcrumb_buttons[1].click()
+
+    assert signal.args == ["suggestion", "category", 1]
+
+
+def test_poster_grid_page_category_change_resets_folder_breadcrumbs(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(FakeDoubanController(), folder_navigation_enabled=True))
+
+    qtbot.waitUntil(lambda: page.category_list.count() == 2)
+    page.push_folder_breadcrumb("folder-1", "分区")
+    qtbot.waitUntil(lambda: len(page.breadcrumb_buttons) == 3)
+
+    page.category_list.setCurrentRow(1)
+
+    qtbot.waitUntil(lambda: [button.text() for button in page.breadcrumb_buttons] == ["首页", "电影"])
+
+
+def test_poster_grid_page_search_replaces_category_cards_and_clear_restores_category(qtbot) -> None:
     controller = SearchableDoubanController()
-    page = show_loaded_page(qtbot, DoubanPage(controller, click_action="open", search_enabled=True))
+    page = show_loaded_page(qtbot, PosterGridPage(controller, click_action="open", search_enabled=True))
 
     qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
     assert page.card_buttons[0].text() == "霸王别姬\n9.6"
@@ -193,9 +228,9 @@ def test_douban_page_search_replaces_category_cards_and_clear_restores_category(
     qtbot.waitUntil(lambda: page.card_buttons[0].text() == "霸王别姬\n9.6")
 
 
-def test_douban_page_clicking_search_result_can_emit_open_requested(qtbot) -> None:
+def test_poster_grid_page_clicking_search_result_can_emit_open_requested(qtbot) -> None:
     controller = SearchableDoubanController()
-    page = show_loaded_page(qtbot, DoubanPage(controller, click_action="open", search_enabled=True))
+    page = show_loaded_page(qtbot, PosterGridPage(controller, click_action="open", search_enabled=True))
 
     qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
     page.keyword_edit.setText("黑袍纠察队")
@@ -208,9 +243,9 @@ def test_douban_page_clicking_search_result_can_emit_open_requested(qtbot) -> No
     assert signal.args == ["s1"]
 
 
-def test_douban_page_category_change_resets_to_first_page(qtbot) -> None:
+def test_poster_grid_page_category_change_resets_to_first_page(qtbot) -> None:
     controller = FakeDoubanController()
-    page = show_loaded_page(qtbot, DoubanPage(controller))
+    page = show_loaded_page(qtbot, PosterGridPage(controller))
 
     qtbot.waitUntil(lambda: page.category_list.count() == 2)
     page.current_page = 3
@@ -220,9 +255,9 @@ def test_douban_page_category_change_resets_to_first_page(qtbot) -> None:
     assert page.current_page == 1
 
 
-def test_douban_page_ignores_stale_item_response(qtbot) -> None:
+def test_poster_grid_page_ignores_stale_item_response(qtbot) -> None:
     controller = AsyncDoubanController()
-    page = show_loaded_page(qtbot, DoubanPage(controller))
+    page = show_loaded_page(qtbot, PosterGridPage(controller))
 
     qtbot.waitUntil(lambda: page.category_list.count() == 2)
     controller.release("movie", 1)
@@ -236,9 +271,9 @@ def test_douban_page_ignores_stale_item_response(qtbot) -> None:
     assert page.card_buttons[0].text() == "活着\n9.3"
 
 
-def test_douban_page_ignores_stale_failed_item_response(qtbot) -> None:
+def test_poster_grid_page_ignores_stale_failed_item_response(qtbot) -> None:
     controller = AsyncFailingDoubanController()
-    page = show_loaded_page(qtbot, DoubanPage(controller))
+    page = show_loaded_page(qtbot, PosterGridPage(controller))
 
     qtbot.waitUntil(lambda: page.category_list.count() == 2)
     controller.release("movie", 1)
@@ -254,9 +289,9 @@ def test_douban_page_ignores_stale_failed_item_response(qtbot) -> None:
     assert page.status_label.text() == ""
 
 
-def test_douban_page_ignores_stale_unauthorized_response(qtbot) -> None:
+def test_poster_grid_page_ignores_stale_unauthorized_response(qtbot) -> None:
     controller = AsyncUnauthorizedDoubanController()
-    page = show_loaded_page(qtbot, DoubanPage(controller))
+    page = show_loaded_page(qtbot, PosterGridPage(controller))
     unauthorized = {"count": 0}
     page.unauthorized.connect(lambda: unauthorized.__setitem__("count", unauthorized["count"] + 1))
 
@@ -274,8 +309,8 @@ def test_douban_page_ignores_stale_unauthorized_response(qtbot) -> None:
     assert page.card_buttons[0].text() == "活着\n9.3"
 
 
-def test_douban_page_keeps_previous_cards_when_new_load_fails(qtbot) -> None:
-    page = show_loaded_page(qtbot, DoubanPage(FailingDoubanController()))
+def test_poster_grid_page_keeps_previous_cards_when_new_load_fails(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(FailingDoubanController()))
 
     qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
     assert page.card_buttons[0].text() == "霸王别姬\n9.6"
@@ -286,7 +321,7 @@ def test_douban_page_keeps_previous_cards_when_new_load_fails(qtbot) -> None:
     assert page.card_buttons[0].text() == "霸王别姬\n9.6"
 
 
-def test_douban_page_renders_loaded_poster_icon_on_card(qtbot, monkeypatch) -> None:
+def test_poster_grid_page_renders_loaded_poster_icon_on_card(qtbot, monkeypatch) -> None:
     class ImmediateThread:
         def __init__(self, target, daemon=None) -> None:
             self._target = target
@@ -299,28 +334,28 @@ def test_douban_page_renders_loaded_poster_icon_on_card(qtbot, monkeypatch) -> N
     image = QImage(20, 40, QImage.Format.Format_RGB32)
     image.fill(0x00FF00)
 
-    monkeypatch.setattr(douban_page_module, "load_remote_poster_image", lambda *args, **kwargs: image)
-    monkeypatch.setattr(douban_page_module.threading, "Thread", ImmediateThread)
+    monkeypatch.setattr(poster_grid_page_module, "load_remote_poster_image", lambda *args, **kwargs: image)
+    monkeypatch.setattr(poster_grid_page_module.threading, "Thread", ImmediateThread)
 
-    page = show_loaded_page(qtbot, DoubanPage(FakeDoubanController()))
+    page = show_loaded_page(qtbot, PosterGridPage(FakeDoubanController()))
     qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
 
     assert page.card_buttons[0].icon().isNull() is False
 
 
-def test_douban_page_cards_use_wider_size_and_pointing_cursor(qtbot) -> None:
-    page = show_loaded_page(qtbot, DoubanPage(FakeDoubanController()))
+def test_poster_grid_page_cards_use_wider_size_and_pointing_cursor(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(FakeDoubanController()))
 
     qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
     button = page.card_buttons[0]
 
-    assert button.width() == DoubanPage._CARD_WIDTH
-    assert button.height() == DoubanPage._CARD_HEIGHT
-    assert button.iconSize() == DoubanPage._CARD_POSTER_SIZE
+    assert button.width() == PosterGridPage._CARD_WIDTH
+    assert button.height() == PosterGridPage._CARD_HEIGHT
+    assert button.iconSize() == PosterGridPage._CARD_POSTER_SIZE
     assert button.cursor().shape() == Qt.CursorShape.PointingHandCursor
 
 
-def test_douban_page_reduces_columns_when_width_is_tighter(qtbot) -> None:
+def test_poster_grid_page_reduces_columns_when_width_is_tighter(qtbot) -> None:
     controller = FakeDoubanController()
     controller.items_by_category["suggestion"] = (
         [
@@ -329,7 +364,7 @@ def test_douban_page_reduces_columns_when_width_is_tighter(qtbot) -> None:
         ],
         30,
     )
-    page = DoubanPage(controller)
+    page = PosterGridPage(controller)
     qtbot.addWidget(page)
     page.resize(1300, 900)
     page.show()
@@ -348,8 +383,8 @@ def test_douban_page_reduces_columns_when_width_is_tighter(qtbot) -> None:
     assert page.cards_layout.getItemPosition(5)[:2] == (0, 5)
 
 
-def test_douban_page_centers_content_container(qtbot) -> None:
-    page = DoubanPage(FakeDoubanController())
+def test_poster_grid_page_centers_content_container(qtbot) -> None:
+    page = PosterGridPage(FakeDoubanController())
     qtbot.addWidget(page)
     page.resize(2200, 1000)
     page.show()

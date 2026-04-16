@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.ui.browse_page import BrowsePage
-from atv_player.ui.douban_page import DoubanPage
+from atv_player.ui.poster_grid_page import PosterGridPage
 from atv_player.ui.history_page import HistoryPage
 from atv_player.ui.player_window import PlayerWindow
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
@@ -76,29 +76,32 @@ class MainWindow(QMainWindow):
         self.nav_tabs = QTabWidget()
         self.logout_button = QPushButton("退出登录")
         self.browse_page = BrowsePage(browse_controller, config=config, save_config=self._save_config)
-        self.douban_page = DoubanPage(douban_controller or _EmptyDoubanController())
-        self.telegram_page = DoubanPage(
+        self.douban_page = PosterGridPage(douban_controller or _EmptyDoubanController())
+        self.telegram_page = PosterGridPage(
             telegram_controller or _EmptyTelegramController(),
             click_action="open",
             search_enabled=True,
         )
-        self.live_page = DoubanPage(
+        self.live_page = PosterGridPage(
             live_controller or _EmptyLiveController(),
             click_action="open",
+            folder_navigation_enabled=True,
         )
         self.emby_page = None
         if show_emby_tab:
-            self.emby_page = DoubanPage(
+            self.emby_page = PosterGridPage(
                 emby_controller or _EmptyEmbyController(),
                 click_action="open",
                 search_enabled=True,
+                folder_navigation_enabled=True,
             )
         self.jellyfin_page = None
         if show_jellyfin_tab:
-            self.jellyfin_page = DoubanPage(
+            self.jellyfin_page = PosterGridPage(
                 jellyfin_controller or _EmptyJellyfinController(),
                 click_action="open",
                 search_enabled=True,
+                folder_navigation_enabled=True,
             )
         self.history_page = HistoryPage(history_controller)
         self.browse_controller = browse_controller
@@ -138,10 +141,37 @@ class MainWindow(QMainWindow):
         self.douban_page.search_requested.connect(self._handle_douban_search_requested)
         self.telegram_page.open_requested.connect(self._handle_telegram_open_requested)
         self.live_page.item_open_requested.connect(self._handle_live_item_open_requested)
+        self.live_page.folder_breadcrumb_requested.connect(
+            lambda node_id, kind, index: self._handle_media_breadcrumb_requested(
+                self.live_page,
+                self.live_controller,
+                node_id,
+                kind,
+                index,
+            )
+        )
         if self.emby_page is not None:
             self.emby_page.item_open_requested.connect(self._handle_emby_item_open_requested)
+            self.emby_page.folder_breadcrumb_requested.connect(
+                lambda node_id, kind, index: self._handle_media_breadcrumb_requested(
+                    self.emby_page,
+                    self.emby_controller,
+                    node_id,
+                    kind,
+                    index,
+                )
+            )
         if self.jellyfin_page is not None:
             self.jellyfin_page.item_open_requested.connect(self._handle_jellyfin_item_open_requested)
+            self.jellyfin_page.folder_breadcrumb_requested.connect(
+                lambda node_id, kind, index: self._handle_media_breadcrumb_requested(
+                    self.jellyfin_page,
+                    self.jellyfin_controller,
+                    node_id,
+                    kind,
+                    index,
+                )
+            )
 
         self.douban_page.unauthorized.connect(self.logout_requested.emit)
         self.telegram_page.unauthorized.connect(self.logout_requested.emit)
@@ -214,12 +244,7 @@ class MainWindow(QMainWindow):
 
     def _handle_live_item_open_requested(self, item) -> None:
         if getattr(item, "vod_tag", "") == "folder":
-            try:
-                items, total = self.live_controller.load_folder_items(item.vod_id)
-            except Exception as exc:
-                self.show_error(str(exc))
-                return
-            self.live_page.show_items(items, total, page=1, empty_message="当前文件夹暂无内容")
+            self._open_media_folder(self.live_page, self.live_controller, item)
             return
         self._handle_live_open_requested(item.vod_id)
 
@@ -233,13 +258,8 @@ class MainWindow(QMainWindow):
 
     def _handle_emby_item_open_requested(self, item) -> None:
         if getattr(item, "vod_tag", "") == "folder":
-            try:
-                items, total = self.emby_controller.load_folder_items(item.vod_id)
-            except Exception as exc:
-                self.show_error(str(exc))
-                return
             if self.emby_page is not None:
-                self.emby_page.show_items(items, total, page=1, empty_message="当前文件夹暂无内容")
+                self._open_media_folder(self.emby_page, self.emby_controller, item)
             return
         self._handle_emby_open_requested(item.vod_id)
 
@@ -253,15 +273,45 @@ class MainWindow(QMainWindow):
 
     def _handle_jellyfin_item_open_requested(self, item) -> None:
         if getattr(item, "vod_tag", "") == "folder":
-            try:
-                items, total = self.jellyfin_controller.load_folder_items(item.vod_id)
-            except Exception as exc:
-                self.show_error(str(exc))
-                return
             if self.jellyfin_page is not None:
-                self.jellyfin_page.show_items(items, total, page=1, empty_message="当前文件夹暂无内容")
+                self._open_media_folder(self.jellyfin_page, self.jellyfin_controller, item)
             return
         self._handle_jellyfin_open_requested(item.vod_id)
+
+    def _open_media_folder(self, page: PosterGridPage, controller: Any, item: Any) -> None:
+        try:
+            items, total = controller.load_folder_items(item.vod_id)
+        except Exception as exc:
+            self.show_error(str(exc))
+            return
+        page.show_items(items, total, page=1, empty_message="当前文件夹暂无内容")
+        page.push_folder_breadcrumb(item.vod_id, item.vod_name)
+
+    def _handle_media_breadcrumb_requested(
+        self,
+        page: PosterGridPage,
+        controller: Any,
+        node_id: str,
+        kind: str,
+        index: int,
+    ) -> None:
+        try:
+            if kind == "folder":
+                items, total = controller.load_folder_items(node_id)
+                empty_message = "当前文件夹暂无内容"
+                trim_to_index = index
+            else:
+                category_id = page.selected_category_id
+                if not category_id:
+                    return
+                items, total = controller.load_items(category_id, 1)
+                empty_message = "当前分类暂无内容"
+                trim_to_index = 1
+        except Exception as exc:
+            self.show_error(str(exc))
+            return
+        page.show_items(items, total, page=1, empty_message=empty_message)
+        page.trim_folder_breadcrumbs(trim_to_index)
 
     def open_history_detail(self, vod_id: str) -> None:
         try:
