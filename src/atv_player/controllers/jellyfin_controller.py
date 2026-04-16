@@ -88,10 +88,25 @@ class JellyfinController:
         item.url = play_url
         item.headers = {str(key): str(value) for key, value in headers.items()}
 
+    def _build_playlist(self, detail: VodItem) -> list[PlayItem]:
+        playlist = _parse_playlist(detail.vod_play_url)
+        if len(playlist) == 1 and not playlist[0].vod_id:
+            playlist[0].title = detail.vod_name or playlist[0].title
+            playlist[0].vod_id = detail.vod_play_url.strip() or detail.vod_id
+        if not playlist and detail.vod_play_url:
+            playlist = [
+                PlayItem(
+                    title=detail.vod_name or detail.vod_play_url,
+                    url="",
+                    vod_id=detail.vod_play_url.strip() or detail.vod_id,
+                )
+            ]
+        return playlist
+
     def build_request(self, vod_id: str) -> OpenPlayerRequest:
         payload = self._api_client.get_jellyfin_detail(vod_id)
         detail = _map_vod_item(payload["list"][0])
-        playlist = _parse_playlist(detail.vod_play_url)
+        playlist = self._build_playlist(detail)
         if not playlist and detail.items:
             playlist = list(detail.items)
         if not playlist:

@@ -143,6 +143,30 @@ def test_build_request_disables_local_history_and_only_exposes_loader() -> None:
     assert api.playback_source_calls == ["1-3458"]
 
 
+def test_build_request_single_video_uses_detail_vod_id_as_playlist_item_id() -> None:
+    from atv_player.controllers.jellyfin_controller import JellyfinController
+
+    api = FakeApiClient()
+    api.detail_payload = {
+        "list": [
+            {
+                "vod_id": "1-290df557c04ec4544342450d74f07416",
+                "vod_name": "[我的机器人女友(国日)].2008.BluRay.720p.x264.2Audio.AC3-CnSCG[中文字幕3.9G]",
+                "vod_pic": "poster.jpg",
+                "vod_play_url": "1-290df557c04ec4544342450d74f07416",
+                "vod_year": "2008",
+            }
+        ]
+    }
+    controller = JellyfinController(api)
+
+    request = controller.build_request("1-290df557c04ec4544342450d74f07416")
+
+    assert len(request.playlist) == 1
+    assert request.playlist[0].title == "[我的机器人女友(国日)].2008.BluRay.720p.x264.2Audio.AC3-CnSCG[中文字幕3.9G]"
+    assert request.playlist[0].vod_id == "1-290df557c04ec4544342450d74f07416"
+
+
 def test_playback_loader_uses_first_stream_url_and_parses_stringified_header_json() -> None:
     from atv_player.controllers.jellyfin_controller import JellyfinController
 
