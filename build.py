@@ -265,6 +265,7 @@ def build(target_platform: str) -> Path:
         raise FileNotFoundError(f"Missing entrypoint: {ENTRYPOINT}")
     if not ICONS_DIR.exists():
         raise FileNotFoundError(f"Missing icons directory: {ICONS_DIR}")
+    artifact_version = os.environ.get("ARTIFACT_VERSION")
     icon_path = pyinstaller_icon_path(target_platform)
     if icon_path is not None and not icon_path.exists():
         raise FileNotFoundError(f"Missing PyInstaller icon: {icon_path}")
@@ -277,7 +278,10 @@ def build(target_platform: str) -> Path:
         raise FileNotFoundError(f"Missing build output: {bundle_path}")
     if normalize_target_platform(target_platform) == "linux":
         appdir_path = prepare_linux_appdir(bundle_path)
-        return build_linux_appimage(appdir_path, release_artifact_path_for_target(target_platform))
+        return build_linux_appimage(
+            appdir_path,
+            release_artifact_path_for_target(target_platform, version=artifact_version),
+        )
     return bundle_path
 
 

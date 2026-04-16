@@ -195,6 +195,49 @@ def test_prepare_linux_appdir_copies_bundle_and_launcher_assets(monkeypatch, tmp
     assert (appdir_path / "usr" / "lib" / "atv-player" / "atv-player").exists()
 
 
+def test_build_linux_uses_artifact_version_for_appimage_output(monkeypatch, tmp_path) -> None:
+    project_root = tmp_path / "project"
+    dist_dir = project_root / "dist"
+    bundle_dir = dist_dir / "atv-player"
+    bundle_dir.mkdir(parents=True)
+    entrypoint = project_root / "src" / "atv_player" / "main.py"
+    entrypoint.parent.mkdir(parents=True)
+    entrypoint.write_text("print('ok')\n", encoding="utf-8")
+    icons_dir = project_root / "src" / "atv_player" / "icons"
+    icons_dir.mkdir(parents=True)
+    (icons_dir / "app.svg").write_text("<svg />", encoding="utf-8")
+
+    run_calls: dict[str, object] = {}
+
+    monkeypatch.setattr(build, "PROJECT_ROOT", project_root)
+    monkeypatch.setattr(build, "DIST_DIR", dist_dir)
+    monkeypatch.setattr(build, "BUILD_DIR", project_root / "build")
+    monkeypatch.setattr(build, "ENTRYPOINT", entrypoint)
+    monkeypatch.setattr(build, "ICONS_DIR", icons_dir)
+    monkeypatch.setattr(build, "build_pyinstaller_command", lambda target_platform: ["fake-pyinstaller", target_platform])
+    monkeypatch.setattr(build.subprocess, "run", lambda command, check, cwd: run_calls.update(command=command, check=check, cwd=cwd))
+    monkeypatch.setattr(build, "prepare_linux_appdir", lambda bundle_path: project_root / "build" / "appdir")
+
+    def fake_build_linux_appimage(appdir_path, output_path, arch=None):
+        run_calls["appdir_path"] = appdir_path
+        run_calls["output_path"] = output_path
+        run_calls["arch"] = arch
+        return output_path
+
+    monkeypatch.setattr(build, "build_linux_appimage", fake_build_linux_appimage)
+    monkeypatch.setenv("ARTIFACT_VERSION", "0.3.2")
+
+    result = build.build("linux")
+
+    assert run_calls["command"] == ["fake-pyinstaller", "linux"]
+    assert run_calls["check"] is True
+    assert run_calls["cwd"] == project_root
+    assert run_calls["appdir_path"] == project_root / "build" / "appdir"
+    assert run_calls["output_path"] == dist_dir / "atv-player-0.3.2-linux-x64.AppImage"
+    assert run_calls["arch"] is None
+    assert result == dist_dir / "atv-player-0.3.2-linux-x64.AppImage"
+
+
 def test_build_linux_appimage_uses_appimagetool_with_normalized_arch(monkeypatch, tmp_path) -> None:
     appdir_path = tmp_path / "atv-player-x64.AppDir"
     appdir_path.mkdir()
@@ -281,3 +324,5 @@ def test_github_workflow_resolves_versioned_artifact_names() -> None:
     assert "ARTIFACT_VERSION=dev" in workflow
     assert "build.build_archive_name('${{ matrix.platform }}', version=os.environ['ARTIFACT_VERSION'])" in workflow
     assert "build.release_artifact_path_for_target('${{ matrix.platform }}', version=os.environ['ARTIFACT_VERSION'])" in workflow
+    assert workflow.index("Resolve artifact version (POSIX)") < workflow.index("Build application")
+    assert workflow.index("Resolve artifact version (Windows)") < workflow.index("Build application")
