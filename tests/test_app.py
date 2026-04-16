@@ -57,6 +57,7 @@ class FakeLiveController(FakeDoubanController):
             clicked_index=0,
             source_mode="detail",
             source_vod_id=vod_id,
+            use_local_history=False,
         )
 
     def load_folder_items(self, vod_id: str):
@@ -535,6 +536,7 @@ def test_main_window_opens_player_from_live_card_signal(qtbot, monkeypatch) -> N
     assert opened
     assert opened[0][0].vod.vod_name == "Live Room"
     assert opened[0][0].source_vod_id == "bili$1785607569"
+    assert opened[0][0].use_local_history is False
     assert opened[0][1] is False
 
 

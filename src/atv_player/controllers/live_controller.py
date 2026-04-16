@@ -110,4 +110,5 @@ class LiveController:
             clicked_index=0,
             source_mode="detail",
             source_vod_id=detail.vod_id,
+            use_local_history=False,
         )

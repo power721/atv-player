@@ -91,6 +91,26 @@ def test_build_request_parses_title_url_playlist_from_detail_payload() -> None:
     ]
 
 
+def test_build_request_disables_local_history() -> None:
+    from atv_player.controllers.live_controller import LiveController
+
+    api = FakeApiClient()
+    api.detail_payload = {
+        "list": [
+            {
+                "vod_id": "bili$1785607569",
+                "vod_name": "主播直播间",
+                "vod_play_url": "线路 1$https://stream.example/live.m3u8",
+            }
+        ]
+    }
+    controller = LiveController(api)
+
+    request = controller.build_request("bili$1785607569")
+
+    assert request.use_local_history is False
+
+
 def test_build_request_prefers_detail_items_when_item_urls_exist() -> None:
     from atv_player.controllers.live_controller import LiveController
 
