@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QHeaderView
+from PySide6.QtWidgets import QAbstractItemView, QHeaderView
 
 from atv_player.models import SpiderPluginConfig, SpiderPluginLogEntry
 from atv_player.ui.plugin_manager_dialog import PluginManagerDialog
@@ -73,6 +73,14 @@ def test_plugin_manager_dialog_stretches_source_column_to_fill_width(qtbot) -> N
     assert header.sectionResizeMode(2) == QHeaderView.ResizeMode.Stretch
     assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.ResizeToContents
     assert dialog.plugin_table.viewport().width() >= 900
+
+
+def test_plugin_manager_dialog_uses_read_only_row_selection_for_actionable_table(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+
+    assert dialog.plugin_table.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers
+    assert dialog.plugin_table.selectionBehavior() == QAbstractItemView.SelectionBehavior.SelectRows
 
 
 def test_plugin_manager_dialog_actions_call_manager(qtbot, monkeypatch) -> None:

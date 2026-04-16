@@ -9,6 +9,7 @@ from pathlib import Path
 import httpx
 
 from atv_player.models import SpiderPluginConfig
+import atv_player.plugins.compat.base.spider as compat_spider_module
 from atv_player.plugins.compat.base.spider import Spider as CompatSpider
 
 
@@ -27,6 +28,7 @@ class SpiderPluginLoader:
         self._get = get
 
     def load(self, config: SpiderPluginConfig, force_refresh: bool = False) -> LoadedSpiderPlugin:
+        compat_spider_module.set_cache_root(self._cache_dir / "spider-cache")
         self._install_compat_modules()
         source_path = self._resolve_source_path(config, force_refresh=force_refresh)
         module_name = f"spider_plugin_{config.id}_{source_path.stem}"

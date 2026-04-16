@@ -91,6 +91,40 @@ def test_loader_reports_missing_spider_class(tmp_path: Path) -> None:
         loader.load(config)
 
 
+def test_loader_supports_plugins_that_use_cache_during_init(tmp_path: Path) -> None:
+    plugin_path = tmp_path / "cache_plugin.py"
+    plugin_path.write_text(
+        """
+from base.spider import Spider
+
+class Spider(Spider):
+    def init(self, extend=""):
+        device_id = self.getCache("did")
+        if not device_id:
+            self.setCache("did", "device-1")
+            device_id = self.getCache("did")
+        self.device_id = device_id
+
+    def getName(self):
+        return f"缓存:{self.device_id}"
+""",
+        encoding="utf-8",
+    )
+    loader = SpiderPluginLoader(cache_dir=tmp_path / "cache")
+    config = SpiderPluginConfig(
+        id=3,
+        source_type="local",
+        source_value=str(plugin_path),
+        display_name="",
+        enabled=True,
+        sort_order=0,
+    )
+
+    loaded = loader.load(config)
+
+    assert loaded.plugin_name == "缓存:device-1"
+
+
 def test_loader_follows_redirects_for_remote_plugin_download(tmp_path: Path) -> None:
     calls: list[tuple[str, bool]] = []
 

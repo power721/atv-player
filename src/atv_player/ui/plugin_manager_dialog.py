@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QDialog,
     QFileDialog,
     QHeaderView,
@@ -30,10 +31,12 @@ class PluginManagerDialog(QDialog):
         self.plugin_manager = plugin_manager
         self.setWindowTitle("插件管理")
         self.resize(920, 520)
-        self.warning_label = QLabel("远程插件会执行本地 Python 代码，请只加载受信任来源。")
+        self.warning_label = QLabel("支持TvBox Python爬虫。远程插件会执行本地 Python 代码，请只加载受信任来源。")
 
         self.plugin_table = QTableWidget(0, 6, self)
         self.plugin_table.setHorizontalHeaderLabels(["名称", "来源", "地址", "启用", "状态", "最近加载"])
+        self.plugin_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.plugin_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         header = self.plugin_table.horizontalHeader()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)

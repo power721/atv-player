@@ -1,4 +1,5 @@
 import types
+import time
 
 import atv_player.plugins.compat.base.spider as compat_spider_module
 from atv_player.plugins.compat.base.spider import Spider
@@ -97,3 +98,23 @@ def test_compat_spider_post_uses_requests_and_forwards_request_options(monkeypat
             "allow_redirects": False,
         }
     ]
+
+
+def test_compat_spider_cache_round_trip_and_delete_use_local_files(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(compat_spider_module, "_CACHE_ROOT", tmp_path / "spider-cache", raising=False)
+    spider = Spider()
+    value = {"token": "abc", "expiresAt": int(time.time()) + 60}
+
+    assert spider.getCache("session") is None
+    assert spider.setCache("session", value) == "succeed"
+    assert spider.getCache("session") == value
+    assert spider.delCache("session") == "succeed"
+    assert spider.getCache("session") is None
+
+
+def test_compat_spider_get_cache_removes_expired_structured_values(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(compat_spider_module, "_CACHE_ROOT", tmp_path / "spider-cache", raising=False)
+    spider = Spider()
+
+    assert spider.setCache("expired", {"expiresAt": int(time.time()) - 1, "value": "stale"}) == "succeed"
+    assert spider.getCache("expired") is None
