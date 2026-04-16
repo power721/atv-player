@@ -256,5 +256,28 @@ def test_api_client_gets_telegram_search_detail() -> None:
 
     assert seen == {
         "path": "/tg-search/Harold",
-        "query": "id=https%3A%2F%2Fpan.quark.cn%2Fs%2Ff518510ef92a",
+        "query": "id=https%3A%2F%2Fpan.quark.cn%2Fs%2Ff518510ef92a&ac=gui",
     }
+
+
+def test_api_client_searches_telegram_items_by_keyword() -> None:
+    seen_queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_queries.append(request.url.query.decode())
+        return httpx.Response(200, json={"list": [], "total": 0})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.search_telegram_items("黑袍纠察队", page=1)
+    client.search_telegram_items("黑袍纠察队", page=3)
+
+    assert seen_queries == [
+        "web=true&wd=%E9%BB%91%E8%A2%8D%E7%BA%A0%E5%AF%9F%E9%98%9F",
+        "web=true&wd=%E9%BB%91%E8%A2%8D%E7%BA%A0%E5%AF%9F%E9%98%9F&pg=3",
+    ]

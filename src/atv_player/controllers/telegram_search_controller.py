@@ -45,6 +45,17 @@ class TelegramSearchController:
             total = pagecount * self._PAGE_SIZE
         return items, total
 
+    def search_items(self, keyword: str, page: int) -> tuple[list[VodItem], int]:
+        payload = self._api_client.search_telegram_items(keyword, page=page)
+        items = [_map_item(item) for item in payload.get("list", [])]
+        total_raw = payload.get("total")
+        if total_raw is not None:
+            total = int(total_raw)
+        else:
+            pagecount = int(payload.get("pagecount") or 0)
+            total = pagecount * self._PAGE_SIZE
+        return items, total
+
     def resolve_playlist_item(self, item: PlayItem) -> VodItem | None:
         if not item.vod_id:
             return None

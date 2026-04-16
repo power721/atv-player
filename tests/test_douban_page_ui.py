@@ -98,6 +98,20 @@ class AsyncUnauthorizedDoubanController(FakeDoubanController):
         self._events[(category_id, page)].set()
 
 
+class SearchableDoubanController(FakeDoubanController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.search_calls: list[tuple[str, int]] = []
+        self.search_results = (
+            [VodItem(vod_id="s1", vod_name="黑袍纠察队", vod_pic="poster-search", vod_remarks="搜索结果")],
+            30,
+        )
+
+    def search_items(self, keyword: str, page: int):
+        self.search_calls.append((keyword, page))
+        return self.search_results
+
+
 def test_douban_page_loads_categories_and_first_page(qtbot) -> None:
     page = DoubanPage(FakeDoubanController())
     qtbot.addWidget(page)
@@ -135,6 +149,56 @@ def test_douban_page_clicking_card_can_emit_open_requested(qtbot) -> None:
         page.card_buttons[0].click()
 
     assert signal.args == ["m1"]
+
+
+def test_douban_page_can_show_search_controls_when_enabled(qtbot) -> None:
+    page = DoubanPage(SearchableDoubanController(), click_action="open", search_enabled=True)
+    qtbot.addWidget(page)
+    page.show()
+    qtbot.waitUntil(lambda: page.category_list.count() == 2)
+
+    assert page.keyword_edit.isHidden() is False
+    assert page.search_button.isHidden() is False
+    assert page.clear_button.isHidden() is False
+
+
+def test_douban_page_search_replaces_category_cards_and_clear_restores_category(qtbot) -> None:
+    controller = SearchableDoubanController()
+    page = DoubanPage(controller, click_action="open", search_enabled=True)
+    qtbot.addWidget(page)
+    page.show()
+
+    qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
+    assert page.card_buttons[0].text() == "霸王别姬\n9.6"
+
+    page.keyword_edit.setText("黑袍纠察队")
+    page.search()
+
+    qtbot.waitUntil(lambda: controller.search_calls == [("黑袍纠察队", 1)])
+    qtbot.waitUntil(lambda: page.card_buttons[0].text() == "黑袍纠察队\n搜索结果")
+    assert page.current_page == 1
+
+    page.clear_search()
+
+    qtbot.waitUntil(lambda: controller.item_calls[-1] == ("suggestion", 1))
+    qtbot.waitUntil(lambda: page.card_buttons[0].text() == "霸王别姬\n9.6")
+
+
+def test_douban_page_clicking_search_result_can_emit_open_requested(qtbot) -> None:
+    controller = SearchableDoubanController()
+    page = DoubanPage(controller, click_action="open", search_enabled=True)
+    qtbot.addWidget(page)
+    page.show()
+
+    qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
+    page.keyword_edit.setText("黑袍纠察队")
+    page.search()
+    qtbot.waitUntil(lambda: page.card_buttons[0].text() == "黑袍纠察队\n搜索结果")
+
+    with qtbot.waitSignal(page.open_requested, timeout=1000) as signal:
+        page.card_buttons[0].click()
+
+    assert signal.args == ["s1"]
 
 
 def test_douban_page_category_change_resets_to_first_page(qtbot) -> None:

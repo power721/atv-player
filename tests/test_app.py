@@ -165,6 +165,21 @@ def test_main_window_opens_player_from_telegram_card_signal(qtbot, monkeypatch) 
     assert opened[0].source_vod_id == "https://pan.quark.cn/s/f518510ef92a"
 
 
+def test_main_window_enables_search_controls_only_for_telegram_page(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+
+    assert window.douban_page.keyword_edit.isHidden() is True
+    assert window.telegram_page.keyword_edit.isHidden() is False
+
+
 def test_decide_start_view_prefers_login_without_token() -> None:
     assert decide_start_view(AppConfig(token="")) == "login"
 

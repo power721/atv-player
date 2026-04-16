@@ -6,8 +6,10 @@ class FakeApiClient:
     def __init__(self) -> None:
         self.category_payload = {"class": []}
         self.items_payload = {"list": [], "total": 0}
+        self.search_payload = {"list": [], "total": 0}
         self.detail_payload = {"list": []}
         self.item_calls: list[tuple[str, int]] = []
+        self.search_calls: list[tuple[str, int]] = []
         self.detail_calls: list[str] = []
         self.resolve_calls: list[str] = []
 
@@ -17,6 +19,10 @@ class FakeApiClient:
     def list_telegram_search_items(self, category_id: str, page: int) -> dict:
         self.item_calls.append((category_id, page))
         return self.items_payload
+
+    def search_telegram_items(self, keyword: str, page: int) -> dict:
+        self.search_calls.append((keyword, page))
+        return self.search_payload
 
     def get_telegram_search_detail(self, vod_id: str) -> dict:
         self.detail_calls.append(vod_id)
@@ -65,6 +71,41 @@ def test_load_items_uses_recommendation_endpoint_without_page_param() -> None:
     controller.load_items("XiangxiuNBB", page=3)
 
     assert api.item_calls == [("0", 1), ("XiangxiuNBB", 3)]
+
+
+def test_search_items_maps_search_payload() -> None:
+    api = FakeApiClient()
+    api.search_payload = {
+        "list": [
+            {
+                "vod_id": "https://pan.quark.cn/s/demo",
+                "vod_name": "黑袍纠察队",
+                "vod_pic": "poster.jpg",
+                "vod_remarks": "4K",
+            }
+        ],
+        "total": 31,
+    }
+    controller = TelegramSearchController(api)
+
+    items, total = controller.search_items("黑袍纠察队", page=1)
+
+    assert api.search_calls == [("黑袍纠察队", 1)]
+    assert total == 31
+    assert items[0].vod_id == "https://pan.quark.cn/s/demo"
+    assert items[0].vod_name == "黑袍纠察队"
+    assert items[0].vod_pic == "poster.jpg"
+    assert items[0].vod_remarks == "4K"
+
+
+def test_search_items_uses_pagecount_when_total_is_missing() -> None:
+    api = FakeApiClient()
+    api.search_payload = {"list": [], "pagecount": 3}
+    controller = TelegramSearchController(api)
+
+    _items, total = controller.search_items("黑袍纠察队", page=2)
+
+    assert total == 90
 
 
 def test_build_request_from_detail_uses_folder_playback_resolution_pattern() -> None:

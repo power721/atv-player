@@ -57,6 +57,7 @@ class MainWindow(QMainWindow):
         self.telegram_page = DoubanPage(
             telegram_controller or _EmptyTelegramController(),
             click_action="open",
+            search_enabled=True,
         )
         self.history_page = HistoryPage(history_controller)
         self.browse_controller = browse_controller
