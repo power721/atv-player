@@ -424,3 +424,106 @@ def test_api_client_stops_emby_playback() -> None:
     client.stop_emby_playback("1-3458")
 
     assert seen == {"path": "/emby-play/Harold", "query": "t=-1&id=1-3458"}
+
+
+def test_api_client_lists_jellyfin_categories() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"class": []})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.list_jellyfin_categories()
+
+    assert seen == {"path": "/jellyfin/Harold", "query": ""}
+
+
+def test_api_client_lists_jellyfin_items() -> None:
+    seen_queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_queries.append(request.url.query.decode())
+        return httpx.Response(200, json={"list": [], "total": 0})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.list_jellyfin_items("Series", page=1)
+    client.list_jellyfin_items("Series", page=3)
+
+    assert seen_queries == ["t=Series&pg=1", "t=Series&pg=3"]
+
+
+def test_api_client_searches_jellyfin_items_by_keyword() -> None:
+    seen_queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_queries.append(request.url.query.decode())
+        return httpx.Response(200, json={"list": [], "total": 0})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.search_jellyfin_items("人生切割术", page=1)
+    client.search_jellyfin_items("人生切割术", page=2)
+
+    assert seen_queries == [
+        "wd=%E4%BA%BA%E7%94%9F%E5%88%87%E5%89%B2%E6%9C%AF",
+        "wd=%E4%BA%BA%E7%94%9F%E5%88%87%E5%89%B2%E6%9C%AF&pg=2",
+    ]
+
+
+def test_api_client_gets_jellyfin_detail_by_ids() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"list": []})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.get_jellyfin_detail("1-3281")
+
+    assert seen == {"path": "/jellyfin/Harold", "query": "ids=1-3281"}
+
+
+def test_api_client_gets_jellyfin_playback_source() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"url": ["Episode 1", "http://j/1.mp4"], "header": {"User-Agent": "Jellyfin"}})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.get_jellyfin_playback_source("1-3458")
+
+    assert seen == {"path": "/jellyfin-play/Harold", "query": "t=0&id=1-3458"}

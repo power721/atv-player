@@ -64,6 +64,24 @@ class FakeEmbyController(FakeDoubanController):
         return [VodItem(vod_id="child-1", vod_name="Episode 1", vod_tag="file")], 1
 
 
+class FakeJellyfinController(FakeDoubanController):
+    def __init__(self) -> None:
+        self.folder_calls: list[str] = []
+
+    def build_request(self, vod_id: str):
+        return OpenPlayerRequest(
+            vod=VodItem(vod_id=vod_id, vod_name="Jellyfin Movie"),
+            playlist=[PlayItem(title="Episode 1", url="", vod_id="ep-jellyfin-1")],
+            clicked_index=0,
+            source_mode="detail",
+            source_vod_id=vod_id,
+        )
+
+    def load_folder_items(self, vod_id: str):
+        self.folder_calls.append(vod_id)
+        return [VodItem(vod_id="jf-child-1", vod_name="Episode 1", vod_tag="file")], 1
+
+
 class FakePlayerController:
     def create_session(
         self,
@@ -95,6 +113,7 @@ def test_main_window_starts_on_douban_tab(qtbot) -> None:
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
         emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -105,12 +124,13 @@ def test_main_window_starts_on_douban_tab(qtbot) -> None:
     window.show()
 
     assert window.nav_tabs.currentIndex() == 0
-    assert window.nav_tabs.count() == 5
+    assert window.nav_tabs.count() == 6
     assert window.nav_tabs.tabText(0) == "豆瓣电影"
     assert window.nav_tabs.tabText(1) == "电报影视"
     assert window.nav_tabs.tabText(2) == "Emby"
-    assert window.nav_tabs.tabText(3) == "文件浏览"
-    assert window.nav_tabs.tabText(4) == "播放记录"
+    assert window.nav_tabs.tabText(3) == "Jellyfin"
+    assert window.nav_tabs.tabText(4) == "文件浏览"
+    assert window.nav_tabs.tabText(5) == "播放记录"
 
 
 def test_main_window_logout_button_emits_logout_requested(qtbot) -> None:
@@ -118,6 +138,7 @@ def test_main_window_logout_button_emits_logout_requested(qtbot) -> None:
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
         emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -138,6 +159,7 @@ def test_main_window_passes_config_and_save_callback_to_browse_page(qtbot) -> No
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
         emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -156,6 +178,7 @@ def test_main_window_switches_to_browse_and_searches_from_douban_signal(qtbot, m
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
         emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -179,6 +202,7 @@ def test_main_window_opens_player_from_telegram_card_signal(qtbot, monkeypatch) 
         douban_controller=FakeDoubanController(),
         telegram_controller=controller,
         emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -202,6 +226,7 @@ def test_main_window_enables_search_controls_only_for_telegram_page(qtbot) -> No
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
         emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -218,6 +243,7 @@ def test_main_window_enables_search_controls_for_emby_page(qtbot) -> None:
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
         emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -234,6 +260,7 @@ def test_main_window_opens_player_from_emby_card_signal(qtbot, monkeypatch) -> N
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
         emby_controller=controller,
+        jellyfin_controller=FakeJellyfinController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -258,6 +285,7 @@ def test_main_window_emby_folder_click_loads_folder_in_current_tab(qtbot, monkey
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
         emby_controller=controller,
+        jellyfin_controller=FakeJellyfinController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
@@ -282,6 +310,80 @@ def test_main_window_emby_folder_click_loads_folder_in_current_tab(qtbot, monkey
     assert len(shown) == 1
     assert shown[0][1:] == (1, 1, "当前文件夹暂无内容")
     assert shown[0][0][0].vod_id == "child-1"
+
+
+def test_main_window_enables_search_controls_for_jellyfin_page(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+
+    assert window.jellyfin_page.keyword_edit.isHidden() is False
+
+
+def test_main_window_opens_player_from_jellyfin_card_signal(qtbot, monkeypatch) -> None:
+    controller = FakeJellyfinController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=controller,
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened = []
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+
+    window.jellyfin_page.item_open_requested.emit(VodItem(vod_id="1-4001", vod_name="Episode 1", vod_tag="file"))
+
+    assert opened
+    assert opened[0].vod.vod_name == "Jellyfin Movie"
+    assert opened[0].source_vod_id == "1-4001"
+
+
+def test_main_window_jellyfin_folder_click_loads_folder_in_current_tab(qtbot, monkeypatch) -> None:
+    controller = FakeJellyfinController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=controller,
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened = []
+    shown = []
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    monkeypatch.setattr(
+        window.jellyfin_page,
+        "show_items",
+        lambda items, total, page=1, empty_message="当前分类暂无内容": shown.append((items, total, page, empty_message)),
+    )
+
+    window.jellyfin_page.item_open_requested.emit(VodItem(vod_id="folder-1", vod_name="Season 1", vod_tag="folder"))
+
+    assert opened == []
+    assert controller.folder_calls == ["folder-1"]
+    assert len(shown) == 1
+    assert shown[0][1:] == (1, 1, "当前文件夹暂无内容")
+    assert shown[0][0][0].vod_id == "jf-child-1"
 
 
 def test_decide_start_view_prefers_login_without_token() -> None:

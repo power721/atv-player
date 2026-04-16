@@ -11,6 +11,7 @@ from atv_player.api import ApiClient, UnauthorizedError
 from atv_player.controllers.browse_controller import BrowseController
 from atv_player.controllers.douban_controller import DoubanController
 from atv_player.controllers.emby_controller import EmbyController
+from atv_player.controllers.jellyfin_controller import JellyfinController
 from atv_player.controllers.history_controller import HistoryController
 from atv_player.controllers.login_controller import LoginController
 from atv_player.controllers.player_controller import PlayerController
@@ -116,6 +117,7 @@ class AppCoordinator(QObject):
         douban_controller = DoubanController(self._api_client)
         telegram_controller = TelegramSearchController(self._api_client)
         emby_controller = EmbyController(self._api_client)
+        jellyfin_controller = JellyfinController(self._api_client)
         browse_controller = BrowseController(self._api_client)
         history_controller = HistoryController(self._api_client)
         player_controller = PlayerController(self._api_client)
@@ -128,6 +130,7 @@ class AppCoordinator(QObject):
             douban_controller=douban_controller,
             telegram_controller=telegram_controller,
             emby_controller=emby_controller,
+            jellyfin_controller=jellyfin_controller,
         )
         self.main_window.logout_requested.connect(self._handle_logout_requested)
         if self.login_window is not None:

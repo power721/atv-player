@@ -40,6 +40,11 @@ class _EmptyEmbyController(_EmptyDoubanController):
         raise ValueError(f"没有可播放的项目: {vod_id}")
 
 
+class _EmptyJellyfinController(_EmptyDoubanController):
+    def build_request(self, vod_id: str):
+        raise ValueError(f"没有可播放的项目: {vod_id}")
+
+
 class MainWindow(QMainWindow):
     logout_requested = Signal()
 
@@ -53,6 +58,7 @@ class MainWindow(QMainWindow):
             douban_controller=None,
             telegram_controller=None,
             emby_controller=None,
+            jellyfin_controller=None,
     ) -> None:
         super().__init__()
         self._save_config = save_config or (lambda: None)
@@ -70,10 +76,16 @@ class MainWindow(QMainWindow):
             click_action="open",
             search_enabled=True,
         )
+        self.jellyfin_page = DoubanPage(
+            jellyfin_controller or _EmptyJellyfinController(),
+            click_action="open",
+            search_enabled=True,
+        )
         self.history_page = HistoryPage(history_controller)
         self.browse_controller = browse_controller
         self.telegram_controller = telegram_controller or _EmptyTelegramController()
         self.emby_controller = emby_controller or _EmptyEmbyController()
+        self.jellyfin_controller = jellyfin_controller or _EmptyJellyfinController()
         self.player_controller = player_controller
         self.player_window: PlayerWindow | None = None
         self.config = config
@@ -81,6 +93,7 @@ class MainWindow(QMainWindow):
         self.nav_tabs.addTab(self.douban_page, "豆瓣电影")
         self.nav_tabs.addTab(self.telegram_page, "电报影视")
         self.nav_tabs.addTab(self.emby_page, "Emby")
+        self.nav_tabs.addTab(self.jellyfin_page, "Jellyfin")
         self.nav_tabs.addTab(self.browse_page, "文件浏览")
         self.nav_tabs.addTab(self.history_page, "播放记录")
         self.logout_button.clicked.connect(self.logout_requested.emit)
@@ -101,10 +114,12 @@ class MainWindow(QMainWindow):
         self.douban_page.search_requested.connect(self._handle_douban_search_requested)
         self.telegram_page.open_requested.connect(self._handle_telegram_open_requested)
         self.emby_page.item_open_requested.connect(self._handle_emby_item_open_requested)
+        self.jellyfin_page.item_open_requested.connect(self._handle_jellyfin_item_open_requested)
 
         self.douban_page.unauthorized.connect(self.logout_requested.emit)
         self.telegram_page.unauthorized.connect(self.logout_requested.emit)
         self.emby_page.unauthorized.connect(self.logout_requested.emit)
+        self.jellyfin_page.unauthorized.connect(self.logout_requested.emit)
         self.browse_page.unauthorized.connect(self.logout_requested.emit)
         self.history_page.unauthorized.connect(self.logout_requested.emit)
         self.quit_shortcut = QShortcut(QKeySequence.StandardKey.Quit, self)
@@ -153,6 +168,25 @@ class MainWindow(QMainWindow):
             self.emby_page.show_items(items, total, page=1, empty_message="当前文件夹暂无内容")
             return
         self._handle_emby_open_requested(item.vod_id)
+
+    def _handle_jellyfin_open_requested(self, vod_id: str) -> None:
+        try:
+            request = self.jellyfin_controller.build_request(vod_id)
+        except Exception as exc:
+            self.show_error(str(exc))
+            return
+        self.open_player(request)
+
+    def _handle_jellyfin_item_open_requested(self, item) -> None:
+        if getattr(item, "vod_tag", "") == "folder":
+            try:
+                items, total = self.jellyfin_controller.load_folder_items(item.vod_id)
+            except Exception as exc:
+                self.show_error(str(exc))
+                return
+            self.jellyfin_page.show_items(items, total, page=1, empty_message="当前文件夹暂无内容")
+            return
+        self._handle_jellyfin_open_requested(item.vod_id)
 
     def open_history_detail(self, vod_id: str) -> None:
         try:
