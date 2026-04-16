@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from atv_player.models import VodItem
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
+from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
 
@@ -154,6 +155,7 @@ class PlayerWindow(QWidget):
         self._poster_request_id = 0
         self._video_surface_ready = False
         self._auto_advance_locked = False
+        self.help_dialog: ShortcutHelpDialog | None = None
         self._poster_load_signals = _PosterLoadSignals(self)
         self._poster_load_signals.loaded.connect(self._handle_poster_load_finished)
         self.setWindowTitle(self._default_window_title())
@@ -377,6 +379,9 @@ class PlayerWindow(QWidget):
         self.escape_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
         self.escape_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
         self.escape_shortcut.activated.connect(self._handle_escape)
+        self.help_shortcut = QShortcut(QKeySequence(Qt.Key.Key_F1), self)
+        self.help_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        self.help_shortcut.activated.connect(self._show_shortcut_help)
         self._shortcut_bindings: list[QShortcut] = []
         self._register_shortcuts()
         self._update_play_button_icon()
@@ -1312,6 +1317,21 @@ class PlayerWindow(QWidget):
         if app is not None:
             app.quit()
 
+    def _show_shortcut_help(self) -> None:
+        dialog = show_shortcut_help_dialog(
+            self,
+            context="player_window",
+            existing_dialog=self.help_dialog,
+            quit_sequence=self.quit_shortcut.key(),
+        )
+        if dialog is self.help_dialog:
+            return
+        self.help_dialog = dialog
+        dialog.destroyed.connect(self._clear_help_dialog_reference)
+
+    def _clear_help_dialog_reference(self, *_args) -> None:
+        self.help_dialog = None
+
     def _return_to_main(self) -> None:
         try:
             self.video.pause()
@@ -1445,6 +1465,10 @@ class PlayerWindow(QWidget):
         return super().eventFilter(cast(QObject, watched), event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() == Qt.Key.Key_F1:
+            self._show_shortcut_help()
+            event.accept()
+            return
         if event.key() == Qt.Key.Key_Escape:
             self._handle_escape()
             event.accept()
