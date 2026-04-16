@@ -43,6 +43,7 @@ class DoubanCategory:
 class VodItem:
     vod_id: str
     vod_name: str
+    detail_style: str = ""
     path: str = ""
     share_type: str = ""
     vod_pic: str = ""

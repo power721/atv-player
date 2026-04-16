@@ -618,6 +618,15 @@ class PlayerWindow(QWidget):
         self._refresh_audio_state()
 
     def _format_metadata_text(self, vod) -> str:
+        if getattr(vod, "detail_style", "") == "live":
+            rows = [
+                ("标题", vod.vod_name),
+                ("平台", vod.vod_director),
+                ("类型", vod.type_name),
+                ("主播", vod.vod_actor),
+                ("人气", vod.vod_remarks),
+            ]
+            return "\n".join(f"{label}: {value}".rstrip() for label, value in rows)
         rows = [
             ("名称", vod.vod_name),
             ("类型", vod.type_name),

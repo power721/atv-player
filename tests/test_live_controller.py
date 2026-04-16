@@ -83,6 +83,7 @@ def test_build_request_parses_title_url_playlist_from_detail_payload() -> None:
 
     assert api.detail_calls == ["bili$1785607569"]
     assert request.vod.vod_id == "bili$1785607569"
+    assert request.vod.detail_style == "live"
     assert [item.title for item in request.playlist] == ["线路 1", "线路 2"]
     assert [item.url for item in request.playlist] == [
         "https://stream.example/live.m3u8",

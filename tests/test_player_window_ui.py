@@ -943,6 +943,47 @@ def test_player_window_renders_title_metadata_in_expected_order(qtbot) -> None:
     )
 
 
+def test_player_window_renders_live_metadata_with_five_live_fields(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="bili$1785607569",
+            vod_name="主播直播间",
+            type_name="游戏",
+            vod_remarks="10万",
+            vod_director="哔哩哔哩",
+            vod_actor="测试主播",
+            detail_style="live",
+        ),
+        playlist=[PlayItem(title="线路 1", url="https://stream.example/live.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    assert window.metadata_view.toPlainText() == (
+        "标题: 主播直播间\n"
+        "平台: 哔哩哔哩\n"
+        "类型: 游戏\n"
+        "主播: 测试主播\n"
+        "人气: 10万"
+    )
+
+
 def test_player_window_appends_runtime_failures_to_log_view_without_overwriting_metadata(qtbot) -> None:
     class FailingVideo:
         def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:

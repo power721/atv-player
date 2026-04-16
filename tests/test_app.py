@@ -372,14 +372,19 @@ def test_main_window_opens_player_from_telegram_card_signal(qtbot, monkeypatch) 
     qtbot.addWidget(window)
     window.show()
 
-    opened = []
-    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    opened: list[tuple[OpenPlayerRequest, bool]] = []
+    monkeypatch.setattr(
+        window,
+        "open_player",
+        lambda request, restore_paused_state=False: opened.append((request, restore_paused_state)),
+    )
 
     window.telegram_page.open_requested.emit("https://pan.quark.cn/s/f518510ef92a")
 
     assert opened
-    assert opened[0].vod.vod_name == "Telegram Movie"
-    assert opened[0].source_vod_id == "https://pan.quark.cn/s/f518510ef92a"
+    assert opened[0][0].vod.vod_name == "Telegram Movie"
+    assert opened[0][0].source_vod_id == "https://pan.quark.cn/s/f518510ef92a"
+    assert opened[0][1] is False
 
 
 def test_main_window_enables_search_controls_only_for_telegram_page(qtbot) -> None:
@@ -453,14 +458,19 @@ def test_main_window_opens_player_from_emby_card_signal(qtbot, monkeypatch) -> N
     qtbot.addWidget(window)
     window.show()
 
-    opened = []
-    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    opened: list[tuple[OpenPlayerRequest, bool]] = []
+    monkeypatch.setattr(
+        window,
+        "open_player",
+        lambda request, restore_paused_state=False: opened.append((request, restore_paused_state)),
+    )
 
     window.emby_page.item_open_requested.emit(VodItem(vod_id="1-3281", vod_name="Episode 1", vod_tag="file"))
 
     assert opened
-    assert opened[0].vod.vod_name == "Emby Movie"
-    assert opened[0].source_vod_id == "1-3281"
+    assert opened[0][0].vod.vod_name == "Emby Movie"
+    assert opened[0][0].source_vod_id == "1-3281"
+    assert opened[0][1] is False
 
 
 def test_main_window_emby_folder_click_loads_folder_in_current_tab(qtbot, monkeypatch) -> None:
@@ -513,14 +523,19 @@ def test_main_window_opens_player_from_live_card_signal(qtbot, monkeypatch) -> N
     qtbot.addWidget(window)
     window.show()
 
-    opened = []
-    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    opened: list[tuple[OpenPlayerRequest, bool]] = []
+    monkeypatch.setattr(
+        window,
+        "open_player",
+        lambda request, restore_paused_state=False: opened.append((request, restore_paused_state)),
+    )
 
     window.live_page.item_open_requested.emit(VodItem(vod_id="bili$1785607569", vod_name="直播间", vod_tag="file"))
 
     assert opened
-    assert opened[0].vod.vod_name == "Live Room"
-    assert opened[0].source_vod_id == "bili$1785607569"
+    assert opened[0][0].vod.vod_name == "Live Room"
+    assert opened[0][0].source_vod_id == "bili$1785607569"
+    assert opened[0][1] is False
 
 
 def test_main_window_live_folder_click_loads_folder_in_current_tab(qtbot, monkeypatch) -> None:
@@ -590,14 +605,19 @@ def test_main_window_opens_player_from_jellyfin_card_signal(qtbot, monkeypatch) 
     qtbot.addWidget(window)
     window.show()
 
-    opened = []
-    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    opened: list[tuple[OpenPlayerRequest, bool]] = []
+    monkeypatch.setattr(
+        window,
+        "open_player",
+        lambda request, restore_paused_state=False: opened.append((request, restore_paused_state)),
+    )
 
     window.jellyfin_page.item_open_requested.emit(VodItem(vod_id="1-4001", vod_name="Episode 1", vod_tag="file"))
 
     assert opened
-    assert opened[0].vod.vod_name == "Jellyfin Movie"
-    assert opened[0].source_vod_id == "1-4001"
+    assert opened[0][0].vod.vod_name == "Jellyfin Movie"
+    assert opened[0][0].source_vod_id == "1-4001"
+    assert opened[0][1] is False
 
 
 def test_main_window_jellyfin_folder_click_loads_folder_in_current_tab(qtbot, monkeypatch) -> None:

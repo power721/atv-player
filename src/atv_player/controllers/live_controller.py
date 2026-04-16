@@ -100,6 +100,7 @@ class LiveController:
     def build_request(self, vod_id: str) -> OpenPlayerRequest:
         payload = self._api_client.get_live_detail(vod_id)
         detail = _map_vod_item(payload["list"][0])
+        detail.detail_style = "live"
         playlist = self._build_playlist(detail)
         if not playlist:
             raise ValueError(f"没有可播放的项目: {detail.vod_name}")
