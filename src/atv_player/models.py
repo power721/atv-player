@@ -116,6 +116,7 @@ class LiveSourceChannelView:
     channel_name: str
     stream_url: str
     logo_url: str = ""
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

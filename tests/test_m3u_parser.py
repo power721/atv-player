@@ -42,3 +42,31 @@ https://live.example/btv.m3u8
     parsed = parse_m3u(playlist)
 
     assert parsed.groups[0].channels[0].logo_url == "https://img.example/logo.png"
+
+
+def test_parse_m3u_parses_http_user_agent_and_http_headers() -> None:
+    playlist = """#EXTM3U
+#EXTINF:-1 http-user-agent="AptvPlayer-UA" http-header="Referer=https://site.example/&Origin=https://origin.example" group-title="卫视",江苏卫视
+https://live.example/jsws.m3u8
+"""
+
+    parsed = parse_m3u(playlist)
+
+    assert parsed.groups[0].channels[0].headers == {
+        "User-Agent": "AptvPlayer-UA",
+        "Referer": "https://site.example/",
+        "Origin": "https://origin.example",
+    }
+
+
+def test_parse_m3u_ignores_malformed_http_header_segments() -> None:
+    playlist = """#EXTM3U
+#EXTINF:-1 http-header="broken&Referer=https://site.example/" ,测试台
+https://live.example/test.m3u8
+"""
+
+    parsed = parse_m3u(playlist)
+
+    assert parsed.ungrouped_channels[0].headers == {
+        "Referer": "https://site.example/",
+    }

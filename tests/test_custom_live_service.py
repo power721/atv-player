@@ -136,3 +136,31 @@ def test_custom_live_service_refresh_source_stores_last_error_and_keeps_cache(tm
     saved = repo.get_source(source.id)
     assert saved.cache_text.startswith("#EXTM3U")
     assert saved.last_error == "timeout"
+
+
+def test_custom_live_service_build_request_copies_channel_headers(tmp_path: Path) -> None:
+    repo = LiveSourceRepository(tmp_path / "app.db")
+    source = repo.add_source("remote", "https://example.com/live.m3u", "自定义远程")
+    repo.update_source(
+        source.id,
+        display_name="自定义远程",
+        enabled=True,
+        source_value="https://example.com/live.m3u",
+        cache_text=(
+            "#EXTM3U\n"
+            "#EXTINF:-1 http-user-agent=\"AptvPlayer-UA\" "
+            "http-header=\"Referer=https://site.example/&Origin=https://origin.example\",江苏卫视\n"
+            "https://live.example/jsws.m3u8\n"
+        ),
+        last_error="",
+        last_refreshed_at=1,
+    )
+    service = CustomLiveService(repo, http_client=FakeHttpClient())
+
+    request = service.build_request(f"custom-channel:{source.id}:channel-0")
+
+    assert request.playlist[0].headers == {
+        "User-Agent": "AptvPlayer-UA",
+        "Referer": "https://site.example/",
+        "Origin": "https://origin.example",
+    }

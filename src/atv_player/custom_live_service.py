@@ -114,7 +114,15 @@ class CustomLiveService:
     def _build_request_from_channel(self, view: LiveSourceChannelView) -> OpenPlayerRequest:
         return OpenPlayerRequest(
             vod=VodItem(vod_id=view.channel_id, vod_name=view.channel_name, vod_pic=view.logo_url, detail_style="live"),
-            playlist=[PlayItem(title=view.channel_name, url=view.stream_url, vod_id=view.channel_id, index=0)],
+            playlist=[
+                PlayItem(
+                    title=view.channel_name,
+                    url=view.stream_url,
+                    vod_id=view.channel_id,
+                    index=0,
+                    headers=dict(view.headers),
+                )
+            ],
             clicked_index=0,
             source_kind="live",
             source_mode="custom",
@@ -171,6 +179,7 @@ class CustomLiveService:
                 channel_name=channel.name,
                 stream_url=channel.url,
                 logo_url=channel.logo_url,
+                headers=dict(channel.headers),
             )
         for group in playlist.groups:
             for channel in group.channels:
@@ -181,4 +190,5 @@ class CustomLiveService:
                     channel_name=channel.name,
                     stream_url=channel.url,
                     logo_url=channel.logo_url,
+                    headers=dict(channel.headers),
                 )

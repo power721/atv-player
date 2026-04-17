@@ -12,6 +12,7 @@ class ParsedChannel:
     name: str
     url: str
     logo_url: str = ""
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -25,6 +26,27 @@ class ParsedGroup:
 class ParsedPlaylist:
     groups: list[ParsedGroup] = field(default_factory=list)
     ungrouped_channels: list[ParsedChannel] = field(default_factory=list)
+
+
+def _parse_http_headers(attrs: dict[str, str]) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    user_agent = attrs.get("http-user-agent", "").strip()
+    if user_agent:
+        headers["User-Agent"] = user_agent
+    raw_header = attrs.get("http-header", "").strip()
+    if not raw_header:
+        return headers
+    for part in raw_header.split("&"):
+        chunk = part.strip()
+        if not chunk or "=" not in chunk:
+            continue
+        key, value = chunk.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key or not value:
+            continue
+        headers[key] = value
+    return headers
 
 
 def parse_m3u(text: str) -> ParsedPlaylist:
@@ -51,6 +73,7 @@ def parse_m3u(text: str) -> ParsedPlaylist:
             name=pending_name,
             url=line,
             logo_url=pending_logo,
+            headers=_parse_http_headers(attrs),
         )
         channel_index += 1
         if pending_group:
