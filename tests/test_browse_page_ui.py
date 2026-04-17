@@ -471,6 +471,25 @@ def test_browse_page_uses_latest_async_folder_result(qtbot) -> None:
     assert page.current_path == "/剧集"
 
 
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_browse_page_ignores_async_folder_result_after_widget_deletion(qtbot) -> None:
+    controller = AsyncBrowseController()
+    page = BrowsePage(controller)
+    destroyed = {"count": 0}
+    page.destroyed.connect(lambda *_args: destroyed.__setitem__("count", destroyed["count"] + 1))
+
+    page.load_path("/电影")
+    _wait_for_folder_load(qtbot, controller, "/电影")
+
+    page.deleteLater()
+    qtbot.waitUntil(lambda: destroyed["count"] == 1, timeout=1000)
+
+    controller.finish("/电影", items=[VodItem(vod_id="movie-1", vod_name="电影A", type=2)], total=1)
+    qtbot.wait(100)
+
+    assert destroyed["count"] == 1
+
+
 def test_browse_page_shows_size_dbid_and_rating_columns(qtbot) -> None:
     page = BrowsePage(FakeBrowseController())
     qtbot.addWidget(page)
@@ -832,6 +851,47 @@ def test_browse_page_allows_empty_keyword_and_displays_loading_during_async_sear
     assert page.search_button.isEnabled() is True
     assert page.filter_combo.isEnabled() is True
     assert page.clear_button.isEnabled() is True
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_browse_page_ignores_async_search_result_after_widget_deletion(qtbot) -> None:
+    controller = AsyncSearchController()
+    page = BrowsePage(controller)
+    destroyed = {"count": 0}
+    page.destroyed.connect(lambda *_args: destroyed.__setitem__("count", destroyed["count"] + 1))
+
+    page.keyword_edit.setText("霸王别姬")
+    page.search()
+    qtbot.waitUntil(lambda: controller.calls == ["霸王别姬"], timeout=1000)
+
+    page.deleteLater()
+    qtbot.waitUntil(lambda: destroyed["count"] == 1, timeout=1000)
+
+    controller.finish("霸王别姬", [VodItem(vod_id="1", vod_name="全集", type_name="阿里")])
+    qtbot.wait(100)
+
+    assert destroyed["count"] == 1
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_browse_page_ignores_async_resolve_result_after_widget_deletion(qtbot) -> None:
+    controller = AsyncResolveController()
+    page = BrowsePage(controller)
+    destroyed = {"count": 0}
+    page.destroyed.connect(lambda *_args: destroyed.__setitem__("count", destroyed["count"] + 1))
+
+    page._search_request_id = 1
+    page._handle_search_succeeded(1, [VodItem(vod_id="movie-1", vod_name="电影1", type_name="阿里")])
+    page._open_search_result(0, 0)
+    qtbot.waitUntil(lambda: controller.resolve_calls == ["movie-1"], timeout=1000)
+
+    page.deleteLater()
+    qtbot.waitUntil(lambda: destroyed["count"] == 1, timeout=1000)
+
+    controller.finish_resolve("movie-1", path="/movies/1")
+    qtbot.wait(100)
+
+    assert destroyed["count"] == 1
 
 
 def test_browse_page_clear_results_clears_keyword(qtbot) -> None:
@@ -1609,3 +1669,26 @@ def test_browse_page_uses_latest_async_open_request(qtbot) -> None:
     assert len(opened) == 1
     assert opened[0].vod.vod_name == "Second"
     assert opened[0].source_vod_id == "movie-2"
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_browse_page_ignores_async_open_request_after_widget_deletion(qtbot) -> None:
+    controller = AsyncOpenController()
+    page = BrowsePage(controller)
+    destroyed = {"count": 0}
+    page.destroyed.connect(lambda *_args: destroyed.__setitem__("count", destroyed["count"] + 1))
+
+    page.current_items = [
+        type("Item", (), {"type": 9, "vod_id": "movie-1", "vod_name": "Movie 1", "vod_time": "", "vod_remarks": "", "dbid": 0})()
+    ]
+    page._populate_table(page.current_items)
+    page._handle_open(0, 0)
+    _wait_for_open_call(qtbot, controller, "detail", "movie-1")
+
+    page.deleteLater()
+    qtbot.waitUntil(lambda: destroyed["count"] == 1, timeout=1000)
+
+    controller.finish("detail", "movie-1")
+    qtbot.wait(100)
+
+    assert destroyed["count"] == 1

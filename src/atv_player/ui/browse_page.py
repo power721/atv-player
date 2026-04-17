@@ -4,6 +4,7 @@ from datetime import datetime
 import threading
 from typing import Any, cast
 
+import shiboken6
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -276,6 +277,9 @@ class BrowsePage(QWidget):
         layout.addLayout(centered_row)
         self._update_pagination_controls()
 
+    def _is_widget_alive(self) -> bool:
+        return shiboken6.isValid(self)
+
     def ensure_loaded(self, path: str | None = None) -> None:
         if self._initial_load_started:
             return
@@ -330,12 +334,15 @@ class BrowsePage(QWidget):
             try:
                 results = self.controller.search(keyword)
             except UnauthorizedError:
-                self._search_signals.unauthorized.emit(request_id)
+                if self._is_widget_alive():
+                    self._search_signals.unauthorized.emit(request_id)
                 return
             except ApiError as exc:
-                self._search_signals.failed.emit(request_id, str(exc))
+                if self._is_widget_alive():
+                    self._search_signals.failed.emit(request_id, str(exc))
                 return
-            self._search_signals.succeeded.emit(request_id, results)
+            if self._is_widget_alive():
+                self._search_signals.succeeded.emit(request_id, results)
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -377,12 +384,15 @@ class BrowsePage(QWidget):
             try:
                 path = self.controller.resolve_search_result(item)
             except UnauthorizedError:
-                self._resolve_signals.unauthorized.emit(request_id)
+                if self._is_widget_alive():
+                    self._resolve_signals.unauthorized.emit(request_id)
                 return
             except ApiError as exc:
-                self._resolve_signals.failed.emit(request_id, str(exc))
+                if self._is_widget_alive():
+                    self._resolve_signals.failed.emit(request_id, str(exc))
                 return
-            self._resolve_signals.succeeded.emit(request_id, path)
+            if self._is_widget_alive():
+                self._resolve_signals.succeeded.emit(request_id, path)
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -515,12 +525,15 @@ class BrowsePage(QWidget):
             try:
                 items, total = self.controller.load_folder(path, page=page, size=size)
             except UnauthorizedError:
-                self._folder_signals.unauthorized.emit(request_id)
+                if self._is_widget_alive():
+                    self._folder_signals.unauthorized.emit(request_id)
                 return
             except ApiError as exc:
-                self._folder_signals.failed.emit(request_id, path, page, size, str(exc))
+                if self._is_widget_alive():
+                    self._folder_signals.failed.emit(request_id, path, page, size, str(exc))
                 return
-            self._folder_signals.succeeded.emit(request_id, path, page, size, items, total)
+            if self._is_widget_alive():
+                self._folder_signals.succeeded.emit(request_id, path, page, size, items, total)
 
         threading.Thread(target=run, daemon=True).start()
         return request_id
@@ -650,12 +663,15 @@ class BrowsePage(QWidget):
             try:
                 request = builder()
             except UnauthorizedError:
-                self._open_signals.unauthorized.emit(request_id)
+                if self._is_widget_alive():
+                    self._open_signals.unauthorized.emit(request_id)
                 return
             except ApiError as exc:
-                self._open_signals.failed.emit(request_id, str(exc))
+                if self._is_widget_alive():
+                    self._open_signals.failed.emit(request_id, str(exc))
                 return
-            self._open_signals.succeeded.emit(request_id, request)
+            if self._is_widget_alive():
+                self._open_signals.succeeded.emit(request_id, request)
 
         threading.Thread(target=run, daemon=True).start()
         return request_id
