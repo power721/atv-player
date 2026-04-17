@@ -1,5 +1,5 @@
-from PySide6.QtCore import QByteArray, QEvent, Qt
-from PySide6.QtGui import QAction, QColor, QCursor, QImage, QKeyEvent, QMouseEvent, QPixmap
+from PySide6.QtCore import QByteArray, QEvent, QObject, QRect, Qt, Signal
+from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QImage, QKeyEvent, QMouseEvent, QPixmap, QWindow
 from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QMenu, QTableWidget, QWidget
 from PySide6.QtWidgets import QSplitter, QToolTip
 from atv_player.controllers.player_controller import PlayerSession
@@ -2561,6 +2561,445 @@ def test_player_window_right_click_on_video_child_maps_position_to_video_widget(
 
     expected = window.video_widget.mapFromGlobal(global_pos)
     assert shown == [(expected.x(), expected.y())]
+
+
+def test_player_window_right_click_on_video_child_added_after_load_opens_context_menu(qtbot, monkeypatch) -> None:
+    shown: list[tuple[int, int]] = []
+
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 1
+
+        def duration_seconds(self) -> int:
+            return 120
+
+    monkeypatch.setattr(
+        PlayerWindow,
+        "_show_video_context_menu",
+        lambda self, pos: shown.append((pos.x(), pos.y())),
+    )
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.show()
+
+    window.open_session(make_player_session(start_index=0))
+
+    child = QWidget(window.video_widget)
+    child.setGeometry(40, 30, 120, 80)
+    child.show()
+
+    local_pos = child.rect().center()
+    global_pos = child.mapToGlobal(local_pos)
+    QApplication.sendEvent(
+        child,
+        QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            local_pos,
+            global_pos,
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.RightButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+
+    expected = window.video_widget.mapFromGlobal(global_pos)
+    assert shown == [(expected.x(), expected.y())]
+
+
+def test_player_window_right_click_on_native_video_window_opens_context_menu(qtbot, monkeypatch) -> None:
+    shown: list[tuple[int, int]] = []
+
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 1
+
+        def duration_seconds(self) -> int:
+            return 120
+
+    monkeypatch.setattr(
+        PlayerWindow,
+        "_show_video_context_menu",
+        lambda self, pos: shown.append((pos.x(), pos.y())),
+    )
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.show()
+    window.open_session(make_player_session(start_index=0))
+
+    native_surface = QWindow()
+    local_pos = window.video_widget.rect().center()
+    global_pos = window.video_widget.mapToGlobal(local_pos)
+    event = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        local_pos,
+        global_pos,
+        Qt.MouseButton.RightButton,
+        Qt.MouseButton.RightButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+    handled = window.eventFilter(native_surface, event)
+
+    assert handled is True
+    assert shown == [(local_pos.x(), local_pos.y())]
+
+
+def test_player_window_context_menu_event_on_native_video_window_opens_context_menu(qtbot, monkeypatch) -> None:
+    shown: list[tuple[int, int]] = []
+
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 1
+
+        def duration_seconds(self) -> int:
+            return 120
+
+    monkeypatch.setattr(
+        PlayerWindow,
+        "_show_video_context_menu",
+        lambda self, pos: shown.append((pos.x(), pos.y())),
+    )
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.show()
+    window.open_session(make_player_session(start_index=0))
+
+    native_surface = QWindow()
+    local_pos = window.video_widget.rect().center()
+    global_pos = window.video_widget.mapToGlobal(local_pos)
+    event = QContextMenuEvent(QContextMenuEvent.Reason.Mouse, local_pos, global_pos)
+
+    handled = window.eventFilter(native_surface, event)
+
+    assert handled is True
+    assert shown == [(local_pos.x(), local_pos.y())]
+
+
+def test_player_window_left_click_on_native_video_window_closes_open_context_menu(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 1
+
+        def duration_seconds(self) -> int:
+            return 120
+
+    class FakeMenu(QObject):
+        aboutToHide = Signal()
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.visible = True
+            self.close_calls = 0
+
+        def isVisible(self) -> bool:
+            return self.visible
+
+        def close(self) -> None:
+            self.close_calls += 1
+            self.visible = False
+            self.aboutToHide.emit()
+
+        def deleteLater(self) -> None:
+            return None
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.show()
+    window.open_session(make_player_session(start_index=0))
+
+    fake_menu = FakeMenu()
+    window._video_context_menu = fake_menu
+
+    native_surface = QWindow()
+    local_pos = window.video_widget.rect().center()
+    global_pos = window.video_widget.mapToGlobal(local_pos)
+    event = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        local_pos,
+        global_pos,
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+    handled = window.eventFilter(native_surface, event)
+
+    assert handled is True
+    assert fake_menu.close_calls == 1
+    assert window._video_context_menu is None
+
+
+def test_player_window_opening_video_context_menu_closes_previous_menu(qtbot, monkeypatch) -> None:
+    class FakeMenu(QObject):
+        aboutToHide = Signal()
+
+        def __init__(self, name: str) -> None:
+            super().__init__()
+            self.name = name
+            self.visible = True
+            self.popup_calls: list[tuple[int, int]] = []
+            self.close_calls = 0
+
+        def popup(self, pos) -> None:
+            self.visible = True
+            self.popup_calls.append((pos.x(), pos.y()))
+
+        def isVisible(self) -> bool:
+            return self.visible
+
+        def close(self) -> None:
+            self.close_calls += 1
+            self.visible = False
+            self.aboutToHide.emit()
+
+        def deleteLater(self) -> None:
+            return None
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+
+    menus = [FakeMenu("first"), FakeMenu("second")]
+    monkeypatch.setattr(window, "_build_video_context_menu", lambda: menus.pop(0))
+
+    first_pos = window.video_widget.rect().center()
+    second_pos = first_pos + first_pos
+
+    window._show_video_context_menu(first_pos)
+    first_menu = window._video_context_menu
+    assert first_menu is not None
+
+    window._show_video_context_menu(second_pos)
+
+    assert first_menu.close_calls == 1
+    assert window._video_context_menu is not None
+    assert window._video_context_menu is not first_menu
+    second_global_pos = window.video_widget.mapToGlobal(second_pos)
+    assert window._video_context_menu.popup_calls == [(second_global_pos.x(), second_global_pos.y())]
+
+
+def test_player_window_left_click_inside_open_menu_does_not_close_it(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 1
+
+        def duration_seconds(self) -> int:
+            return 120
+
+    class FakeMenu(QObject):
+        aboutToHide = Signal()
+
+        def __init__(self, geometry: QRect) -> None:
+            super().__init__()
+            self.visible = True
+            self.close_calls = 0
+            self._geometry = geometry
+
+        def isVisible(self) -> bool:
+            return self.visible
+
+        def close(self) -> None:
+            self.close_calls += 1
+            self.visible = False
+            self.aboutToHide.emit()
+
+        def geometry(self) -> QRect:
+            return self._geometry
+
+        def deleteLater(self) -> None:
+            return None
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.show()
+    window.open_session(make_player_session(start_index=0))
+
+    menu_rect = QRect(window.video_widget.mapToGlobal(window.video_widget.rect().center()), window.video_widget.rect().center())
+    fake_menu = FakeMenu(menu_rect)
+    window._video_context_menu = fake_menu
+
+    native_surface = QWindow()
+    global_pos = menu_rect.center()
+    local_pos = window.video_widget.mapFromGlobal(global_pos)
+    event = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        local_pos,
+        global_pos,
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+    handled = window.eventFilter(native_surface, event)
+
+    assert handled is False
+    assert fake_menu.close_calls == 0
+    assert window._video_context_menu is fake_menu
+
+
+def test_player_window_mpv_right_click_signal_opens_context_menu_at_cursor(qtbot, monkeypatch) -> None:
+    shown: list[tuple[int, int]] = []
+
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 1
+
+        def duration_seconds(self) -> int:
+            return 120
+
+    monkeypatch.setattr(
+        PlayerWindow,
+        "_show_video_context_menu",
+        lambda self, pos: shown.append((pos.x(), pos.y())),
+    )
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.show()
+    window.open_session(make_player_session(start_index=0))
+
+    local_pos = window.video_widget.rect().center()
+    global_pos = window.video_widget.mapToGlobal(local_pos)
+    monkeypatch.setattr(player_window_module.QCursor, "pos", staticmethod(lambda: global_pos))
+
+    window.video_widget.context_menu_requested.emit()
+
+    assert shown == [(local_pos.x(), local_pos.y())]
 
 
 def test_player_window_populates_embedded_subtitle_options_after_open_session(qtbot) -> None:

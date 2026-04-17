@@ -33,6 +33,7 @@ class MpvWidget(QWidget):
     playback_finished = Signal()
     subtitle_tracks_changed = Signal()
     audio_tracks_changed = Signal()
+    context_menu_requested = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -102,6 +103,16 @@ class MpvWidget(QWidget):
 
         observe_property("track-list", handle_track_list)
         self._track_list_handler = handle_track_list
+
+        register_key_binding = getattr(self._player, "register_key_binding", None)
+        if register_key_binding is None:
+            return
+
+        def handle_right_click(*_args) -> None:
+            self.context_menu_requested.emit()
+
+        register_key_binding("MBTN_RIGHT", handle_right_click, mode="force")
+        self._right_click_handler = handle_right_click
 
     def _build_http_header_fields(self, headers: dict[str, str] | None) -> list[str]:
         if not headers:
