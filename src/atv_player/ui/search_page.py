@@ -148,6 +148,7 @@ class SearchPage(QWidget):
             name_item = QTableWidgetItem(item.vod_name)
             name_item.setToolTip(item.vod_name)
             self.results_table.setItem(row, 1, name_item)
+        self.status_label.setText(f"{len(self._filtered_results)} 条结果")
 
     def _open_selected(self, row: int, _column: int) -> None:
         if not hasattr(self, "_filtered_results") or not (0 <= row < len(self._filtered_results)):
@@ -186,7 +187,6 @@ class SearchPage(QWidget):
             return
         self._set_search_loading(False)
         self._results = list(results)
-        self.status_label.setText(f"{len(self._results)} 条结果")
         self._apply_filter()
 
     def _handle_search_failed(self, request_id: int, message: str) -> None:

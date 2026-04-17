@@ -706,6 +706,25 @@ def test_search_page_clear_results_clears_keyword(qtbot) -> None:
     assert page.status_label.text() == ""
 
 
+def test_search_page_updates_status_count_after_filtering(qtbot) -> None:
+    page = SearchPage(FakeSearchController())
+    qtbot.addWidget(page)
+
+    page._results = [
+        VodItem(vod_id="1", vod_name="阿里资源", type_name="阿里", share_type="0"),
+        VodItem(vod_id="2", vod_name="百度资源", type_name="百度", share_type="10"),
+    ]
+    page._apply_filter()
+
+    assert page.status_label.text() == "2 条结果"
+
+    ali_index = next(index for index in range(page.filter_combo.count()) if page.filter_combo.itemText(index) == "阿里")
+    page.filter_combo.setCurrentIndex(ali_index)
+
+    assert page.results_table.rowCount() == 1
+    assert page.status_label.text() == "1 条结果"
+
+
 def test_search_page_resolves_selected_result_outside_main_thread(qtbot) -> None:
     controller = AsyncResolveController()
     page = SearchPage(controller)
