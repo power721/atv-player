@@ -113,6 +113,29 @@ class MpvWidget(QWidget):
             return
         player["http-header-fields"] = header_fields
 
+    def _player_property(self, name: str, default: object | None = None) -> object | None:
+        if self._player is None:
+            return default
+        try:
+            return self._player[name]
+        except Exception:
+            if hasattr(self._player, name.replace("-", "_")):
+                return getattr(self._player, name.replace("-", "_"))
+            return default
+
+    def _set_player_property(self, name: str, value: object) -> None:
+        if self._player is None:
+            return
+        try:
+            if hasattr(type(self._player), "__setitem__"):
+                self._player[name] = value
+            else:
+                setattr(self._player, name.replace("-", "_"), value)
+        except Exception:
+            if getattr(self._player, "core_shutdown", False):
+                return
+            raise
+
     def load(
         self,
         url: str,
@@ -295,6 +318,34 @@ class MpvWidget(QWidget):
         lowered_title = track.title.casefold()
         return any(token in lowered_title for token in ("中文", "简中", "繁中", "中字", "chinese"))
 
+    def _chinese_subtitle_preference(self, track: SubtitleTrack) -> int:
+        normalized_lang = track.lang.casefold()
+        lowered_title = track.title.casefold()
+        simplified_tokens = ("简中", "简体", "chs", "sc", "gb", "hans")
+        traditional_tokens = ("繁中", "繁體", "繁体", "cht", "tc", "big5", "hant")
+        if any(token in normalized_lang for token in simplified_tokens) or any(
+            token in lowered_title for token in simplified_tokens
+        ):
+            return 2
+        if any(token in normalized_lang for token in traditional_tokens) or any(
+            token in lowered_title for token in traditional_tokens
+        ):
+            return 0
+        return 1
+
+    def _is_english_subtitle_track(self, track: SubtitleTrack) -> bool:
+        if track.lang in {"en", "eng"}:
+            return True
+        lowered_title = track.title.casefold()
+        return "english" in lowered_title
+
+    def _preferred_subtitle_sort_key(self, track: SubtitleTrack) -> tuple[int, int, int]:
+        return (
+            self._chinese_subtitle_preference(track),
+            int(track.is_default),
+            int(bool(track.title)),
+        )
+
     def subtitle_tracks(self) -> list[SubtitleTrack]:
         if self._player is None:
             return []
@@ -333,7 +384,14 @@ class MpvWidget(QWidget):
             if mode == "track" and track_id is not None:
                 self._player.sid = track_id
                 return track_id
-            preferred_track = next((track for track in self.subtitle_tracks() if self._is_chinese_subtitle_track(track)), None)
+            tracks = self.subtitle_tracks()
+            chinese_tracks = [track for track in tracks if self._is_chinese_subtitle_track(track)]
+            english_tracks = [track for track in tracks if self._is_english_subtitle_track(track)]
+            preferred_track = None
+            if chinese_tracks:
+                preferred_track = max(chinese_tracks, key=self._preferred_subtitle_sort_key)
+            elif english_tracks:
+                preferred_track = max(english_tracks, key=self._preferred_subtitle_sort_key)
             if preferred_track is not None:
                 self._player.sid = preferred_track.id
                 return preferred_track.id
@@ -343,6 +401,45 @@ class MpvWidget(QWidget):
             if getattr(self._player, "core_shutdown", False):
                 return None
             raise
+
+    def apply_secondary_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+        if self._player is None:
+            return None
+        try:
+            if mode == "off":
+                self._set_player_property("secondary-sid", "no")
+                return None
+            if mode == "track" and track_id is not None:
+                self._set_player_property("secondary-sid", track_id)
+                return track_id
+            self._set_player_property("secondary-sid", "no")
+            return None
+        except Exception:
+            if getattr(self._player, "core_shutdown", False):
+                return None
+            raise
+
+    def subtitle_position(self) -> int:
+        value = self._player_property("sub-pos", 50)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 50
+
+    def set_subtitle_position(self, value: int) -> None:
+        clamped = max(0, min(int(value), 100))
+        self._set_player_property("sub-pos", clamped)
+
+    def secondary_subtitle_position(self) -> int:
+        value = self._player_property("secondary-sub-pos", 50)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 50
+
+    def set_secondary_subtitle_position(self, value: int) -> None:
+        clamped = max(0, min(int(value), 100))
+        self._set_player_property("secondary-sub-pos", clamped)
 
     def _audio_language_label(self, lang: str) -> str:
         normalized = lang.strip().lower()
