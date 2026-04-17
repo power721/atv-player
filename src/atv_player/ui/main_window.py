@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -70,6 +72,21 @@ class _PluginController(Protocol):
     def load_items(self, category_id: str, page: int): ...
 
     def build_request(self, vod_id: str) -> OpenPlayerRequest: ...
+
+
+class _AsyncRequestSignals(QObject):
+    succeeded = Signal(int, object)
+    failed = Signal(int, str)
+
+
+@dataclass(slots=True)
+class _MediaLoadResult:
+    page: PosterGridPage
+    items: list[Any]
+    total: int
+    empty_message: str
+    push_breadcrumb: tuple[str, str] | None = None
+    trim_breadcrumbs_to: int | None = None
 
 
 class MainWindow(QMainWindow):
@@ -141,6 +158,14 @@ class MainWindow(QMainWindow):
         self.player_window: PlayerWindow | None = None
         self.help_dialog: ShortcutHelpDialog | None = None
         self.config = config
+        self._open_request_id = 0
+        self._media_request_id = 0
+        self._open_request_signals = _AsyncRequestSignals(self)
+        self._open_request_signals.succeeded.connect(self._handle_open_request_succeeded)
+        self._open_request_signals.failed.connect(self._handle_open_request_failed)
+        self._media_request_signals = _AsyncRequestSignals(self)
+        self._media_request_signals.succeeded.connect(self._handle_media_load_succeeded)
+        self._media_request_signals.failed.connect(self._handle_media_load_failed)
 
         self.nav_tabs.addTab(self.douban_page, "豆瓣电影")
         self.nav_tabs.addTab(self.telegram_page, "电报影视")
@@ -270,20 +295,10 @@ class MainWindow(QMainWindow):
         self.browse_page.search_keyword(keyword)
 
     def _handle_telegram_open_requested(self, vod_id: str) -> None:
-        try:
-            request = self.telegram_controller.build_request(vod_id)
-        except Exception as exc:
-            self.show_error(str(exc))
-            return
-        self.open_player(request)
+        self._start_open_request(lambda: self.telegram_controller.build_request(vod_id))
 
     def _handle_live_open_requested(self, vod_id: str) -> None:
-        try:
-            request = self.live_controller.build_request(vod_id)
-        except Exception as exc:
-            self.show_error(str(exc))
-            return
-        self.open_player(request)
+        self._start_open_request(lambda: self.live_controller.build_request(vod_id))
 
     def _handle_live_item_open_requested(self, item) -> None:
         if getattr(item, "vod_tag", "") == "folder":
@@ -292,12 +307,7 @@ class MainWindow(QMainWindow):
         self._handle_live_open_requested(item.vod_id)
 
     def _handle_emby_open_requested(self, vod_id: str) -> None:
-        try:
-            request = self.emby_controller.build_request(vod_id)
-        except Exception as exc:
-            self.show_error(str(exc))
-            return
-        self.open_player(request)
+        self._start_open_request(lambda: self.emby_controller.build_request(vod_id))
 
     def _handle_emby_item_open_requested(self, item) -> None:
         if getattr(item, "vod_tag", "") == "folder":
@@ -307,12 +317,7 @@ class MainWindow(QMainWindow):
         self._handle_emby_open_requested(item.vod_id)
 
     def _handle_jellyfin_open_requested(self, vod_id: str) -> None:
-        try:
-            request = self.jellyfin_controller.build_request(vod_id)
-        except Exception as exc:
-            self.show_error(str(exc))
-            return
-        self.open_player(request)
+        self._start_open_request(lambda: self.jellyfin_controller.build_request(vod_id))
 
     def _handle_jellyfin_item_open_requested(self, item) -> None:
         if getattr(item, "vod_tag", "") == "folder":
@@ -350,14 +355,13 @@ class MainWindow(QMainWindow):
             insert_index += 1
 
     def _open_spider_request(self, controller, plugin_id: str, vod_id: str) -> None:
-        try:
+        def build_request() -> OpenPlayerRequest:
             request = controller.build_request(vod_id)
-        except Exception as exc:
-            self.show_error(str(exc))
-            return
-        request.source_kind = "plugin"
-        request.source_key = plugin_id
-        self.open_player(request)
+            request.source_kind = "plugin"
+            request.source_key = plugin_id
+            return request
+
+        self._start_open_request(build_request)
 
     def _open_plugin_manager(self) -> None:
         if self._plugin_manager is None:
@@ -381,13 +385,12 @@ class MainWindow(QMainWindow):
         self.live_page.reload_categories()
 
     def _open_media_folder(self, page: PosterGridPage, controller: Any, item: Any) -> None:
-        try:
-            items, total = controller.load_folder_items(item.vod_id)
-        except Exception as exc:
-            self.show_error(str(exc))
-            return
-        page.show_items(items, total, page=1, empty_message="当前文件夹暂无内容")
-        page.push_folder_breadcrumb(item.vod_id, item.vod_name)
+        self._start_media_load(
+            page,
+            lambda: controller.load_folder_items(item.vod_id),
+            empty_message="当前文件夹暂无内容",
+            push_breadcrumb=(item.vod_id, item.vod_name),
+        )
 
     def _handle_media_breadcrumb_requested(
         self,
@@ -397,31 +400,99 @@ class MainWindow(QMainWindow):
         kind: str,
         index: int,
     ) -> None:
-        try:
-            if kind == "folder":
-                items, total = controller.load_folder_items(node_id)
-                empty_message = "当前文件夹暂无内容"
-                trim_to_index = index
-            else:
-                category_id = page.selected_category_id
-                if not category_id:
-                    return
-                items, total = controller.load_items(category_id, 1)
-                empty_message = "当前分类暂无内容"
-                trim_to_index = 1
-        except Exception as exc:
-            self.show_error(str(exc))
+        if kind == "folder":
+            self._start_media_load(
+                page,
+                lambda: controller.load_folder_items(node_id),
+                empty_message="当前文件夹暂无内容",
+                trim_breadcrumbs_to=index,
+            )
             return
-        page.show_items(items, total, page=1, empty_message=empty_message)
-        page.trim_folder_breadcrumbs(trim_to_index)
+        category_id = page.selected_category_id
+        if not category_id:
+            return
+        self._start_media_load(
+            page,
+            lambda: controller.load_items(category_id, 1),
+            empty_message="当前分类暂无内容",
+            trim_breadcrumbs_to=1,
+        )
 
     def open_history_detail(self, vod_id: str) -> None:
-        try:
-            request = self.browse_controller.build_request_from_detail(vod_id)
-        except Exception as exc:
-            self.show_error(str(exc))
+        self._start_open_request(lambda: self.browse_controller.build_request_from_detail(vod_id))
+
+    def _start_open_request(self, builder) -> int:
+        self._open_request_id += 1
+        request_id = self._open_request_id
+
+        def run() -> None:
+            try:
+                request = builder()
+            except Exception as exc:
+                self._open_request_signals.failed.emit(request_id, str(exc))
+                return
+            self._open_request_signals.succeeded.emit(request_id, request)
+
+        threading.Thread(target=run, daemon=True).start()
+        return request_id
+
+    def _handle_open_request_succeeded(self, request_id: int, request: OpenPlayerRequest) -> None:
+        if request_id != self._open_request_id:
             return
         self.open_player(request)
+
+    def _handle_open_request_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._open_request_id:
+            return
+        self.show_error(message)
+
+    def _start_media_load(
+        self,
+        page: PosterGridPage,
+        loader,
+        *,
+        empty_message: str,
+        push_breadcrumb: tuple[str, str] | None = None,
+        trim_breadcrumbs_to: int | None = None,
+    ) -> int:
+        self._media_request_id += 1
+        request_id = self._media_request_id
+
+        def run() -> None:
+            try:
+                items, total = loader()
+            except Exception as exc:
+                self._media_request_signals.failed.emit(request_id, str(exc))
+                return
+            self._media_request_signals.succeeded.emit(
+                request_id,
+                _MediaLoadResult(
+                    page=page,
+                    items=list(items),
+                    total=total,
+                    empty_message=empty_message,
+                    push_breadcrumb=push_breadcrumb,
+                    trim_breadcrumbs_to=trim_breadcrumbs_to,
+                ),
+            )
+
+        threading.Thread(target=run, daemon=True).start()
+        return request_id
+
+    def _handle_media_load_succeeded(self, request_id: int, result: _MediaLoadResult) -> None:
+        if request_id != self._media_request_id:
+            return
+        result.page.show_items(result.items, result.total, page=1, empty_message=result.empty_message)
+        if result.push_breadcrumb is not None:
+            breadcrumb_id, label = result.push_breadcrumb
+            result.page.push_folder_breadcrumb(breadcrumb_id, label)
+        if result.trim_breadcrumbs_to is not None:
+            result.page.trim_folder_breadcrumbs(result.trim_breadcrumbs_to)
+
+    def _handle_media_load_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._media_request_id:
+            return
+        self.show_error(message)
 
     def open_player(self, request, restore_paused_state: bool = False) -> None:
         session = self.player_controller.create_session(

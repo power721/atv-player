@@ -1,5 +1,6 @@
 import os
 import httpx
+import threading
 import time
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
@@ -122,6 +123,167 @@ class FakeJellyfinController(FakeDoubanController):
     def load_folder_items(self, vod_id: str):
         self.folder_calls.append(vod_id)
         return [VodItem(vod_id="jf-child-1", vod_name="Episode 1", vod_tag="file")], 1
+
+
+class AsyncRequestController(FakeDoubanController):
+    def __init__(self, request_factory) -> None:
+        super().__init__()
+        self.calls: list[str] = []
+        self._main_thread_id = threading.get_ident()
+        self._request_factory = request_factory
+        self._events_by_vod_id: dict[str, list[threading.Event]] = {}
+        self._results_by_vod_id: dict[str, list[OpenPlayerRequest]] = {}
+        self._errors_by_vod_id: dict[str, list[Exception]] = {}
+
+    def build_request(self, vod_id: str):
+        self.calls.append(vod_id)
+        assert threading.get_ident() != self._main_thread_id
+        event = threading.Event()
+        self._events_by_vod_id.setdefault(vod_id, []).append(event)
+        assert event.wait(timeout=5), f"request for {vod_id!r} was never released"
+        errors = self._errors_by_vod_id.get(vod_id)
+        if errors:
+            raise errors.pop(0)
+        results = self._results_by_vod_id.get(vod_id)
+        if results:
+            return results.pop(0)
+        return self._request_factory(vod_id)
+
+    def finish_request(
+        self,
+        vod_id: str,
+        *,
+        request: OpenPlayerRequest | None = None,
+        exc: Exception | None = None,
+    ) -> None:
+        if request is not None:
+            self._results_by_vod_id.setdefault(vod_id, []).append(request)
+        if exc is not None:
+            self._errors_by_vod_id.setdefault(vod_id, []).append(exc)
+        self._events_by_vod_id[vod_id].pop(0).set()
+
+
+class AsyncFolderController(AsyncRequestController):
+    def __init__(self, request_factory) -> None:
+        super().__init__(request_factory)
+        self.folder_calls: list[str] = []
+        self._folder_events_by_vod_id: dict[str, list[threading.Event]] = {}
+        self._folder_results_by_vod_id: dict[str, list[tuple[list[VodItem], int]]] = {}
+        self._folder_errors_by_vod_id: dict[str, list[Exception]] = {}
+
+    def load_folder_items(self, vod_id: str):
+        self.folder_calls.append(vod_id)
+        assert threading.get_ident() != self._main_thread_id
+        event = threading.Event()
+        self._folder_events_by_vod_id.setdefault(vod_id, []).append(event)
+        assert event.wait(timeout=5), f"folder load for {vod_id!r} was never released"
+        errors = self._folder_errors_by_vod_id.get(vod_id)
+        if errors:
+            raise errors.pop(0)
+        results = self._folder_results_by_vod_id.get(vod_id)
+        if results:
+            return results.pop(0)
+        return [], 0
+
+    def finish_folder(
+        self,
+        vod_id: str,
+        *,
+        items: list[VodItem],
+        total: int,
+        exc: Exception | None = None,
+    ) -> None:
+        self._folder_results_by_vod_id.setdefault(vod_id, []).append((items, total))
+        if exc is not None:
+            self._folder_errors_by_vod_id.setdefault(vod_id, []).append(exc)
+        self._folder_events_by_vod_id[vod_id].pop(0).set()
+
+
+class AsyncHistoryBrowseController(FakeBrowseController):
+    def __init__(self) -> None:
+        self.detail_calls: list[str] = []
+        self._main_thread_id = threading.get_ident()
+        self._events_by_vod_id: dict[str, list[threading.Event]] = {}
+        self._results_by_vod_id: dict[str, list[OpenPlayerRequest]] = {}
+        self._errors_by_vod_id: dict[str, list[Exception]] = {}
+
+    def build_request_from_detail(self, vod_id: str):
+        self.detail_calls.append(vod_id)
+        assert threading.get_ident() != self._main_thread_id
+        event = threading.Event()
+        self._events_by_vod_id.setdefault(vod_id, []).append(event)
+        assert event.wait(timeout=5), f"history detail request for {vod_id!r} was never released"
+        errors = self._errors_by_vod_id.get(vod_id)
+        if errors:
+            raise errors.pop(0)
+        results = self._results_by_vod_id.get(vod_id)
+        if results:
+            return results.pop(0)
+        return _make_history_request(vod_id)
+
+    def finish_detail(
+        self,
+        vod_id: str,
+        *,
+        request: OpenPlayerRequest | None = None,
+        exc: Exception | None = None,
+    ) -> None:
+        if request is not None:
+            self._results_by_vod_id.setdefault(vod_id, []).append(request)
+        if exc is not None:
+            self._errors_by_vod_id.setdefault(vod_id, []).append(exc)
+        self._events_by_vod_id[vod_id].pop(0).set()
+
+
+class AsyncPluginController(AsyncRequestController):
+    def load_categories(self):
+        return []
+
+    def load_items(self, category_id: str, page: int):
+        return [], 0
+
+
+def _make_telegram_request(vod_id: str, vod_name: str = "Telegram Movie") -> OpenPlayerRequest:
+    return OpenPlayerRequest(
+        vod=VodItem(vod_id=vod_id, vod_name=vod_name),
+        playlist=[PlayItem(title="Episode 1", url="", vod_id="ep-1")],
+        clicked_index=0,
+        source_mode="detail",
+        source_vod_id=vod_id,
+    )
+
+
+def _make_live_request(vod_id: str, vod_name: str = "Live Room") -> OpenPlayerRequest:
+    return OpenPlayerRequest(
+        vod=VodItem(vod_id=vod_id, vod_name=vod_name),
+        playlist=[PlayItem(title="线路 1", url="https://stream.example/live.m3u8", vod_id="line-1")],
+        clicked_index=0,
+        source_mode="detail",
+        source_vod_id=vod_id,
+        use_local_history=False,
+    )
+
+
+def _make_history_request(vod_id: str, vod_name: str = "History Movie") -> OpenPlayerRequest:
+    return OpenPlayerRequest(
+        vod=VodItem(vod_id=vod_id, vod_name=vod_name),
+        playlist=[PlayItem(title="Episode 1", url="", vod_id="ep-history-1")],
+        clicked_index=0,
+        source_mode="detail",
+        source_vod_id=vod_id,
+    )
+
+
+def _wait_for_request_call(qtbot, controller: AsyncRequestController, vod_id: str) -> None:
+    qtbot.waitUntil(lambda: vod_id in controller.calls, timeout=1000)
+
+
+def _wait_for_folder_call(qtbot, controller: AsyncFolderController, vod_id: str) -> None:
+    qtbot.waitUntil(lambda: vod_id in controller.folder_calls, timeout=1000)
+
+
+def _wait_for_history_detail_call(qtbot, controller: AsyncHistoryBrowseController, vod_id: str) -> None:
+    qtbot.waitUntil(lambda: vod_id in controller.detail_calls, timeout=1000)
 
 
 class RecordingDoubanController(FakeDoubanController):
@@ -495,10 +657,76 @@ def test_main_window_opens_player_from_telegram_card_signal(qtbot, monkeypatch) 
 
     window.telegram_page.open_requested.emit("https://pan.quark.cn/s/f518510ef92a")
 
-    assert opened
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
     assert opened[0][0].vod.vod_name == "Telegram Movie"
     assert opened[0][0].source_vod_id == "https://pan.quark.cn/s/f518510ef92a"
     assert opened[0][1] is False
+
+
+def test_main_window_uses_latest_async_open_request(qtbot, monkeypatch) -> None:
+    controller = AsyncRequestController(_make_telegram_request)
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=controller,
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened: list[tuple[OpenPlayerRequest, bool]] = []
+    monkeypatch.setattr(
+        window,
+        "open_player",
+        lambda request, restore_paused_state=False: opened.append((request, restore_paused_state)),
+    )
+    monkeypatch.setattr(window, "show_error", lambda message: None)
+
+    window.telegram_page.open_requested.emit("vod-1")
+    _wait_for_request_call(qtbot, controller, "vod-1")
+
+    window.telegram_page.open_requested.emit("vod-2")
+    _wait_for_request_call(qtbot, controller, "vod-2")
+
+    controller.finish_request("vod-2", request=_make_telegram_request("vod-2", vod_name="Second"))
+    qtbot.waitUntil(lambda: len(opened) == 1 and opened[0][0].source_vod_id == "vod-2", timeout=1000)
+
+    controller.finish_request("vod-1", request=_make_telegram_request("vod-1", vod_name="First"))
+    qtbot.wait(100)
+
+    assert len(opened) == 1
+    assert opened[0][0].vod.vod_name == "Second"
+    assert opened[0][0].source_vod_id == "vod-2"
+    assert opened[0][0].source_kind == "browse"
+
+
+def test_main_window_async_open_request_surfaces_errors(qtbot, monkeypatch) -> None:
+    controller = AsyncRequestController(_make_telegram_request)
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=controller,
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    errors: list[str] = []
+    monkeypatch.setattr(window, "show_error", lambda message: errors.append(message))
+
+    window.telegram_page.open_requested.emit("broken")
+    _wait_for_request_call(qtbot, controller, "broken")
+    controller.finish_request("broken", exc=ValueError("打开失败"))
+
+    qtbot.waitUntil(lambda: errors == ["打开失败"], timeout=1000)
 
 
 def test_main_window_enables_search_controls_only_for_telegram_page(qtbot) -> None:
@@ -655,7 +883,7 @@ def test_main_window_opens_player_from_emby_card_signal(qtbot, monkeypatch) -> N
 
     window.emby_page.item_open_requested.emit(VodItem(vod_id="1-3281", vod_name="Episode 1", vod_tag="file"))
 
-    assert opened
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
     assert opened[0][0].vod.vod_name == "Emby Movie"
     assert opened[0][0].source_vod_id == "1-3281"
     assert opened[0][1] is False
@@ -688,9 +916,9 @@ def test_main_window_emby_folder_click_loads_folder_in_current_tab(qtbot, monkey
 
     window.emby_page.item_open_requested.emit(VodItem(vod_id="folder-1", vod_name="Season 1", vod_tag="folder"))
 
+    qtbot.waitUntil(lambda: controller.folder_calls == ["folder-1"] and len(shown) == 1, timeout=1000)
     assert opened == []
     assert controller.folder_calls == ["folder-1"]
-    assert len(shown) == 1
     assert shown[0][1:] == (1, 1, "当前文件夹暂无内容")
     assert shown[0][0][0].vod_id == "child-1"
 
@@ -720,7 +948,7 @@ def test_main_window_opens_player_from_live_card_signal(qtbot, monkeypatch) -> N
 
     window.live_page.item_open_requested.emit(VodItem(vod_id="bili$1785607569", vod_name="直播间", vod_tag="file"))
 
-    assert opened
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
     assert opened[0][0].vod.vod_name == "Live Room"
     assert opened[0][0].source_vod_id == "bili$1785607569"
     assert opened[0][0].use_local_history is False
@@ -754,9 +982,9 @@ def test_main_window_live_folder_click_loads_folder_in_current_tab(qtbot, monkey
 
     window.live_page.item_open_requested.emit(VodItem(vod_id="bili-9", vod_name="分区", vod_tag="folder"))
 
+    qtbot.waitUntil(lambda: controller.folder_calls == ["bili-9"] and len(shown) == 1, timeout=1000)
     assert opened == []
     assert controller.folder_calls == ["bili-9"]
-    assert len(shown) == 1
     assert shown[0][1:] == (1, 1, "当前文件夹暂无内容")
     assert shown[0][0][0].vod_id == "child-live-1"
 
@@ -784,6 +1012,57 @@ def test_main_window_live_folder_click_updates_breadcrumbs(qtbot, monkeypatch) -
     window.live_page.item_open_requested.emit(VodItem(vod_id="bili-9", vod_name="分区", vod_tag="folder"))
 
     qtbot.waitUntil(lambda: [button.text() for button in window.live_page.breadcrumb_buttons] == ["首页", "推荐", "分区"])
+
+
+def test_main_window_live_folder_uses_latest_async_result(qtbot, monkeypatch) -> None:
+    controller = AsyncFolderController(_make_live_request)
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=controller,
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.live_page.ensure_loaded()
+    qtbot.waitUntil(lambda: len(window.live_page.breadcrumb_buttons) == 2, timeout=1000)
+
+    shown: list[tuple[list[VodItem], int, int, str]] = []
+    monkeypatch.setattr(
+        window.live_page,
+        "show_items",
+        lambda items, total, page=1, empty_message="当前分类暂无内容": shown.append((items, total, page, empty_message)),
+    )
+    monkeypatch.setattr(window, "show_error", lambda message: None)
+
+    window.live_page.item_open_requested.emit(VodItem(vod_id="folder-a", vod_name="分区 A", vod_tag="folder"))
+    _wait_for_folder_call(qtbot, controller, "folder-a")
+
+    window.live_page.item_open_requested.emit(VodItem(vod_id="folder-b", vod_name="分区 B", vod_tag="folder"))
+    _wait_for_folder_call(qtbot, controller, "folder-b")
+
+    controller.finish_folder(
+        "folder-b",
+        items=[VodItem(vod_id="child-b", vod_name="直播 B", vod_tag="file")],
+        total=1,
+    )
+    qtbot.waitUntil(lambda: len(shown) == 1 and shown[0][0][0].vod_name == "直播 B", timeout=1000)
+
+    controller.finish_folder(
+        "folder-a",
+        items=[VodItem(vod_id="child-a", vod_name="直播 A", vod_tag="file")],
+        total=1,
+    )
+    qtbot.wait(100)
+
+    assert len(shown) == 1
+    assert shown[0][0][0].vod_name == "直播 B"
+    assert [button.text() for button in window.live_page.breadcrumb_buttons] == ["首页", "推荐", "分区 B"]
 
 
 def test_main_window_live_breadcrumb_click_loads_category_root(qtbot, monkeypatch) -> None:
@@ -856,7 +1135,7 @@ def test_main_window_opens_player_from_jellyfin_card_signal(qtbot, monkeypatch) 
 
     window.jellyfin_page.item_open_requested.emit(VodItem(vod_id="1-4001", vod_name="Episode 1", vod_tag="file"))
 
-    assert opened
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
     assert opened[0][0].vod.vod_name == "Jellyfin Movie"
     assert opened[0][0].source_vod_id == "1-4001"
     assert opened[0][1] is False
@@ -889,9 +1168,9 @@ def test_main_window_jellyfin_folder_click_loads_folder_in_current_tab(qtbot, mo
 
     window.jellyfin_page.item_open_requested.emit(VodItem(vod_id="folder-1", vod_name="Season 1", vod_tag="folder"))
 
+    qtbot.waitUntil(lambda: controller.folder_calls == ["folder-1"] and len(shown) == 1, timeout=1000)
     assert opened == []
     assert controller.folder_calls == ["folder-1"]
-    assert len(shown) == 1
     assert shown[0][1:] == (1, 1, "当前文件夹暂无内容")
     assert shown[0][0][0].vod_id == "jf-child-1"
 
@@ -1000,6 +1279,69 @@ def test_main_window_jellyfin_breadcrumb_click_loads_category_root(qtbot, monkey
 
     qtbot.waitUntil(lambda: controller.item_calls[-1] == ("suggestion", 1))
     qtbot.waitUntil(lambda: [button.text() for button in window.jellyfin_page.breadcrumb_buttons] == ["首页", "推荐"])
+
+
+def test_main_window_plugin_card_signal_opens_player_asynchronously(qtbot, monkeypatch) -> None:
+    controller = AsyncPluginController(_make_telegram_request)
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[{"id": "plugin-1", "title": "插件一", "controller": controller, "search_enabled": False}],
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened: list[OpenPlayerRequest] = []
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    monkeypatch.setattr(window, "show_error", lambda message: None)
+    plugin_page = window._plugin_pages[0][0]
+
+    plugin_page.open_requested.emit("plugin-vod-1")
+    _wait_for_request_call(qtbot, controller, "plugin-vod-1")
+    controller.finish_request("plugin-vod-1", request=_make_telegram_request("plugin-vod-1", vod_name="插件电影"))
+
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
+
+    assert opened[0].vod.vod_name == "插件电影"
+    assert opened[0].source_kind == "plugin"
+    assert opened[0].source_key == "plugin-1"
+
+
+def test_main_window_opens_history_detail_asynchronously(qtbot, monkeypatch) -> None:
+    browse_controller = AsyncHistoryBrowseController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=browse_controller,
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened: list[OpenPlayerRequest] = []
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    monkeypatch.setattr(window, "show_error", lambda message: None)
+
+    window.open_history_detail("history-vod-1")
+    _wait_for_history_detail_call(qtbot, browse_controller, "history-vod-1")
+    browse_controller.finish_detail("history-vod-1")
+
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
+
+    assert opened[0].vod.vod_name == "History Movie"
+    assert opened[0].source_vod_id == "history-vod-1"
 
 
 def test_decide_start_view_prefers_login_without_token() -> None:
