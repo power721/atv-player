@@ -646,6 +646,81 @@ def test_main_window_opens_live_source_manager_dialog_and_reloads_live_categorie
     assert reloaded == [True]
 
 
+def test_main_window_opening_live_source_manager_closes_shortcut_help_dialog(qtbot, monkeypatch) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        live_source_manager=FakeLiveSourceManager(),
+        plugin_manager=FakePluginManager(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+
+    class FakeDialog:
+        def __init__(self, manager, parent=None) -> None:
+            self.manager = manager
+
+        def exec(self) -> int:
+            return 1
+
+    monkeypatch.setattr(main_window_module, "LiveSourceManagerDialog", FakeDialog)
+
+    QTest.keyClick(window, Qt.Key.Key_F1)
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
+
+    window._open_live_source_manager()
+
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 0, timeout=1000)
+    assert window.help_dialog is None
+
+
+def test_main_window_opening_plugin_manager_closes_shortcut_help_dialog(qtbot, monkeypatch) -> None:
+    plugin_manager = FakePluginManager()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        live_source_manager=FakeLiveSourceManager(),
+        plugin_manager=plugin_manager,
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+
+    class FakeDialog:
+        def __init__(self, manager, parent=None) -> None:
+            self.manager = manager
+
+        def exec(self) -> int:
+            return 1
+
+    monkeypatch.setattr(main_window_module, "PluginManagerDialog", FakeDialog)
+
+    QTest.keyClick(window, Qt.Key.Key_F1)
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
+
+    window._open_plugin_manager()
+
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 0, timeout=1000)
+    assert window.help_dialog is None
+
+
 def test_main_window_passes_config_and_save_callback_to_browse_page(qtbot) -> None:
     saved = {"count": 0}
     config = AppConfig()

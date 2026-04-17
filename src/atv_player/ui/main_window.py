@@ -385,6 +385,7 @@ class MainWindow(QMainWindow):
     def _open_plugin_manager(self) -> None:
         if self._plugin_manager is None:
             return
+        self._close_help_dialog()
         dialog = PluginManagerDialog(self._plugin_manager, self)
         dialog.exec()
         load_enabled_plugins = getattr(self._plugin_manager, "load_enabled_plugins", None)
@@ -399,6 +400,7 @@ class MainWindow(QMainWindow):
     def _open_live_source_manager(self) -> None:
         if self._live_source_manager is None:
             return
+        self._close_help_dialog()
         dialog = LiveSourceManagerDialog(self._live_source_manager, self)
         dialog.exec()
         self.live_page.reload_categories()
