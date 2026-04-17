@@ -1024,6 +1024,39 @@ def test_player_window_appends_runtime_failures_to_log_view_without_overwriting_
     assert "播放失败: boom" not in window.metadata_view.toPlainText()
 
 
+def test_player_window_appends_mpv_failure_messages_to_log_view_without_overwriting_metadata(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie", type_name="剧情", vod_content="简介"),
+        playlist=[PlayItem(title="Episode 1", url="http://m/1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+    window.video_widget.playback_failed.emit("播放失败: HTTP 403 Forbidden")
+
+    assert "名称: Movie" in window.metadata_view.toPlainText()
+    assert "播放失败: HTTP 403 Forbidden" in window.log_view.toPlainText()
+    assert "播放失败: HTTP 403 Forbidden" not in window.metadata_view.toPlainText()
+
+
 def test_player_window_opening_new_session_refreshes_metadata_and_clears_old_logs(qtbot) -> None:
     class FakeVideo:
         def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
