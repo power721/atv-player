@@ -122,5 +122,5 @@ class OpenPlayerRequest:
     use_local_history: bool = True
     restore_history: bool = False
     playback_loader: Callable[[PlayItem], None] | None = None
-    playback_progress_reporter: Callable[[PlayItem, int], None] | None = None
+    playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None
     playback_stopper: Callable[[PlayItem], None] | None = None

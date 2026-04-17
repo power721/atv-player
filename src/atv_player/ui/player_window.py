@@ -831,6 +831,7 @@ class PlayerWindow(QWidget):
                 speed=self.current_speed,
                 opening_seconds=self.session.opening_seconds,
                 ending_seconds=self.session.ending_seconds,
+                paused=not self.is_playing,
             )
         except Exception as exc:
             self._append_log(f"进度上报失败: {exc}")
@@ -1339,8 +1340,8 @@ class PlayerWindow(QWidget):
             self.video.pause()
         except Exception:
             pass
-        self.report_progress()
         self.is_playing = False
+        self.report_progress()
         self._refresh_window_title()
         self._restore_video_cursor()
         self._set_last_player_paused(True)

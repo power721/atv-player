@@ -20,6 +20,7 @@ class FakePlayerController:
         speed: float,
         opening_seconds: int,
         ending_seconds: int,
+        paused: bool,
     ) -> None:
         return None
 
@@ -32,7 +33,7 @@ class FakePlayerController:
 
 class RecordingPlayerController(FakePlayerController):
     def __init__(self) -> None:
-        self.progress_calls: list[tuple[int, int, float, int, int]] = []
+        self.progress_calls: list[tuple[int, int, float, int, int, bool]] = []
         self.stop_calls: list[int] = []
 
     def report_progress(
@@ -43,8 +44,9 @@ class RecordingPlayerController(FakePlayerController):
         speed: float,
         opening_seconds: int,
         ending_seconds: int,
+        paused: bool,
     ) -> None:
-        self.progress_calls.append((current_index, position_seconds, speed, opening_seconds, ending_seconds))
+        self.progress_calls.append((current_index, position_seconds, speed, opening_seconds, ending_seconds, paused))
 
     def resolve_play_item_detail(self, session, play_item):
         if not play_item.vod_id or session.detail_resolver is None:
@@ -2069,7 +2071,7 @@ def test_player_window_advances_to_next_item_when_playback_finishes(qtbot) -> No
     assert window.current_index == 1
     assert window.playlist.currentRow() == 1
     assert video.load_calls == [("http://m/2.m3u8", 0)]
-    assert controller.progress_calls == [(0, 30, 1.0, 0, 0)]
+    assert controller.progress_calls == [(0, 30, 1.0, 0, 0, False)]
 
 
 def test_player_window_play_next_resolves_target_episode_before_loading(qtbot) -> None:
@@ -2212,7 +2214,7 @@ def test_player_window_stops_session_when_switching_items(qtbot) -> None:
 
     window.play_next()
 
-    assert controller.progress_calls == [(0, 30, 1.0, 0, 0)]
+    assert controller.progress_calls == [(0, 30, 1.0, 0, 0, False)]
     assert controller.stop_calls == [0]
     assert window.video.load_calls == [("http://m/2.m3u8", 0)]
 
@@ -2621,7 +2623,7 @@ def test_player_window_quit_application_reports_progress_and_stops_current_playb
     window._quit_application()
 
     assert called["count"] == 1
-    assert controller.progress_calls == [(1, 30, 1.0, 0, 0)]
+    assert controller.progress_calls == [(1, 30, 1.0, 0, 0, False)]
     assert controller.stop_calls == [1]
 
 
@@ -2754,7 +2756,7 @@ def test_player_window_keyboard_shortcuts_control_playback_navigation_and_view(q
     send_key(window, Qt.Key.Key_PageDown)
     assert window.current_index == 1
     assert window.playlist.currentRow() == 1
-    assert controller.progress_calls == [(1, 30, 1.0, 0, 0), (0, 30, 1.0, 0, 0)]
+    assert controller.progress_calls == [(1, 30, 1.0, 0, 0, False), (0, 30, 1.0, 0, 0, False)]
 
 
 def test_player_window_toggle_playback_persists_last_player_paused(qtbot) -> None:
@@ -2867,7 +2869,7 @@ def test_player_window_return_to_main_reports_current_progress_without_stopping_
 
     window._return_to_main()
 
-    assert controller.progress_calls == [(1, 30, 1.0, 0, 0)]
+    assert controller.progress_calls == [(1, 30, 1.0, 0, 0, True)]
     assert controller.stop_calls == []
 
 

@@ -103,8 +103,8 @@ class EmbyController:
             ]
         return playlist
 
-    def report_playback_progress(self, item: PlayItem, position_ms: int) -> None:
-        if not item.vod_id:
+    def report_playback_progress(self, item: PlayItem, position_ms: int, paused: bool) -> None:
+        if not item.vod_id or paused:
             return
         self._api_client.report_emby_playback_progress(item.vod_id, position_ms)
 

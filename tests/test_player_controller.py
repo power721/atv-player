@@ -59,6 +59,7 @@ def test_player_controller_builds_history_payload() -> None:
         speed=1.25,
         opening_seconds=15,
         ending_seconds=30,
+        paused=False,
     )
 
     payload = api.saved_payloads[0]
@@ -197,15 +198,17 @@ def test_player_controller_reports_progress_via_session_hook_without_saving_hist
     controller = PlayerController(api)
     vod = VodItem(vod_id="emby-1", vod_name="Emby Movie")
     playlist = [PlayItem(title="Episode 1", url="", vod_id="1-3458")]
-    progress_calls: list[tuple[str, int]] = []
+    progress_calls: list[tuple[str, int, bool]] = []
 
     session = controller.create_session(
         vod,
         playlist,
         clicked_index=0,
         use_local_history=False,
-        playback_progress_reporter=lambda item, position_ms: progress_calls.append((item.vod_id, position_ms)),
-        playback_stopper=lambda item: progress_calls.append((item.vod_id, -1)),
+        playback_progress_reporter=lambda item, position_ms, paused: progress_calls.append(
+            (item.vod_id, position_ms, paused)
+        ),
+        playback_stopper=lambda item: progress_calls.append((item.vod_id, -1, False)),
     )
 
     controller.report_progress(
@@ -215,8 +218,38 @@ def test_player_controller_reports_progress_via_session_hook_without_saving_hist
         speed=1.25,
         opening_seconds=15,
         ending_seconds=30,
+        paused=False,
     )
     controller.stop_playback(session, current_index=0)
 
-    assert progress_calls == [("1-3458", 90000), ("1-3458", -1)]
+    assert progress_calls == [("1-3458", 90000, False), ("1-3458", -1, False)]
     assert api.saved_payloads == []
+
+
+def test_player_controller_forwards_paused_state_to_progress_reporter() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="emby-1", vod_name="Emby Movie")
+    playlist = [PlayItem(title="Episode 1", url="", vod_id="1-3458")]
+    progress_calls: list[tuple[str, int, bool]] = []
+
+    session = controller.create_session(
+        vod,
+        playlist,
+        clicked_index=0,
+        playback_progress_reporter=lambda item, position_ms, paused: progress_calls.append(
+            (item.vod_id, position_ms, paused)
+        ),
+    )
+
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=45,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+        paused=True,
+    )
+
+    assert progress_calls == [("1-3458", 45000, True)]
