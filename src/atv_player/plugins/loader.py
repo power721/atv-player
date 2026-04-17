@@ -71,7 +71,7 @@ class SpiderPluginLoader:
     def _install_compat_modules(self) -> None:
         base_package = types.ModuleType("base")
         spider_module = sys.modules["atv_player.plugins.compat.base.spider"]
-        base_package.spider = spider_module
+        setattr(base_package, "spider", spider_module)
         sys.modules["base"] = base_package
         sys.modules["base.spider"] = spider_module
 

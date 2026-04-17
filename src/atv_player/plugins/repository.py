@@ -7,6 +7,13 @@ from pathlib import Path
 from atv_player.models import SpiderPluginConfig, SpiderPluginLogEntry
 
 
+def _require_lastrowid(cursor: sqlite3.Cursor) -> int:
+    lastrowid = cursor.lastrowid
+    if lastrowid is None:
+        raise RuntimeError("插入插件记录后缺少 lastrowid")
+    return int(lastrowid)
+
+
 class SpiderPluginRepository:
     def __init__(self, db_path: Path) -> None:
         self._db_path = Path(db_path)
@@ -60,7 +67,7 @@ class SpiderPluginRepository:
                 """,
                 (source_type, source_value, display_name, next_order),
             )
-        return self.get_plugin(int(cursor.lastrowid))
+        return self.get_plugin(_require_lastrowid(cursor))
 
     def get_plugin(self, plugin_id: int) -> SpiderPluginConfig:
         with self._connect() as conn:

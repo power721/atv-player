@@ -165,6 +165,32 @@ class MpvWidget(QWidget):
             return f"播放失败: {error}"
         return "播放失败: 未知错误"
 
+    def _int_property_value(self, value: object | None, default: int) -> int:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError:
+                return default
+        return default
+
+    def _scale_property_percent(self, value: object | None, default: int) -> int:
+        if isinstance(value, bool):
+            return int(round(float(value) * 100))
+        if isinstance(value, (int, float)):
+            return int(round(float(value) * 100))
+        if isinstance(value, str):
+            try:
+                return int(round(float(value) * 100))
+            except ValueError:
+                return default
+        return default
+
     def load(
         self,
         url: str,
@@ -460,10 +486,7 @@ class MpvWidget(QWidget):
 
     def subtitle_position(self) -> int:
         value = self._player_property("sub-pos", 50)
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return 50
+        return self._int_property_value(value, 50)
 
     def set_subtitle_position(self, value: int) -> None:
         clamped = max(0, min(int(value), 100))
@@ -471,10 +494,7 @@ class MpvWidget(QWidget):
 
     def secondary_subtitle_position(self) -> int:
         value = self._player_property("secondary-sub-pos", 50)
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return 50
+        return self._int_property_value(value, 50)
 
     def supports_secondary_subtitle_position(self) -> bool:
         if self._player is None:
@@ -497,10 +517,7 @@ class MpvWidget(QWidget):
 
     def subtitle_scale(self) -> int:
         value = self._player_property("sub-scale", 1.0)
-        try:
-            return int(round(float(value) * 100))
-        except (TypeError, ValueError):
-            return 100
+        return self._scale_property_percent(value, 100)
 
     def set_subtitle_scale(self, value: int) -> None:
         clamped = max(50, min(int(value), 200))
@@ -508,10 +525,7 @@ class MpvWidget(QWidget):
 
     def secondary_subtitle_scale(self) -> int:
         value = self._player_property("secondary-sub-scale", 1.0)
-        try:
-            return int(round(float(value) * 100))
-        except (TypeError, ValueError):
-            return 100
+        return self._scale_property_percent(value, 100)
 
     def set_secondary_subtitle_scale(self, value: int) -> None:
         clamped = max(50, min(int(value), 200))

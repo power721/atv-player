@@ -9,6 +9,13 @@ _DEFAULT_SOURCE_NAME = "咪咕"
 _DEFAULT_SOURCE_URL = "https://develop202.github.io/migu_video/interface.txt"
 
 
+def _require_lastrowid(cursor: sqlite3.Cursor) -> int:
+    lastrowid = cursor.lastrowid
+    if lastrowid is None:
+        raise RuntimeError("插入直播源记录后缺少 lastrowid")
+    return int(lastrowid)
+
+
 class LiveSourceRepository:
     def __init__(self, db_path: Path) -> None:
         self._db_path = Path(db_path)
@@ -82,7 +89,7 @@ class LiveSourceRepository:
                 """,
                 (source_type, source_value, display_name, next_order),
             )
-        return self.get_source(int(cursor.lastrowid))
+        return self.get_source(_require_lastrowid(cursor))
 
     def get_source(self, source_id: int) -> LiveSourceConfig:
         with self._connect() as conn:
@@ -185,7 +192,7 @@ class LiveSourceRepository:
                 """,
                 (source_id, group_name, channel_name, stream_url, logo_url, next_order),
             )
-        return self.get_manual_entry(int(cursor.lastrowid))
+        return self.get_manual_entry(_require_lastrowid(cursor))
 
     def get_manual_entry(self, entry_id: int) -> LiveSourceEntry:
         with self._connect() as conn:

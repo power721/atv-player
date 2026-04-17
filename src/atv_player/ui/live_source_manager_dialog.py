@@ -83,14 +83,15 @@ class LiveSourceManagerDialog(QDialog):
         sources = self.manager.list_sources()
         self.source_table.setRowCount(len(sources))
         for row, source in enumerate(sources):
-            self.source_table.setItem(row, 0, QTableWidgetItem(source.display_name))
+            name_item = QTableWidgetItem(source.display_name)
+            name_item.setData(256, source.id)
+            name_item.setData(257, source.source_type)
+            self.source_table.setItem(row, 0, name_item)
             self.source_table.setItem(row, 1, QTableWidgetItem(_display_source_type(source.source_type)))
             self.source_table.setItem(row, 2, QTableWidgetItem(source.source_value))
             self.source_table.setItem(row, 3, QTableWidgetItem("是" if source.enabled else "否"))
             self.source_table.setItem(row, 4, QTableWidgetItem(source.last_error or "正常"))
             self.source_table.setItem(row, 5, QTableWidgetItem(str(source.last_refreshed_at or "")))
-            self.source_table.item(row, 0).setData(256, source.id)
-            self.source_table.item(row, 0).setData(257, source.source_type)
         self._sync_action_state()
 
     def _selected_source_id(self) -> int | None:
@@ -219,7 +220,10 @@ class LiveSourceManagerDialog(QDialog):
         if source_id is None:
             return
         row = self.source_table.currentRow()
-        enabled_text = self.source_table.item(row, 3).text()
+        enabled_item = self.source_table.item(row, 3)
+        if enabled_item is None:
+            return
+        enabled_text = enabled_item.text()
         self.manager.set_source_enabled(source_id, enabled_text != "是")
         self.reload_sources()
 

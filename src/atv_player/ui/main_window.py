@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Iterable
+from typing import Any, Protocol, cast
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.ui.browse_page import BrowsePage
+from atv_player.models import OpenPlayerRequest
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.poster_grid_page import PosterGridPage
 from atv_player.ui.history_page import HistoryPage
@@ -62,6 +64,14 @@ def _plugin_value(definition: Any, key: str):
     return getattr(definition, key)
 
 
+class _PluginController(Protocol):
+    def load_categories(self): ...
+
+    def load_items(self, category_id: str, page: int): ...
+
+    def build_request(self, vod_id: str) -> OpenPlayerRequest: ...
+
+
 class MainWindow(QMainWindow):
     logout_requested = Signal()
 
@@ -88,7 +98,7 @@ class MainWindow(QMainWindow):
         self._plugin_definitions = list(spider_plugins or [])
         self._plugin_manager = plugin_manager
         self._live_source_manager = live_source_manager
-        self._plugin_pages: list[tuple[PosterGridPage, object, str]] = []
+        self._plugin_pages: list[tuple[PosterGridPage, _PluginController, str]] = []
         self.nav_tabs = QTabWidget()
         self.plugin_manager_button = QPushButton("插件管理")
         self.live_source_manager_button = QPushButton("直播源管理")
@@ -175,10 +185,11 @@ class MainWindow(QMainWindow):
             )
         )
         if self.emby_page is not None:
-            self.emby_page.item_open_requested.connect(self._handle_emby_item_open_requested)
-            self.emby_page.folder_breadcrumb_requested.connect(
-                lambda node_id, kind, index: self._handle_media_breadcrumb_requested(
-                    self.emby_page,
+            emby_page = self.emby_page
+            emby_page.item_open_requested.connect(self._handle_emby_item_open_requested)
+            emby_page.folder_breadcrumb_requested.connect(
+                lambda node_id, kind, index, page=emby_page: self._handle_media_breadcrumb_requested(
+                    page,
                     self.emby_controller,
                     node_id,
                     kind,
@@ -186,10 +197,11 @@ class MainWindow(QMainWindow):
                 )
             )
         if self.jellyfin_page is not None:
-            self.jellyfin_page.item_open_requested.connect(self._handle_jellyfin_item_open_requested)
-            self.jellyfin_page.folder_breadcrumb_requested.connect(
-                lambda node_id, kind, index: self._handle_media_breadcrumb_requested(
-                    self.jellyfin_page,
+            jellyfin_page = self.jellyfin_page
+            jellyfin_page.item_open_requested.connect(self._handle_jellyfin_item_open_requested)
+            jellyfin_page.folder_breadcrumb_requested.connect(
+                lambda node_id, kind, index, page=jellyfin_page: self._handle_media_breadcrumb_requested(
+                    page,
                     self.jellyfin_controller,
                     node_id,
                     kind,
@@ -318,7 +330,7 @@ class MainWindow(QMainWindow):
         self._plugin_pages = []
         insert_index = self.nav_tabs.indexOf(self.browse_page)
         for definition in self._plugin_definitions:
-            controller = _plugin_value(definition, "controller")
+            controller = cast(_PluginController, _plugin_value(definition, "controller"))
             plugin_id = str(_plugin_value(definition, "id") or "")
             page = PosterGridPage(
                 controller,
@@ -354,7 +366,11 @@ class MainWindow(QMainWindow):
         dialog.exec()
         load_enabled_plugins = getattr(self._plugin_manager, "load_enabled_plugins", None)
         if callable(load_enabled_plugins):
-            self._plugin_definitions = list(load_enabled_plugins())
+            loaded_plugins = load_enabled_plugins()
+            if isinstance(loaded_plugins, Iterable):
+                self._plugin_definitions = list(loaded_plugins)
+            else:
+                self._plugin_definitions = []
             self._rebuild_spider_plugin_tabs()
 
     def _open_live_source_manager(self) -> None:
@@ -502,7 +518,7 @@ class MainWindow(QMainWindow):
             return request
         return self.browse_controller.build_request_from_detail(vod_id)
 
-    def _plugin_controller_by_id(self, plugin_id: str):
+    def _plugin_controller_by_id(self, plugin_id: str) -> _PluginController | None:
         for _page, controller, current_plugin_id in self._plugin_pages:
             if current_plugin_id == plugin_id:
                 return controller

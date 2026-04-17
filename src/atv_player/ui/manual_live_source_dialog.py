@@ -102,11 +102,12 @@ class ManualLiveSourceDialog(QDialog):
         entries = self.manager.list_manual_entries(self.source_id)
         self.entry_table.setRowCount(len(entries))
         for row, entry in enumerate(entries):
-            self.entry_table.setItem(row, 0, QTableWidgetItem(entry.group_name))
+            group_item = QTableWidgetItem(entry.group_name)
+            group_item.setData(256, entry.id)
+            self.entry_table.setItem(row, 0, group_item)
             self.entry_table.setItem(row, 1, QTableWidgetItem(entry.channel_name))
             self.entry_table.setItem(row, 2, QTableWidgetItem(entry.stream_url))
             self.entry_table.setItem(row, 3, QTableWidgetItem(entry.logo_url))
-            self.entry_table.item(row, 0).setData(256, entry.id)
         self._sync_action_state()
 
     def _has_selection(self) -> bool:
@@ -128,10 +129,14 @@ class ManualLiveSourceDialog(QDialog):
         if not self._has_selection():
             return "", "", "", ""
         row = self.entry_table.currentRow()
-        group_name = self.entry_table.item(row, 0).text() if self.entry_table.item(row, 0) is not None else ""
-        channel_name = self.entry_table.item(row, 1).text() if self.entry_table.item(row, 1) is not None else ""
-        stream_url = self.entry_table.item(row, 2).text() if self.entry_table.item(row, 2) is not None else ""
-        logo_url = self.entry_table.item(row, 3).text() if self.entry_table.item(row, 3) is not None else ""
+        group_item = self.entry_table.item(row, 0)
+        channel_item = self.entry_table.item(row, 1)
+        stream_item = self.entry_table.item(row, 2)
+        logo_item = self.entry_table.item(row, 3)
+        group_name = group_item.text() if group_item is not None else ""
+        channel_name = channel_item.text() if channel_item is not None else ""
+        stream_url = stream_item.text() if stream_item is not None else ""
+        logo_url = logo_item.text() if logo_item is not None else ""
         return group_name, channel_name, stream_url, logo_url
 
     def _sync_action_state(self) -> None:

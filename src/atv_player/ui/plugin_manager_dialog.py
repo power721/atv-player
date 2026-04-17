@@ -90,7 +90,9 @@ class PluginManagerDialog(QDialog):
         plugins = self.plugin_manager.list_plugins()
         self.plugin_table.setRowCount(len(plugins))
         for row, plugin in enumerate(plugins):
-            self.plugin_table.setItem(row, 0, QTableWidgetItem(plugin.display_name or ""))
+            name_item = QTableWidgetItem(plugin.display_name or "")
+            name_item.setData(256, plugin.id)
+            self.plugin_table.setItem(row, 0, name_item)
             self.plugin_table.setItem(row, 1, QTableWidgetItem(_display_source_type(plugin.source_type)))
             self.plugin_table.setItem(row, 2, QTableWidgetItem(plugin.source_value))
             self.plugin_table.setItem(row, 3, QTableWidgetItem("是" if plugin.enabled else "否"))
@@ -99,7 +101,6 @@ class PluginManagerDialog(QDialog):
             if plugin.last_loaded_at:
                 loaded_at = datetime.fromtimestamp(plugin.last_loaded_at).strftime("%Y-%m-%d %H:%M:%S")
             self.plugin_table.setItem(row, 5, QTableWidgetItem(loaded_at))
-            self.plugin_table.item(row, 0).setData(256, plugin.id)
 
     def _selected_plugin_id(self) -> int | None:
         row = self.plugin_table.currentRow()
@@ -140,7 +141,10 @@ class PluginManagerDialog(QDialog):
         plugin_id = self._selected_plugin_id()
         if plugin_id is None:
             return
-        current = self.plugin_table.item(self.plugin_table.currentRow(), 0).text()
+        current_item = self.plugin_table.item(self.plugin_table.currentRow(), 0)
+        if current_item is None:
+            return
+        current = current_item.text()
         display_name = self._prompt_display_name(current)
         if not display_name:
             return
@@ -151,7 +155,10 @@ class PluginManagerDialog(QDialog):
         plugin_id = self._selected_plugin_id()
         if plugin_id is None:
             return
-        enabled_text = self.plugin_table.item(self.plugin_table.currentRow(), 3).text()
+        enabled_item = self.plugin_table.item(self.plugin_table.currentRow(), 3)
+        if enabled_item is None:
+            return
+        enabled_text = enabled_item.text()
         self.plugin_manager.set_plugin_enabled(plugin_id, enabled_text != "是")
         self.reload_plugins()
 

@@ -53,15 +53,16 @@ def parse_m3u(text: str) -> ParsedPlaylist:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     result = ParsedPlaylist()
     groups_by_name: dict[str, ParsedGroup] = {}
+    pending_attrs: dict[str, str] = {}
     pending_name = ""
     pending_group = ""
     pending_logo = ""
     channel_index = 0
     for line in lines:
         if line.startswith("#EXTINF:"):
-            attrs = dict(_ATTR_RE.findall(line))
-            pending_group = attrs.get("group-title", "").strip()
-            pending_logo = attrs.get("tvg-logo", "").strip()
+            pending_attrs = dict(_ATTR_RE.findall(line))
+            pending_group = pending_attrs.get("group-title", "").strip()
+            pending_logo = pending_attrs.get("tvg-logo", "").strip()
             pending_name = line.rsplit(",", 1)[-1].strip()
             continue
         if line.startswith("#"):
@@ -73,7 +74,7 @@ def parse_m3u(text: str) -> ParsedPlaylist:
             name=pending_name,
             url=line,
             logo_url=pending_logo,
-            headers=_parse_http_headers(attrs),
+            headers=_parse_http_headers(pending_attrs),
         )
         channel_index += 1
         if pending_group:
@@ -85,6 +86,7 @@ def parse_m3u(text: str) -> ParsedPlaylist:
             group.channels.append(channel)
         else:
             result.ungrouped_channels.append(channel)
+        pending_attrs = {}
         pending_name = ""
         pending_group = ""
         pending_logo = ""
