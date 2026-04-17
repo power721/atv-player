@@ -7,6 +7,8 @@ import httpx
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QImage
 
+from atv_player.paths import app_cache_dir
+
 POSTER_REQUEST_TIMEOUT_SECONDS = 10.0
 POSTER_USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -35,7 +37,7 @@ def build_poster_request_headers(image_url: str) -> dict[str, str]:
 
 
 def poster_cache_dir() -> Path:
-    cache_dir = Path.home() / ".cache" / "atv-player" / "posters"
+    cache_dir = app_cache_dir() / "posters"
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
 

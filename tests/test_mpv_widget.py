@@ -308,16 +308,18 @@ def test_mpv_widget_lists_embedded_subtitle_tracks_with_readable_labels(qtbot) -
     qtbot.addWidget(widget)
     widget._player = types.SimpleNamespace(
         track_list=[
-            {"id": 1, "type": "sub", "lang": "zh", "title": "", "default": True, "forced": False, "external": False},
-            {"id": 2, "type": "sub", "lang": "eng", "title": "Signs", "default": False, "forced": True, "external": False},
+            {"id": 1, "type": "sub", "lang": "zh-hans", "title": "", "default": True, "forced": False, "external": False},
+            {"id": 2, "type": "sub", "lang": "zh-hant", "title": "", "default": False, "forced": False, "external": False},
+            {"id": 3, "type": "sub", "lang": "eng", "title": "Signs", "default": False, "forced": True, "external": False},
             {"id": 3, "type": "audio", "lang": "ja", "title": "", "default": False, "forced": False, "external": False},
             {"id": 4, "type": "sub", "lang": "zho", "title": "外挂", "default": False, "forced": False, "external": True},
         ]
     )
 
     assert widget.subtitle_tracks() == [
-        SubtitleTrack(id=1, title="", lang="zh", is_default=True, is_forced=False, label="中文 (默认)"),
-        SubtitleTrack(id=2, title="Signs", lang="eng", is_default=False, is_forced=True, label="Signs (强制)"),
+        SubtitleTrack(id=1, title="", lang="zh-hans", is_default=True, is_forced=False, label="简体中文 (默认)"),
+        SubtitleTrack(id=2, title="", lang="zh-hant", is_default=False, is_forced=False, label="繁体中文"),
+        SubtitleTrack(id=3, title="Signs", lang="eng", is_default=False, is_forced=True, label="Signs (强制)"),
     ]
 
 
@@ -339,13 +341,49 @@ def test_mpv_widget_auto_mode_prefers_chinese_embedded_subtitles(qtbot) -> None:
     assert player.sid == 5
 
 
-def test_mpv_widget_auto_mode_falls_back_to_mpv_default_without_chinese_tracks(qtbot) -> None:
+def test_mpv_widget_auto_mode_prefers_simplified_chinese_over_traditional(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = types.SimpleNamespace(
+        sid="auto",
+        track_list=[
+            {"id": 5, "type": "sub", "lang": "zh", "title": "繁中", "default": True, "forced": False, "external": False},
+            {"id": 6, "type": "sub", "lang": "zh", "title": "简中", "default": False, "forced": False, "external": False},
+        ],
+    )
+    widget._player = player
+
+    applied_track_id = widget.apply_subtitle_mode("auto")
+
+    assert applied_track_id == 6
+    assert player.sid == 6
+
+
+def test_mpv_widget_auto_mode_recognizes_simplified_and_traditional_english_titles(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = types.SimpleNamespace(
+        sid="auto",
+        track_list=[
+            {"id": 5, "type": "sub", "lang": "", "title": "Traditional Chinese", "default": True, "forced": False, "external": False},
+            {"id": 6, "type": "sub", "lang": "", "title": "Simplified Chinese", "default": False, "forced": False, "external": False},
+        ],
+    )
+    widget._player = player
+
+    applied_track_id = widget.apply_subtitle_mode("auto")
+
+    assert applied_track_id == 6
+    assert player.sid == 6
+
+
+def test_mpv_widget_auto_mode_falls_back_to_mpv_default_without_chinese_or_english_tracks(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
     player = types.SimpleNamespace(
         sid=7,
         track_list=[
-            {"id": 7, "type": "sub", "lang": "eng", "title": "English", "default": False, "forced": False, "external": False},
+            {"id": 7, "type": "sub", "lang": "jpn", "title": "Japanese", "default": False, "forced": False, "external": False},
         ],
     )
     widget._player = player
@@ -354,6 +392,24 @@ def test_mpv_widget_auto_mode_falls_back_to_mpv_default_without_chinese_tracks(q
 
     assert applied_track_id is None
     assert player.sid == "auto"
+
+
+def test_mpv_widget_auto_mode_prefers_english_when_chinese_tracks_are_absent(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = types.SimpleNamespace(
+        sid="auto",
+        track_list=[
+            {"id": 7, "type": "sub", "lang": "jpn", "title": "Japanese", "default": False, "forced": False, "external": False},
+            {"id": 9, "type": "sub", "lang": "eng", "title": "English", "default": True, "forced": False, "external": False},
+        ],
+    )
+    widget._player = player
+
+    applied_track_id = widget.apply_subtitle_mode("auto")
+
+    assert applied_track_id == 9
+    assert player.sid == 9
 
 
 def test_mpv_widget_can_disable_or_select_a_specific_embedded_subtitle_track(qtbot) -> None:
@@ -368,6 +424,151 @@ def test_mpv_widget_can_disable_or_select_a_specific_embedded_subtitle_track(qtb
     assert disabled_track_id is None
     assert selected_track_id == 9
     assert player.sid == 9
+
+
+def test_mpv_widget_can_disable_or_select_a_specific_secondary_subtitle_track(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = types.SimpleNamespace(track_list=[])
+    widget._player = player
+
+    disabled_track_id = widget.apply_secondary_subtitle_mode("off")
+    selected_track_id = widget.apply_secondary_subtitle_mode("track", track_id=12)
+
+    assert disabled_track_id is None
+    assert selected_track_id == 12
+    assert player.secondary_sid == 12
+
+
+def test_mpv_widget_reads_and_writes_primary_subtitle_position(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.options = {"sub-pos": 50}
+
+        def __getitem__(self, key: str) -> object:
+            return self.options[key]
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    widget._player = FakePlayer()
+
+    assert widget.subtitle_position() == 50
+
+    widget.set_subtitle_position(70)
+
+    assert widget.subtitle_position() == 70
+
+
+def test_mpv_widget_reads_and_writes_secondary_subtitle_position(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.options = {"secondary-sub-pos": 50}
+
+        def __getitem__(self, key: str) -> object:
+            return self.options[key]
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    widget._player = FakePlayer()
+
+    assert widget.secondary_subtitle_position() == 50
+
+    widget.set_secondary_subtitle_position(30)
+
+    assert widget.secondary_subtitle_position() == 30
+
+
+def test_mpv_widget_reports_secondary_subtitle_position_unsupported_when_property_is_missing(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __getitem__(self, key: str) -> object:
+            raise RuntimeError(("mpv property does not exist", -8, (object(), b"options/secondary-sub-pos", b"50")))
+
+    widget._player = FakePlayer()
+
+    assert widget.supports_secondary_subtitle_position() is False
+
+
+def test_mpv_widget_reads_and_writes_primary_subtitle_scale(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.options = {"sub-scale": 1.0}
+
+        def __getitem__(self, key: str) -> object:
+            return self.options[key]
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    widget._player = FakePlayer()
+
+    assert widget.subtitle_scale() == 100
+
+    widget.set_subtitle_scale(115)
+
+    assert widget.subtitle_scale() == 115
+
+
+def test_mpv_widget_reads_and_writes_secondary_subtitle_scale(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.options = {"secondary-sub-scale": 1.0}
+
+        def __getitem__(self, key: str) -> object:
+            return self.options[key]
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    widget._player = FakePlayer()
+
+    assert widget.secondary_subtitle_scale() == 100
+
+    widget.set_secondary_subtitle_scale(130)
+
+    assert widget.secondary_subtitle_scale() == 130
+
+
+def test_mpv_widget_reports_primary_subtitle_scale_unsupported_when_property_is_missing(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __getitem__(self, key: str) -> object:
+            raise RuntimeError(("mpv property does not exist", -8, (object(), b"options/sub-scale", b"1.0")))
+
+    widget._player = FakePlayer()
+
+    assert widget.supports_subtitle_scale() is False
+
+
+def test_mpv_widget_reports_secondary_subtitle_scale_unsupported_when_property_is_missing(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __getitem__(self, key: str) -> object:
+            raise RuntimeError(("mpv property does not exist", -8, (object(), b"options/secondary-sub-scale", b"1.0")))
+
+    widget._player = FakePlayer()
+
+    assert widget.supports_secondary_subtitle_scale() is False
 
 
 def test_mpv_widget_emits_audio_tracks_changed_when_mpv_track_list_updates(qtbot, monkeypatch) -> None:

@@ -186,6 +186,12 @@ class ApiClient:
     def get_jellyfin_playback_source(self, vod_id: str) -> dict[str, Any]:
         return self._request("GET", f"/jellyfin-play/{self._vod_token}", params={"t": 0, "id": vod_id})
 
+    def report_jellyfin_playback_progress(self, vod_id: str, position_ms: int) -> None:
+        self._request("GET", f"/jellyfin-play/{self._vod_token}", params={"t": position_ms, "id": vod_id})
+
+    def stop_jellyfin_playback(self, vod_id: str) -> None:
+        self._request("GET", f"/jellyfin-play/{self._vod_token}", params={"t": -1, "id": vod_id})
+
     def telegram_search(self, keyword: str) -> dict[str, Any]:
         return self._request("GET", "/api/telegram/search", params={"wd": keyword})
 

@@ -85,7 +85,7 @@ class MainWindow(QMainWindow):
         self._save_config = save_config or (lambda: None)
         self._plugin_definitions = list(spider_plugins or [])
         self._plugin_manager = plugin_manager
-        self._plugin_pages: list[tuple[PosterGridPage, object]] = []
+        self._plugin_pages: list[tuple[PosterGridPage, object, str]] = []
         self.nav_tabs = QTabWidget()
         self.plugin_manager_button = QPushButton("插件管理")
         self.logout_button = QPushButton("退出登录")
@@ -235,7 +235,7 @@ class MainWindow(QMainWindow):
         if widget is self.jellyfin_page and self.jellyfin_page is not None:
             self.jellyfin_page.ensure_loaded()
             return
-        for page, _controller in self._plugin_pages:
+        for page, _controller, _plugin_id in self._plugin_pages:
             if widget is page:
                 page.ensure_loaded()
                 return
@@ -304,7 +304,7 @@ class MainWindow(QMainWindow):
         self._handle_jellyfin_open_requested(item.vod_id)
 
     def _rebuild_spider_plugin_tabs(self) -> None:
-        for page, _controller in self._plugin_pages:
+        for page, _controller, _plugin_id in self._plugin_pages:
             index = self.nav_tabs.indexOf(page)
             if index >= 0:
                 self.nav_tabs.removeTab(index)
@@ -313,25 +313,32 @@ class MainWindow(QMainWindow):
         insert_index = self.nav_tabs.indexOf(self.browse_page)
         for definition in self._plugin_definitions:
             controller = _plugin_value(definition, "controller")
+            plugin_id = str(_plugin_value(definition, "id") or "")
             page = PosterGridPage(
                 controller,
                 click_action="open",
                 search_enabled=bool(_plugin_value(definition, "search_enabled")),
             )
             page.open_requested.connect(
-                lambda vod_id, controller=controller: self._open_spider_request(controller, vod_id)
+                lambda vod_id, controller=controller, plugin_id=plugin_id: self._open_spider_request(
+                    controller,
+                    plugin_id,
+                    vod_id,
+                )
             )
             page.unauthorized.connect(self.logout_requested.emit)
             self.nav_tabs.insertTab(insert_index, page, str(_plugin_value(definition, "title") or "插件"))
-            self._plugin_pages.append((page, controller))
+            self._plugin_pages.append((page, controller, plugin_id))
             insert_index += 1
 
-    def _open_spider_request(self, controller, vod_id: str) -> None:
+    def _open_spider_request(self, controller, plugin_id: str, vod_id: str) -> None:
         try:
             request = controller.build_request(vod_id)
         except Exception as exc:
             self.show_error(str(exc))
             return
+        request.source_kind = "plugin"
+        request.source_key = plugin_id
         self.open_player(request)
 
     def _open_plugin_manager(self) -> None:
@@ -395,6 +402,7 @@ class MainWindow(QMainWindow):
             detail_resolver=request.detail_resolver,
             resolved_vod_by_id=request.resolved_vod_by_id,
             use_local_history=request.use_local_history,
+            restore_history=request.restore_history,
             playback_loader=request.playback_loader,
             playback_progress_reporter=request.playback_progress_reporter,
             playback_stopper=request.playback_stopper,
@@ -404,6 +412,8 @@ class MainWindow(QMainWindow):
             if hasattr(self.player_window, "closed_to_main"):
                 self.player_window.closed_to_main.connect(self._show_main_again)
         self.config.last_active_window = "player"
+        self.config.last_playback_source = request.source_kind
+        self.config.last_playback_source_key = request.source_key
         self.config.last_playback_mode = request.source_mode
         self.config.last_playback_path = request.source_path
         self.config.last_playback_vod_id = request.source_vod_id
@@ -441,9 +451,10 @@ class MainWindow(QMainWindow):
 
     def restore_last_player(self) -> PlayerWindow | None:
         mode = self.config.last_playback_mode
+        source = self.config.last_playback_source or "browse"
         try:
             if mode == "detail" and self.config.last_playback_vod_id:
-                request = self.browse_controller.build_request_from_detail(self.config.last_playback_vod_id)
+                request = self._build_detail_restore_request(source, self.config.last_playback_vod_id)
             elif mode == "folder" and self.config.last_playback_path and self.config.last_playback_clicked_vod_id:
                 clicked, items = self._find_restorable_folder_item(
                     self.config.last_playback_path,
@@ -458,6 +469,31 @@ class MainWindow(QMainWindow):
             return None
         self.open_player(request, restore_paused_state=True)
         return self.player_window
+
+    def _build_detail_restore_request(self, source: str, vod_id: str):
+        if source == "telegram":
+            return self.telegram_controller.build_request(vod_id)
+        if source == "live":
+            return self.live_controller.build_request(vod_id)
+        if source == "emby":
+            return self.emby_controller.build_request(vod_id)
+        if source == "jellyfin":
+            return self.jellyfin_controller.build_request(vod_id)
+        if source == "plugin":
+            controller = self._plugin_controller_by_id(self.config.last_playback_source_key)
+            if controller is None:
+                raise ValueError("找不到已保存的插件来源")
+            request = controller.build_request(vod_id)
+            request.source_kind = "plugin"
+            request.source_key = self.config.last_playback_source_key
+            return request
+        return self.browse_controller.build_request_from_detail(vod_id)
+
+    def _plugin_controller_by_id(self, plugin_id: str):
+        for _page, controller, current_plugin_id in self._plugin_pages:
+            if current_plugin_id == plugin_id:
+                return controller
+        return None
 
     def _find_restorable_folder_item(
         self,

@@ -143,7 +143,7 @@ def test_build_request_from_detail_uses_ids_endpoint_and_playlist_parsing() -> N
     assert [item.vod_id for item in request.playlist] == ["1-3282", "1-3283"]
 
 
-def test_build_request_disables_local_history_and_exposes_emby_playback_hooks() -> None:
+def test_build_request_enables_local_history_and_exposes_emby_playback_hooks() -> None:
     api = FakeApiClient()
     api.detail_payload = {
         "list": [
@@ -160,13 +160,14 @@ def test_build_request_disables_local_history_and_exposes_emby_playback_hooks() 
     request = controller.build_request("1-3281")
     first_item = request.playlist[0]
 
-    assert request.use_local_history is False
+    assert request.use_local_history is True
+    assert request.restore_history is False
     assert request.playback_loader is not None
     assert request.playback_progress_reporter is not None
     assert request.playback_stopper is not None
 
     request.playback_loader(first_item)
-    request.playback_progress_reporter(first_item, 2000)
+    request.playback_progress_reporter(first_item, 2000, False)
     request.playback_stopper(first_item)
 
     assert first_item.url == "http://m/1.mp4"
@@ -174,6 +175,16 @@ def test_build_request_disables_local_history_and_exposes_emby_playback_hooks() 
     assert api.playback_source_calls == ["1-3458"]
     assert api.playback_progress_calls == [("1-3458", 2000)]
     assert api.playback_stop_calls == ["1-3458"]
+
+
+def test_emby_progress_reporter_skips_paused_playback() -> None:
+    api = FakeApiClient()
+    controller = EmbyController(api)
+    item = PlayItem(title="Episode 1", url="", vod_id="1-3458")
+
+    controller.report_playback_progress(item, 2000, True)
+
+    assert api.playback_progress_calls == []
 
 
 def test_build_request_single_video_uses_detail_vod_id_as_playlist_item_id() -> None:

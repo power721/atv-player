@@ -155,6 +155,7 @@ class FakePlayerController:
         detail_resolver=None,
         resolved_vod_by_id=None,
         use_local_history=True,
+        restore_history=False,
         playback_loader=None,
         playback_progress_reporter=None,
         playback_stopper=None,
@@ -166,6 +167,7 @@ class FakePlayerController:
             "detail_resolver": detail_resolver,
             "resolved_vod_by_id": resolved_vod_by_id or {},
             "use_local_history": use_local_history,
+            "restore_history": restore_history,
             "playback_loader": playback_loader,
             "playback_progress_reporter": playback_progress_reporter,
             "playback_stopper": playback_stopper,
@@ -960,13 +962,14 @@ def test_build_application_sets_window_icon_and_creates_repo(monkeypatch, tmp_pa
             self.window_icon = icon
 
     monkeypatch.setattr(app_module, "QApplication", FakeApplication)
-    monkeypatch.setattr(app_module.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(app_module, "app_data_dir", lambda: tmp_path / "app-data")
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
 
     app, repo = app_module.build_application()
 
     assert app.application_name == "atv-player"
     assert not app.window_icon.isNull()
-    assert (tmp_path / ".local" / "share" / "atv-player" / "app.db").exists()
+    assert (tmp_path / "app-data" / "app.db").exists()
     assert repo.load_config().base_url == "http://127.0.0.1:4567"
 
 
@@ -984,11 +987,12 @@ def test_build_application_creates_poster_cache_directory(monkeypatch, tmp_path)
             self.window_icon = icon
 
     monkeypatch.setattr(app_module, "QApplication", FakeApplication)
-    monkeypatch.setattr(app_module.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(app_module, "app_data_dir", lambda: tmp_path / "app-data")
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
 
     app_module.build_application()
 
-    assert (tmp_path / ".cache" / "atv-player" / "posters").is_dir()
+    assert (tmp_path / "app-cache" / "posters").is_dir()
 
 
 def test_build_application_deletes_poster_cache_files_older_than_seven_days(monkeypatch, tmp_path) -> None:
@@ -1005,9 +1009,10 @@ def test_build_application_deletes_poster_cache_files_older_than_seven_days(monk
             self.window_icon = icon
 
     monkeypatch.setattr(app_module, "QApplication", FakeApplication)
-    monkeypatch.setattr(app_module.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(app_module, "app_data_dir", lambda: tmp_path / "app-data")
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
 
-    cache_dir = tmp_path / ".cache" / "atv-player" / "posters"
+    cache_dir = tmp_path / "app-cache" / "posters"
     cache_dir.mkdir(parents=True)
     old_file = cache_dir / "old.img"
     new_file = cache_dir / "new.img"
@@ -1023,6 +1028,29 @@ def test_build_application_deletes_poster_cache_files_older_than_seven_days(monk
 
     assert old_file.exists() is False
     assert new_file.exists() is True
+
+
+def test_build_application_uses_shared_app_path_helpers(monkeypatch, tmp_path) -> None:
+    class FakeApplication:
+        def __init__(self, args) -> None:
+            self.args = args
+            self.application_name = ""
+            self.window_icon = QIcon()
+
+        def setApplicationName(self, name: str) -> None:
+            self.application_name = name
+
+        def setWindowIcon(self, icon: QIcon) -> None:
+            self.window_icon = icon
+
+    monkeypatch.setattr(app_module, "QApplication", FakeApplication)
+    monkeypatch.setattr(app_module, "app_data_dir", lambda: tmp_path / "app-data")
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+
+    app_module.build_application()
+
+    assert (tmp_path / "app-data" / "app.db").exists()
+    assert (tmp_path / "app-cache" / "posters").is_dir()
 
 
 def test_app_coordinator_start_does_not_require_vod_root_probe(monkeypatch) -> None:
@@ -1077,6 +1105,63 @@ def test_app_coordinator_start_does_not_require_vod_root_probe(monkeypatch) -> N
     assert widget == "main-widget"
     assert repo.config.vod_token == "vod-123"
     assert FakeApiClient.list_vod_calls == 0
+
+
+def test_app_coordinator_start_returns_login_window_when_vod_token_fetch_raises_api_error(monkeypatch) -> None:
+    class FakeRepo:
+        def __init__(self) -> None:
+            self.config = AppConfig(
+                base_url="http://127.0.0.1:4567",
+                username="alice",
+                token="auth-123",
+                vod_token="",
+                last_path="/",
+            )
+
+        def load_config(self) -> AppConfig:
+            return self.config
+
+        def save_config(self, config: AppConfig) -> None:
+            self.config = config
+
+        def clear_token(self) -> None:
+            self.config.token = ""
+            self.config.vod_token = ""
+
+    class FailingApiClient:
+        def __init__(self, base_url: str, token: str = "", vod_token: str = "") -> None:
+            self.base_url = base_url
+            self.token = token
+            self.vod_token = vod_token
+
+        def fetch_vod_token(self) -> str:
+            raise app_module.ApiError("请求超时")
+
+    class SignalStub:
+        def connect(self, callback) -> None:
+            self.callback = callback
+
+    class FakeLoginWindow:
+        def __init__(self, controller) -> None:
+            self.controller = controller
+            self.login_succeeded = SignalStub()
+            self.error_message = ""
+
+        def set_error_message(self, message: str) -> None:
+            self.error_message = message
+
+    repo = FakeRepo()
+    coordinator = AppCoordinator(repo)
+
+    monkeypatch.setattr(app_module, "ApiClient", FailingApiClient)
+    monkeypatch.setattr(app_module, "LoginWindow", FakeLoginWindow)
+
+    widget = coordinator.start()
+
+    assert isinstance(widget, FakeLoginWindow)
+    assert widget.error_message == "请求超时"
+    assert repo.config.token == "auth-123"
+    assert repo.config.vod_token == ""
 
 
 def test_app_coordinator_falls_back_to_main_when_player_restore_fails(monkeypatch) -> None:
@@ -1698,4 +1783,51 @@ def test_main_window_restore_last_player_searches_later_folder_pages(qtbot) -> N
     assert restored is window.player_window
     assert controller.load_calls == [("/TV", 1, 50), ("/TV", 2, 50)]
     assert controller.request_calls == ["page-2-target"]
+    assert window.player_window.opened[0][1] is True
+
+
+def test_main_window_restore_last_player_routes_emby_detail_to_emby_controller(qtbot, monkeypatch) -> None:
+    class RestoreBrowseController:
+        def build_request_from_detail(self, vod_id: str):
+            raise AssertionError(f"browse restore should not be used for {vod_id}")
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    controller = FakeEmbyController()
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    config = AppConfig(
+        last_active_window="player",
+        last_playback_source="emby",
+        last_playback_mode="detail",
+        last_playback_vod_id="vod-1",
+        last_player_paused=True,
+    )
+    window = MainWindow(
+        browse_controller=RestoreBrowseController(),
+        emby_controller=controller,
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+
+    restored = window.restore_last_player()
+
+    assert restored is window.player_window
+    assert window.player_window.opened[0][0]["vod"].vod_name == "Emby Movie"
     assert window.player_window.opened[0][1] is True

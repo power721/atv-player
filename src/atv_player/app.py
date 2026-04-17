@@ -18,12 +18,12 @@ from atv_player.controllers.login_controller import LoginController
 from atv_player.controllers.player_controller import PlayerController
 from atv_player.controllers.telegram_search_controller import TelegramSearchController
 from atv_player.models import AppConfig
+from atv_player.paths import app_cache_dir, app_data_dir
 from atv_player.plugins import SpiderPluginLoader, SpiderPluginManager
 from atv_player.plugins.repository import SpiderPluginRepository
 from atv_player.storage import SettingsRepository
 from atv_player.ui.login_window import LoginWindow
 from atv_player.ui.main_window import MainWindow
-from atv_player.ui.poster_loader import poster_cache_dir
 
 POSTER_CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 
@@ -43,7 +43,9 @@ def _app_icon_path() -> Path:
 
 def purge_stale_poster_cache(now: float | None = None) -> None:
     cutoff = (now if now is not None else time.time()) - POSTER_CACHE_MAX_AGE_SECONDS
-    for entry in poster_cache_dir().iterdir():
+    cache_dir = app_cache_dir() / "posters"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    for entry in cache_dir.iterdir():
         try:
             if not entry.is_file():
                 continue
@@ -57,7 +59,7 @@ def build_application() -> tuple[QApplication, SettingsRepository]:
     app = QApplication([])
     app.setApplicationName("atv-player")
     app.setWindowIcon(QIcon(str(_app_icon_path())))
-    data_dir = Path.home() / ".local" / "share" / "atv-player"
+    data_dir = app_data_dir()
     repo = SettingsRepository(data_dir / "app.db")
     purge_stale_poster_cache()
     return app, repo
@@ -93,6 +95,8 @@ class AppCoordinator(QObject):
             except UnauthorizedError:
                 self.repo.clear_token()
                 return self._show_login()
+            except ApiError as exc:
+                return self._show_login(error_message=str(exc))
             return self._show_main()
         return self._show_login()
 
@@ -116,12 +120,14 @@ class AppCoordinator(QObject):
         self.repo.save_config(config)
         return vod_token
 
-    def _show_login(self) -> LoginWindow:
+    def _show_login(self, error_message: str = "") -> LoginWindow:
         login_controller = LoginController(
             self.repo,
             lambda base_url: ApiClient(base_url),
         )
         self.login_window = LoginWindow(login_controller)
+        if error_message and hasattr(self.login_window, "set_error_message"):
+            self.login_window.set_error_message(error_message)
         self.login_window.login_succeeded.connect(self._handle_login_succeeded)
         if self.main_window is not None:
             self.main_window.close()

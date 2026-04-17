@@ -10,6 +10,8 @@ class AppConfig:
     vod_token: str = ""
     last_path: str = "/"
     last_active_window: str = "main"
+    last_playback_source: str = "browse"
+    last_playback_source_key: str = ""
     last_playback_mode: str = ""
     last_playback_path: str = ""
     last_playback_vod_id: str = ""
@@ -109,6 +111,8 @@ class OpenPlayerRequest:
     vod: VodItem
     playlist: list[PlayItem]
     clicked_index: int
+    source_kind: str = "browse"
+    source_key: str = ""
     source_mode: str = ""
     source_path: str = ""
     source_vod_id: str = ""
@@ -116,6 +120,7 @@ class OpenPlayerRequest:
     detail_resolver: Callable[[PlayItem], VodItem | None] | None = None
     resolved_vod_by_id: dict[str, VodItem] = field(default_factory=dict)
     use_local_history: bool = True
+    restore_history: bool = False
     playback_loader: Callable[[PlayItem], None] | None = None
-    playback_progress_reporter: Callable[[PlayItem, int], None] | None = None
+    playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None
     playback_stopper: Callable[[PlayItem], None] | None = None

@@ -19,7 +19,7 @@ class PlayerSession:
     resolved_vod_by_id: dict[str, VodItem] = field(default_factory=dict)
     use_local_history: bool = True
     playback_loader: Callable[[PlayItem], None] | None = None
-    playback_progress_reporter: Callable[[PlayItem, int], None] | None = None
+    playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None
     playback_stopper: Callable[[PlayItem], None] | None = None
 
 
@@ -35,11 +35,12 @@ class PlayerController:
         detail_resolver: Callable[[PlayItem], VodItem | None] | None = None,
         resolved_vod_by_id: dict[str, VodItem] | None = None,
         use_local_history: bool = True,
+        restore_history: bool = False,
         playback_loader: Callable[[PlayItem], None] | None = None,
-        playback_progress_reporter: Callable[[PlayItem, int], None] | None = None,
+        playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None,
         playback_stopper: Callable[[PlayItem], None] | None = None,
     ) -> PlayerSession:
-        history = self._api_client.get_history(vod.vod_id) if use_local_history else None
+        history = self._api_client.get_history(vod.vod_id) if (use_local_history or restore_history) else None
         start_index = resolve_resume_index(history, playlist, clicked_index)
         matched_history = history and start_index == history.episode
         position_seconds = int((history.position if matched_history else 0) / 1000)
@@ -87,13 +88,14 @@ class PlayerController:
         speed: float,
         opening_seconds: int,
         ending_seconds: int,
+        paused: bool,
     ) -> None:
         if not (0 <= current_index < len(session.playlist)):
             return
         current_item = session.playlist[current_index]
         position_ms = position_seconds * 1000
         if session.playback_progress_reporter is not None:
-            session.playback_progress_reporter(current_item, position_ms)
+            session.playback_progress_reporter(current_item, position_ms, paused)
         if not session.use_local_history:
             return
         self._api_client.save_history(

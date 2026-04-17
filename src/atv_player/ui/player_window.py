@@ -9,8 +9,8 @@ from typing import cast
 
 import httpx
 from PySide6.QtCore import QEvent, QObject, QSize, QTimer, Qt, Signal
-from PySide6.QtGui import QCloseEvent, QCursor, QIcon, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPixmap, QShortcut
-from PySide6.QtWidgets import QApplication, QStyle, QStyleOptionSlider, QToolTip
+from PySide6.QtGui import QActionGroup, QCloseEvent, QCursor, QIcon, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPixmap, QShortcut
+from PySide6.QtWidgets import QApplication, QMenu, QStyle, QStyleOptionSlider, QToolTip
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -118,6 +118,15 @@ class SubtitlePreference:
 
 
 @dataclass(slots=True)
+class SecondarySubtitlePreference:
+    mode: str = "off"
+    title: str = ""
+    lang: str = ""
+    is_default: bool = False
+    is_forced: bool = False
+
+
+@dataclass(slots=True)
 class AudioPreference:
     mode: str = "auto"
     title: str = ""
@@ -135,6 +144,20 @@ class PlayerWindow(QWidget):
     _POSTER_SIZE = QSize(180, 260)
     _POSTER_REQUEST_TIMEOUT_SECONDS = 10.0
     _DEFAULT_MAIN_SPLITTER_SIZES = [960, 320]
+    _SUBTITLE_POSITION_PRESETS = {
+        "顶部": 10,
+        "偏上": 30,
+        "默认": 50,
+        "偏下": 70,
+        "底部": 90,
+    }
+    _SUBTITLE_SCALE_PRESETS = {
+        "很小": 70,
+        "小": 85,
+        "默认": 100,
+        "大": 115,
+        "很大": 130,
+    }
 
     def __init__(self, controller, config=None, save_config=None) -> None:
         super().__init__()
@@ -169,6 +192,8 @@ class PlayerWindow(QWidget):
 
         self.video_widget = MpvWidget(self)
         self._configure_video_surface_widgets()
+        self.video_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.video_widget.customContextMenuRequested.connect(self._show_video_context_menu)
         self.video = self.video_widget
         self.playlist = QListWidget()
         self.play_button = self._create_icon_button("play.svg", "播放/暂停", "Space")
@@ -193,6 +218,14 @@ class PlayerWindow(QWidget):
         self.speed_combo.setCurrentText("1.0x")
         self._subtitle_tracks: list[SubtitleTrack] = []
         self._subtitle_preference = SubtitlePreference()
+        self._secondary_subtitle_preference = SecondarySubtitlePreference()
+        self._main_subtitle_position = 50
+        self._secondary_subtitle_position = 50
+        self._secondary_subtitle_position_supported = False
+        self._main_subtitle_scale = 100
+        self._secondary_subtitle_scale = 100
+        self._main_subtitle_scale_supported = False
+        self._secondary_subtitle_scale_supported = False
         self.subtitle_combo = QComboBox()
         self.subtitle_combo.addItem("自动选择", ("auto", None))
         self.subtitle_combo.setEnabled(False)
@@ -831,6 +864,7 @@ class PlayerWindow(QWidget):
                 speed=self.current_speed,
                 opening_seconds=self.session.opening_seconds,
                 ending_seconds=self.session.ending_seconds,
+                paused=not self.is_playing,
             )
         except Exception as exc:
             self._append_log(f"进度上报失败: {exc}")
@@ -1050,12 +1084,51 @@ class PlayerWindow(QWidget):
             return None
         return best_track
 
+    def _secondary_subtitle_track_match_score(
+        self,
+        track: SubtitleTrack,
+        preference: SecondarySubtitlePreference,
+    ) -> tuple[int, int, int]:
+        return (
+            int(bool(preference.title) and track.title == preference.title),
+            int(bool(preference.lang) and track.lang == preference.lang),
+            int(track.is_forced == preference.is_forced and track.is_default == preference.is_default),
+        )
+
+    def _matching_secondary_track_for_preference(self) -> SubtitleTrack | None:
+        if self._secondary_subtitle_preference.mode != "track" or not self._subtitle_tracks:
+            return None
+        ranked_tracks = sorted(
+            self._subtitle_tracks,
+            key=lambda track: self._secondary_subtitle_track_match_score(track, self._secondary_subtitle_preference),
+            reverse=True,
+        )
+        best_track = ranked_tracks[0]
+        if self._secondary_subtitle_track_match_score(best_track, self._secondary_subtitle_preference) == (0, 0, 0):
+            return None
+        return best_track
+
+    def _apply_secondary_subtitle_preference(self) -> None:
+        if self._secondary_subtitle_preference.mode == "off":
+            self.video.apply_secondary_subtitle_mode("off")
+            return
+        matched_track = self._matching_secondary_track_for_preference()
+        if matched_track is None:
+            self._secondary_subtitle_preference = SecondarySubtitlePreference()
+            self.video.apply_secondary_subtitle_mode("off")
+            return
+        self.video.apply_secondary_subtitle_mode("track", track_id=matched_track.id)
+
     def _refresh_subtitle_state(self) -> None:
         if not hasattr(self.video, "subtitle_tracks") or not hasattr(self.video, "apply_subtitle_mode"):
             self._subtitle_tracks = []
             self._subtitle_preference = SubtitlePreference()
             self._reset_subtitle_combo()
             return
+        remembered_main_subtitle_scale = self._main_subtitle_scale
+        remembered_secondary_subtitle_scale = self._secondary_subtitle_scale
+        remembered_main_subtitle_scale_supported = self._main_subtitle_scale_supported
+        remembered_secondary_subtitle_scale_supported = self._secondary_subtitle_scale_supported
         try:
             self._subtitle_tracks = self.video.subtitle_tracks()
         except Exception as exc:
@@ -1065,6 +1138,35 @@ class PlayerWindow(QWidget):
             self._append_log(f"字幕加载失败: {exc}")
             return
         self._populate_subtitle_combo(self._subtitle_tracks)
+        if hasattr(self.video, "subtitle_position"):
+            self._main_subtitle_position = self.video.subtitle_position()
+        self._secondary_subtitle_position_supported = bool(
+            getattr(self.video, "supports_secondary_subtitle_position", lambda: hasattr(self.video, "secondary_subtitle_position"))()
+        )
+        if self._secondary_subtitle_position_supported and hasattr(self.video, "secondary_subtitle_position"):
+            self._secondary_subtitle_position = self.video.secondary_subtitle_position()
+        self._main_subtitle_scale_supported = bool(
+            getattr(self.video, "supports_subtitle_scale", lambda: hasattr(self.video, "subtitle_scale"))()
+        )
+        self._secondary_subtitle_scale_supported = bool(
+            getattr(
+                self.video,
+                "supports_secondary_subtitle_scale",
+                lambda: hasattr(self.video, "secondary_subtitle_scale"),
+            )()
+        )
+        if self._main_subtitle_scale_supported and hasattr(self.video, "subtitle_scale"):
+            current_main_subtitle_scale = self.video.subtitle_scale()
+            if remembered_main_subtitle_scale_supported:
+                self._main_subtitle_scale = remembered_main_subtitle_scale
+            else:
+                self._main_subtitle_scale = current_main_subtitle_scale
+        if self._secondary_subtitle_scale_supported and hasattr(self.video, "secondary_subtitle_scale"):
+            current_secondary_subtitle_scale = self.video.secondary_subtitle_scale()
+            if remembered_secondary_subtitle_scale_supported:
+                self._secondary_subtitle_scale = remembered_secondary_subtitle_scale
+            else:
+                self._secondary_subtitle_scale = current_secondary_subtitle_scale
         if not self._subtitle_tracks:
             self._subtitle_preference = SubtitlePreference()
             return
@@ -1074,6 +1176,32 @@ class PlayerWindow(QWidget):
             self._subtitle_preference = SubtitlePreference()
             self._reset_subtitle_combo()
             self._append_log(f"字幕切换失败: {exc}")
+        if hasattr(self.video, "apply_secondary_subtitle_mode"):
+            try:
+                self._apply_secondary_subtitle_preference()
+            except Exception as exc:
+                self._secondary_subtitle_preference = SecondarySubtitlePreference()
+                self._append_log(f"次字幕切换失败: {exc}")
+        if hasattr(self.video, "set_subtitle_position"):
+            try:
+                self.video.set_subtitle_position(self._main_subtitle_position)
+            except Exception as exc:
+                self._append_log(f"主字幕位置设置失败: {exc}")
+        if self._secondary_subtitle_position_supported and hasattr(self.video, "set_secondary_subtitle_position"):
+            try:
+                self.video.set_secondary_subtitle_position(self._secondary_subtitle_position)
+            except Exception as exc:
+                self._append_log(f"次字幕位置设置失败: {exc}")
+        if self._main_subtitle_scale_supported and hasattr(self.video, "set_subtitle_scale"):
+            try:
+                self.video.set_subtitle_scale(self._main_subtitle_scale)
+            except Exception as exc:
+                self._append_log(f"主字幕大小设置失败: {exc}")
+        if self._secondary_subtitle_scale_supported and hasattr(self.video, "set_secondary_subtitle_scale"):
+            try:
+                self.video.set_secondary_subtitle_scale(self._secondary_subtitle_scale)
+            except Exception as exc:
+                self._append_log(f"次字幕大小设置失败: {exc}")
 
     def _refresh_audio_state(self) -> None:
         if not hasattr(self.video, "audio_tracks") or not hasattr(self.video, "apply_audio_mode"):
@@ -1137,6 +1265,243 @@ class PlayerWindow(QWidget):
             return
         self._remember_audio_track_preference(track)
         self.video.apply_audio_mode("track", track_id=track_id)
+
+    def _show_video_context_menu(self, pos) -> None:
+        menu = self._build_video_context_menu()
+        menu.exec(self.video_widget.mapToGlobal(pos))
+
+    def _show_video_context_menu_from_widget(self, widget: QWidget, pos) -> None:
+        mapped_pos = pos if widget is self.video_widget else self.video_widget.mapFromGlobal(widget.mapToGlobal(pos))
+        self._show_video_context_menu(mapped_pos)
+
+    def _build_video_context_menu(self) -> QMenu:
+        menu = QMenu(self)
+        menu.addMenu(self._build_primary_subtitle_menu(menu))
+        menu.addMenu(self._build_secondary_subtitle_menu(menu))
+        menu.addMenu(self._build_subtitle_position_menu(menu, title="主字幕位置", secondary=False))
+        menu.addMenu(self._build_subtitle_position_menu(menu, title="次字幕位置", secondary=True))
+        menu.addMenu(self._build_subtitle_scale_menu(menu, title="主字幕大小", secondary=False))
+        menu.addMenu(self._build_subtitle_scale_menu(menu, title="次字幕大小", secondary=True))
+        menu.addMenu(self._build_audio_menu(menu))
+        return menu
+
+    def _build_primary_subtitle_menu(self, parent: QWidget) -> QMenu:
+        menu = QMenu("主字幕", parent)
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+
+        auto_action = menu.addAction("自动选择")
+        auto_action.setCheckable(True)
+        auto_action.setChecked(self._subtitle_preference.mode == "auto")
+        auto_action.triggered.connect(lambda: self._set_primary_subtitle_from_menu("auto", None))
+        group.addAction(auto_action)
+
+        off_action = menu.addAction("关闭字幕")
+        off_action.setCheckable(True)
+        off_action.setChecked(self._subtitle_preference.mode == "off")
+        off_action.triggered.connect(lambda: self._set_primary_subtitle_from_menu("off", None))
+        group.addAction(off_action)
+
+        for track in self._subtitle_tracks:
+            action = menu.addAction(track.label)
+            action.setCheckable(True)
+            action.setChecked(
+                self._subtitle_preference.mode == "track"
+                and self._subtitle_preference.title == track.title
+                and self._subtitle_preference.lang == track.lang
+            )
+            action.triggered.connect(
+                lambda _checked=False, track_id=track.id: self._set_primary_subtitle_from_menu("track", track_id)
+            )
+            group.addAction(action)
+
+        return menu
+
+    def _build_secondary_subtitle_menu(self, parent: QWidget) -> QMenu:
+        menu = QMenu("次字幕", parent)
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+
+        off_action = menu.addAction("关闭次字幕")
+        off_action.setCheckable(True)
+        off_action.setChecked(self._secondary_subtitle_preference.mode == "off")
+        off_action.triggered.connect(lambda: self._set_secondary_subtitle_from_menu("off", None))
+        group.addAction(off_action)
+
+        for track in self._subtitle_tracks:
+            action = menu.addAction(track.label)
+            action.setCheckable(True)
+            action.setChecked(
+                self._secondary_subtitle_preference.mode == "track"
+                and self._secondary_subtitle_preference.title == track.title
+                and self._secondary_subtitle_preference.lang == track.lang
+            )
+            action.triggered.connect(
+                lambda _checked=False, track_id=track.id: self._set_secondary_subtitle_from_menu("track", track_id)
+            )
+            group.addAction(action)
+
+        return menu
+
+    def _build_subtitle_position_menu(self, parent: QWidget, title: str, secondary: bool) -> QMenu:
+        menu = QMenu(title, parent)
+        if secondary and not self._secondary_subtitle_position_supported:
+            menu.setEnabled(False)
+            return menu
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+        current_value = self._secondary_subtitle_position if secondary else self._main_subtitle_position
+
+        for label, value in self._SUBTITLE_POSITION_PRESETS.items():
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(current_value == value)
+            action.triggered.connect(
+                lambda _checked=False, value=value, secondary=secondary: self._set_subtitle_position_from_menu(
+                    value,
+                    secondary,
+                )
+            )
+            group.addAction(action)
+
+        menu.addSeparator()
+        menu.addAction("上移 5%", lambda secondary=secondary: self._step_subtitle_position(-5, secondary))
+        menu.addAction("下移 5%", lambda secondary=secondary: self._step_subtitle_position(5, secondary))
+        menu.addAction("重置", lambda secondary=secondary: self._set_subtitle_position_from_menu(50, secondary))
+        return menu
+
+    def _build_audio_menu(self, parent: QWidget) -> QMenu:
+        menu = QMenu("音轨", parent)
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+
+        auto_action = menu.addAction("自动选择")
+        auto_action.setCheckable(True)
+        auto_action.setChecked(self._audio_preference.mode == "auto")
+        auto_action.triggered.connect(lambda: self._set_audio_from_menu("auto", None))
+        group.addAction(auto_action)
+
+        for track in self._audio_tracks:
+            action = menu.addAction(track.label)
+            action.setCheckable(True)
+            action.setChecked(
+                self._audio_preference.mode == "track"
+                and self._audio_preference.title == track.title
+                and self._audio_preference.lang == track.lang
+            )
+            action.triggered.connect(lambda _checked=False, track_id=track.id: self._set_audio_from_menu("track", track_id))
+            group.addAction(action)
+
+        return menu
+
+    def _build_subtitle_scale_menu(self, parent: QWidget, title: str, secondary: bool) -> QMenu:
+        menu = QMenu(title, parent)
+        if secondary and not self._secondary_subtitle_scale_supported:
+            menu.setEnabled(False)
+            return menu
+        if not secondary and not self._main_subtitle_scale_supported:
+            menu.setEnabled(False)
+            return menu
+
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+        current_value = self._secondary_subtitle_scale if secondary else self._main_subtitle_scale
+
+        for label, value in self._SUBTITLE_SCALE_PRESETS.items():
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(current_value == value)
+            action.triggered.connect(
+                lambda _checked=False, value=value, secondary=secondary: self._set_subtitle_scale_from_menu(value, secondary)
+            )
+            group.addAction(action)
+
+        menu.addSeparator()
+        menu.addAction("缩小 5%", lambda secondary=secondary: self._step_subtitle_scale(-5, secondary))
+        menu.addAction("放大 5%", lambda secondary=secondary: self._step_subtitle_scale(5, secondary))
+        menu.addAction("重置", lambda secondary=secondary: self._set_subtitle_scale_from_menu(100, secondary))
+        return menu
+
+    def _set_primary_subtitle_from_menu(self, mode: str, track_id: int | None) -> None:
+        if mode == "auto":
+            self.subtitle_combo.setCurrentIndex(0)
+            return
+        if mode == "off":
+            self.subtitle_combo.setCurrentIndex(1)
+            return
+        for index in range(self.subtitle_combo.count()):
+            if self.subtitle_combo.itemData(index) == ("track", track_id):
+                self.subtitle_combo.setCurrentIndex(index)
+                return
+
+    def _set_audio_from_menu(self, mode: str, track_id: int | None) -> None:
+        if mode == "auto":
+            self.audio_combo.setCurrentIndex(0)
+            return
+        for index in range(self.audio_combo.count()):
+            if self.audio_combo.itemData(index) == ("track", track_id):
+                self.audio_combo.setCurrentIndex(index)
+                return
+
+    def _set_secondary_subtitle_from_menu(self, mode: str, track_id: int | None) -> None:
+        try:
+            if mode == "off":
+                self._secondary_subtitle_preference = SecondarySubtitlePreference()
+                self.video.apply_secondary_subtitle_mode("off")
+                return
+            track = next((track for track in self._subtitle_tracks if track.id == track_id), None)
+            if track is None:
+                return
+            self._secondary_subtitle_preference = SecondarySubtitlePreference(
+                mode="track",
+                title=track.title,
+                lang=track.lang,
+                is_default=track.is_default,
+                is_forced=track.is_forced,
+            )
+            self.video.apply_secondary_subtitle_mode("track", track_id=track.id)
+        except Exception as exc:
+            self._append_log(f"次字幕切换失败: {exc}")
+
+    def _set_subtitle_position_from_menu(self, value: int, secondary: bool) -> None:
+        clamped = max(0, min(int(value), 100))
+        if secondary and not self._secondary_subtitle_position_supported:
+            return
+        try:
+            if secondary:
+                self.video.set_secondary_subtitle_position(clamped)
+                self._secondary_subtitle_position = clamped
+            else:
+                self.video.set_subtitle_position(clamped)
+                self._main_subtitle_position = clamped
+        except Exception as exc:
+            label = "次字幕位置设置失败" if secondary else "主字幕位置设置失败"
+            self._append_log(f"{label}: {exc}")
+
+    def _step_subtitle_position(self, delta: int, secondary: bool) -> None:
+        current = self._secondary_subtitle_position if secondary else self._main_subtitle_position
+        self._set_subtitle_position_from_menu(current + delta, secondary)
+
+    def _set_subtitle_scale_from_menu(self, value: int, secondary: bool) -> None:
+        clamped = max(50, min(int(value), 200))
+        try:
+            if secondary:
+                if not self._secondary_subtitle_scale_supported:
+                    return
+                self.video.set_secondary_subtitle_scale(clamped)
+                self._secondary_subtitle_scale = clamped
+            else:
+                if not self._main_subtitle_scale_supported:
+                    return
+                self.video.set_subtitle_scale(clamped)
+                self._main_subtitle_scale = clamped
+        except Exception as exc:
+            label = "次字幕大小设置失败" if secondary else "主字幕大小设置失败"
+            self._append_log(f"{label}: {exc}")
+
+    def _step_subtitle_scale(self, delta: int, secondary: bool) -> None:
+        current = self._secondary_subtitle_scale if secondary else self._main_subtitle_scale
+        self._set_subtitle_scale_from_menu(current + delta, secondary)
 
     def _change_volume(self, value: int) -> None:
         try:
@@ -1308,6 +1673,8 @@ class PlayerWindow(QWidget):
 
     def _quit_application(self) -> None:
         self._quit_requested = True
+        self.report_progress()
+        self._stop_current_playback()
         if self.config is not None:
             self.config.last_active_window = "player"
         self._set_last_player_paused(not self.is_playing)
@@ -1338,6 +1705,7 @@ class PlayerWindow(QWidget):
         except Exception:
             pass
         self.is_playing = False
+        self.report_progress()
         self._refresh_window_title()
         self._restore_video_cursor()
         self._set_last_player_paused(True)
@@ -1458,6 +1826,11 @@ class PlayerWindow(QWidget):
             elif event.type() == QEvent.Type.MouseMove:
                 self._video_pointer_inside = True
                 self._handle_video_mouse_activity()
+            elif event.type() == QEvent.Type.MouseButtonPress and isinstance(event, QMouseEvent):
+                if event.button() == Qt.MouseButton.RightButton:
+                    self._show_video_context_menu_from_widget(watched, event.position().toPoint())
+                    event.accept()
+                    return True
             elif event.type() == QEvent.Type.Leave:
                 self._handle_video_leave()
         if not isinstance(watched, QObject):

@@ -46,6 +46,7 @@ class FakePlayerController:
         detail_resolver=None,
         resolved_vod_by_id=None,
         use_local_history=True,
+        restore_history=False,
         playback_loader=None,
         playback_progress_reporter=None,
         playback_stopper=None,
@@ -54,6 +55,7 @@ class FakePlayerController:
             "vod": vod,
             "playlist": playlist,
             "clicked_index": clicked_index,
+            "restore_history": restore_history,
         }
 
 

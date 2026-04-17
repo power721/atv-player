@@ -170,3 +170,12 @@ def test_load_remote_poster_image_returns_image_when_cache_write_fails(monkeypat
 
     assert loaded is not None
     assert loaded.isNull() is False
+
+
+def test_poster_cache_dir_uses_shared_cache_helper(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(poster_loader_module, "app_cache_dir", lambda: tmp_path / "cache-root")
+
+    cache_dir = poster_loader_module.poster_cache_dir()
+
+    assert cache_dir == tmp_path / "cache-root" / "posters"
+    assert cache_dir.is_dir()
