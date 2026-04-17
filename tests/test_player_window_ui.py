@@ -1,6 +1,6 @@
 from PySide6.QtCore import QByteArray, QEvent, Qt
 from PySide6.QtGui import QAction, QColor, QCursor, QImage, QKeyEvent, QMouseEvent, QPixmap
-from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QMenu, QTableWidget
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QMenu, QTableWidget, QWidget
 from PySide6.QtWidgets import QSplitter, QToolTip
 from atv_player.controllers.player_controller import PlayerSession
 from atv_player.models import AppConfig, PlayItem, VodItem
@@ -1861,6 +1861,170 @@ def test_player_window_context_menu_position_actions_update_video_layer(qtbot) -
     assert window.video.secondary_subtitle_position_value == 45
 
 
+def test_player_window_context_menu_includes_primary_and_secondary_subtitle_size_submenus(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def subtitle_position(self) -> int:
+            return 50
+
+        def set_subtitle_position(self, value: int) -> None:
+            return None
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return True
+
+        def secondary_subtitle_position(self) -> int:
+            return 50
+
+        def set_secondary_subtitle_position(self, value: int) -> None:
+            return None
+
+        def supports_subtitle_scale(self) -> bool:
+            return True
+
+        def subtitle_scale(self) -> int:
+            return 100
+
+        def set_subtitle_scale(self, value: int) -> None:
+            return None
+
+        def supports_secondary_subtitle_scale(self) -> bool:
+            return True
+
+        def secondary_subtitle_scale(self) -> int:
+            return 100
+
+        def set_secondary_subtitle_scale(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(make_player_session(start_index=0))
+
+    menu = window._build_video_context_menu()
+
+    assert [action.text() for action in menu.actions()] == [
+        "主字幕",
+        "次字幕",
+        "主字幕位置",
+        "次字幕位置",
+        "主字幕大小",
+        "次字幕大小",
+        "音轨",
+    ]
+    assert [action.text() for action in _submenu_actions(menu, "主字幕大小")] == [
+        "很小",
+        "小",
+        "默认",
+        "大",
+        "很大",
+        "",
+        "缩小 5%",
+        "放大 5%",
+        "重置",
+    ]
+
+
+def test_player_window_context_menu_size_actions_update_video_layer(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.subtitle_scale_value = 100
+            self.secondary_subtitle_scale_value = 100
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def subtitle_position(self) -> int:
+            return 50
+
+        def set_subtitle_position(self, value: int) -> None:
+            return None
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return True
+
+        def secondary_subtitle_position(self) -> int:
+            return 50
+
+        def set_secondary_subtitle_position(self, value: int) -> None:
+            return None
+
+        def supports_subtitle_scale(self) -> bool:
+            return True
+
+        def subtitle_scale(self) -> int:
+            return self.subtitle_scale_value
+
+        def set_subtitle_scale(self, value: int) -> None:
+            self.subtitle_scale_value = value
+
+        def supports_secondary_subtitle_scale(self) -> bool:
+            return True
+
+        def secondary_subtitle_scale(self) -> int:
+            return self.secondary_subtitle_scale_value
+
+        def set_secondary_subtitle_scale(self, value: int) -> None:
+            self.secondary_subtitle_scale_value = value
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(make_player_session(start_index=0))
+
+    menu = window._build_video_context_menu()
+    next(action for action in _submenu_actions(menu, "主字幕大小") if action.text() == "大").trigger()
+    next(action for action in _submenu_actions(menu, "次字幕大小") if action.text() == "放大 5%").trigger()
+
+    assert window.video.subtitle_scale_value == 115
+    assert window.video.secondary_subtitle_scale_value == 105
+
+
 def test_player_window_reuses_secondary_subtitle_and_position_preferences_for_next_episode(qtbot) -> None:
     class FakeVideo:
         def __init__(self) -> None:
@@ -1992,6 +2156,170 @@ def test_player_window_logs_and_recovers_when_secondary_subtitle_or_position_app
 
     assert "次字幕切换失败: secondary boom" in window.log_view.toPlainText()
     assert "主字幕位置设置失败: position boom" in window.log_view.toPlainText()
+
+
+def test_player_window_disables_secondary_subtitle_position_menu_when_video_layer_lacks_support(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return [SubtitleTrack(id=11, title="", lang="zh", is_default=True, is_forced=False, label="简体中文 (默认)")]
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return 11
+
+        def apply_secondary_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def subtitle_position(self) -> int:
+            return 50
+
+        def set_subtitle_position(self, value: int) -> None:
+            return None
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(make_player_session(start_index=0))
+
+    menu = window._build_video_context_menu()
+    secondary_position_menu = next(action.menu() for action in menu.actions() if action.text() == "次字幕位置")
+
+    assert secondary_position_menu is not None
+    assert secondary_position_menu.isEnabled() is False
+    assert "次字幕位置设置失败" not in window.log_view.toPlainText()
+
+
+def test_player_window_right_click_on_video_surface_opens_context_menu(qtbot, monkeypatch) -> None:
+    shown: list[tuple[int, int]] = []
+
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    monkeypatch.setattr(
+        PlayerWindow,
+        "_show_video_context_menu",
+        lambda self, pos: shown.append((pos.x(), pos.y())),
+    )
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.show()
+
+    local_pos = window.video_widget.rect().center()
+    global_pos = window.video_widget.mapToGlobal(local_pos)
+    QApplication.sendEvent(
+        window.video_widget,
+        QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            local_pos,
+            global_pos,
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.RightButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+
+    assert shown == [(local_pos.x(), local_pos.y())]
+
+
+def test_player_window_right_click_on_video_child_maps_position_to_video_widget(qtbot, monkeypatch) -> None:
+    shown: list[tuple[int, int]] = []
+
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    monkeypatch.setattr(
+        PlayerWindow,
+        "_show_video_context_menu",
+        lambda self, pos: shown.append((pos.x(), pos.y())),
+    )
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.show()
+
+    child = QWidget(window.video_widget)
+    child.setGeometry(40, 30, 120, 80)
+    child.show()
+    window._configure_video_surface_widgets()
+
+    local_pos = child.rect().center()
+    global_pos = child.mapToGlobal(local_pos)
+    QApplication.sendEvent(
+        child,
+        QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            local_pos,
+            global_pos,
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.RightButton,
+            Qt.KeyboardModifier.NoModifier,
+        ),
+    )
+
+    expected = window.video_widget.mapFromGlobal(global_pos)
+    assert shown == [(expected.x(), expected.y())]
 
 
 def test_player_window_populates_embedded_subtitle_options_after_open_session(qtbot) -> None:
