@@ -42,6 +42,27 @@ def test_load_categories_inserts_recommendation_first() -> None:
     ]
 
 
+def test_load_categories_prepends_enabled_custom_sources() -> None:
+    from atv_player.controllers.live_controller import LiveController
+
+    api = FakeApiClient()
+    api.category_payload = {"class": [{"type_id": "bili", "type_name": "哔哩哔哩"}]}
+
+    class FakeCustomService:
+        def load_categories(self):
+            return [DoubanCategory(type_id="custom:7", type_name="自定义远程")]
+
+    controller = LiveController(api, custom_live_service=FakeCustomService())
+
+    categories = controller.load_categories()
+
+    assert [(item.type_id, item.type_name) for item in categories] == [
+        ("custom:7", "自定义远程"),
+        ("0", "推荐"),
+        ("bili", "哔哩哔哩"),
+    ]
+
+
 def test_load_folder_items_reuses_live_listing_api() -> None:
     from atv_player.controllers.live_controller import LiveController
 
@@ -62,6 +83,56 @@ def test_load_folder_items_reuses_live_listing_api() -> None:
         ("bili-9-744", "folder"),
         ("bili$1785607569", "file"),
     ]
+
+
+def test_load_items_routes_custom_category_ids_to_custom_service() -> None:
+    from atv_player.controllers.live_controller import LiveController
+
+    api = FakeApiClient()
+
+    class FakeCustomService:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def load_categories(self):
+            return []
+
+        def load_items(self, category_id: str, page: int):
+            self.calls.append((category_id, page))
+            return [], 0
+
+    custom = FakeCustomService()
+    controller = LiveController(api, custom_live_service=custom)
+
+    controller.load_items("custom:9", 1)
+
+    assert custom.calls == [("custom:9", 1)]
+    assert api.item_calls == []
+
+
+def test_load_folder_items_routes_custom_folder_ids_to_custom_service() -> None:
+    from atv_player.controllers.live_controller import LiveController
+
+    api = FakeApiClient()
+
+    class FakeCustomService:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def load_categories(self):
+            return []
+
+        def load_folder_items(self, vod_id: str):
+            self.calls.append(vod_id)
+            return [], 0
+
+    custom = FakeCustomService()
+    controller = LiveController(api, custom_live_service=custom)
+
+    controller.load_folder_items("custom-folder:9:group-0")
+
+    assert custom.calls == ["custom-folder:9:group-0"]
+    assert api.item_calls == []
 
 
 def test_build_request_parses_title_url_playlist_from_detail_payload() -> None:
@@ -168,3 +239,33 @@ def test_build_request_prefixes_titles_with_route_name_from_vod_play_from() -> N
         "https://stream.example/main.m3u8",
         "https://backup.example/live.m3u8",
     ]
+
+
+def test_build_request_routes_custom_channel_ids_to_custom_service() -> None:
+    from atv_player.controllers.live_controller import LiveController
+    from atv_player.models import OpenPlayerRequest, PlayItem, VodItem
+
+    api = FakeApiClient()
+
+    class FakeCustomService:
+        def load_categories(self):
+            return []
+
+        def build_request(self, vod_id: str):
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="自定义频道"),
+                playlist=[PlayItem(title="自定义频道", url="https://live.example/custom.m3u8")],
+                clicked_index=0,
+                source_kind="live",
+                source_mode="custom",
+                source_vod_id=vod_id,
+                use_local_history=False,
+            )
+
+    controller = LiveController(api, custom_live_service=FakeCustomService())
+
+    request = controller.build_request("custom-channel:9:channel-0")
+
+    assert request.source_mode == "custom"
+    assert request.use_local_history is False
+    assert api.detail_calls == []

@@ -52,19 +52,25 @@ def _parse_live_playlist(vod_play_from: str, vod_play_url: str) -> list[PlayItem
 class LiveController:
     _PAGE_SIZE = 30
 
-    def __init__(self, api_client) -> None:
+    def __init__(self, api_client, custom_live_service=None) -> None:
         self._api_client = api_client
+        self._custom_live_service = custom_live_service
 
     def load_categories(self) -> list[DoubanCategory]:
         payload = self._api_client.list_live_categories()
         categories = [_map_category(item) for item in payload.get("class", [])]
         categories = [category for category in categories if category.type_id != "0"]
-        return [DoubanCategory(type_id="0", type_name="推荐"), *categories]
+        custom_categories: list[DoubanCategory] = []
+        if self._custom_live_service is not None:
+            custom_categories = list(self._custom_live_service.load_categories())
+        return [*custom_categories, DoubanCategory(type_id="0", type_name="推荐"), *categories]
 
     def _map_live_items(self, payload: dict) -> list[VodItem]:
         return [_map_item(item) for item in payload.get("list", [])]
 
     def load_items(self, category_id: str, page: int) -> tuple[list[VodItem], int]:
+        if category_id.startswith("custom:") and self._custom_live_service is not None:
+            return self._custom_live_service.load_items(category_id, page)
         payload = self._api_client.list_live_items(category_id, page=page)
         items = self._map_live_items(payload)
         total_raw = payload.get("total")
@@ -76,6 +82,8 @@ class LiveController:
         return items, total
 
     def load_folder_items(self, vod_id: str) -> tuple[list[VodItem], int]:
+        if vod_id.startswith("custom-folder:") and self._custom_live_service is not None:
+            return self._custom_live_service.load_folder_items(vod_id)
         payload = self._api_client.list_live_items(vod_id, page=1)
         items = self._map_live_items(payload)
         total_raw = payload.get("total")
@@ -98,6 +106,8 @@ class LiveController:
         return [item for item in _parse_live_playlist(detail.vod_play_from, detail.vod_play_url) if item.url]
 
     def build_request(self, vod_id: str) -> OpenPlayerRequest:
+        if vod_id.startswith("custom-channel:") and self._custom_live_service is not None:
+            return self._custom_live_service.build_request(vod_id)
         payload = self._api_client.get_live_detail(vod_id)
         detail = _map_vod_item(payload["list"][0])
         detail.detail_style = "live"
