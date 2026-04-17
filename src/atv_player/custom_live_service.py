@@ -56,20 +56,38 @@ class CustomLiveService:
     def list_manual_entries(self, source_id: int):
         return self._repository.list_manual_entries(source_id)
 
-    def add_manual_entry(self, source_id: int, *, group_name: str, channel_name: str, stream_url: str):
+    def add_manual_entry(
+        self,
+        source_id: int,
+        *,
+        group_name: str,
+        channel_name: str,
+        stream_url: str,
+        logo_url: str = "",
+    ):
         return self._repository.add_manual_entry(
             source_id,
             group_name=group_name,
             channel_name=channel_name,
             stream_url=stream_url,
+            logo_url=logo_url,
         )
 
-    def update_manual_entry(self, entry_id: int, *, group_name: str, channel_name: str, stream_url: str) -> None:
+    def update_manual_entry(
+        self,
+        entry_id: int,
+        *,
+        group_name: str,
+        channel_name: str,
+        stream_url: str,
+        logo_url: str = "",
+    ) -> None:
         self._repository.update_manual_entry(
             entry_id,
             group_name=group_name,
             channel_name=channel_name,
             stream_url=stream_url,
+            logo_url=logo_url,
         )
 
     def delete_manual_entry(self, entry_id: int) -> None:
@@ -210,7 +228,12 @@ class CustomLiveService:
         playlist = ParsedPlaylist()
         groups: dict[str, ParsedGroup] = {}
         for entry in self._repository.list_manual_entries(source_id):
-            channel = ParsedChannel(key=f"manual-{entry.id}", name=entry.channel_name, url=entry.stream_url)
+            channel = ParsedChannel(
+                key=f"manual-{entry.id}",
+                name=entry.channel_name,
+                url=entry.stream_url,
+                logo_url=entry.logo_url,
+            )
             if entry.group_name:
                 group = groups.get(entry.group_name)
                 if group is None:

@@ -250,3 +250,23 @@ def test_custom_live_service_manages_manual_entries(tmp_path: Path) -> None:
     assert [(item.id, item.channel_name, item.sort_order) for item in entries] == [
         (second.id, "CCTV-2", 0)
     ]
+
+
+def test_custom_live_service_propagates_manual_entry_logo_to_items_and_request(tmp_path: Path) -> None:
+    repo = LiveSourceRepository(tmp_path / "app.db")
+    service = CustomLiveService(repo, http_client=FakeHttpClient())
+    source = service.add_manual_source("手动源")
+    entry = service.add_manual_entry(
+        source.id,
+        group_name="",
+        channel_name="CCTV-1",
+        stream_url="https://live.example/cctv1.m3u8",
+        logo_url="https://img.example/cctv1.png",
+    )
+
+    items, total = service.load_items(f"custom:{source.id}", 1)
+    request = service.build_request(f"custom-channel:{source.id}:manual-{entry.id}")
+
+    assert total == 1
+    assert items[0].vod_pic == "https://img.example/cctv1.png"
+    assert request.vod.vod_pic == "https://img.example/cctv1.png"
