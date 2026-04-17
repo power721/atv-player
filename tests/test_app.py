@@ -248,27 +248,21 @@ def test_app_coordinator_passes_loaded_spider_plugins_into_main_window(monkeypat
 
 
 def test_http_text_client_follows_redirects_for_live_source_text_requests() -> None:
-    calls: list[tuple[str, bool]] = []
-
-    class FakeInnerClient:
-        def get(self, url: str, follow_redirects: bool = False) -> httpx.Response:
-            calls.append((url, follow_redirects))
-            return httpx.Response(
-                200,
-                text="#EXTM3U",
-                request=httpx.Request("GET", url),
-            )
-
     class FakeApiClient:
         def __init__(self) -> None:
-            self._client = FakeInnerClient()
+            self.calls: list[str] = []
 
-    client = app_module._HttpTextClient(FakeApiClient())
+        def get_text(self, url: str) -> str:
+            self.calls.append(url)
+            return "#EXTM3U"
+
+    api_client = FakeApiClient()
+    client = app_module._HttpTextClient(api_client)
 
     text = client.get_text("https://example.com/live.m3u")
 
     assert text == "#EXTM3U"
-    assert calls == [("https://example.com/live.m3u", True)]
+    assert api_client.calls == ["https://example.com/live.m3u"]
 
 
 def test_main_window_hides_emby_and_jellyfin_tabs_when_disabled(qtbot) -> None:

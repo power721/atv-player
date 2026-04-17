@@ -175,6 +175,36 @@ def test_api_client_returns_plain_text_for_successful_text_response() -> None:
     assert client.resolve_share_link("https://t.me/share") == "/电影/国产"
 
 
+def test_api_client_get_text_returns_text_response() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(200, text="#EXTM3U")
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="auth-123",
+        transport=httpx.MockTransport(handler),
+    )
+
+    text = client.get_text("https://example.com/live.m3u")
+
+    assert text == "#EXTM3U"
+    assert seen == ["https://example.com/live.m3u"]
+
+
+def test_api_client_close_closes_underlying_http_client() -> None:
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"ok": True})),
+    )
+
+    client.close()
+
+    assert client._client.is_closed is True
+
+
 def test_api_client_maps_file_list_read_timeout_to_localized_api_error() -> None:
     client = ApiClient(
         base_url="http://127.0.0.1:4567",

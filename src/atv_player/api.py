@@ -41,6 +41,9 @@ class ApiClient:
     def set_vod_token(self, vod_token: str) -> None:
         self._vod_token = vod_token
 
+    def close(self) -> None:
+        self._client.close()
+
     def _is_file_list_request(self, url: str, params: Any) -> bool:
         if not url.startswith("/vod/"):
             return False
@@ -250,3 +253,15 @@ class ApiClient:
 
     def get_capabilities(self) -> dict[str, Any]:
         return self._request("GET", "/api/capabilities")
+
+    def get_text(self, url: str) -> str:
+        try:
+            response = self._client.get(url, follow_redirects=True)
+            response.raise_for_status()
+        except httpx.ReadTimeout as exc:
+            raise ApiError("请求超时") from exc
+        except httpx.TimeoutException as exc:
+            raise ApiError("请求超时") from exc
+        except httpx.HTTPError as exc:
+            raise ApiError("网络请求失败") from exc
+        return response.text

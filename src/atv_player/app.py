@@ -45,9 +45,7 @@ class _HttpTextClient:
         self._client = client
 
     def get_text(self, url: str) -> str:
-        response = self._client._client.get(url, follow_redirects=True)
-        response.raise_for_status()
-        return response.text
+        return self._client.get_text(url)
 
 
 def decide_start_view(config: AppConfig) -> str:
