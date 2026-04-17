@@ -1791,6 +1791,7 @@ def test_player_window_context_menu_secondary_subtitle_and_audio_actions_call_vi
     qtbot.addWidget(window)
     window.video = FakeVideo()
     window.open_session(make_player_session(start_index=0))
+    window.video.secondary_subtitle_apply_calls.clear()
     window.video.audio_apply_calls.clear()
 
     menu = window._build_video_context_menu()

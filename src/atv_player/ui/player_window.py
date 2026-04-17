@@ -1072,6 +1072,41 @@ class PlayerWindow(QWidget):
             return None
         return best_track
 
+    def _secondary_subtitle_track_match_score(
+        self,
+        track: SubtitleTrack,
+        preference: SecondarySubtitlePreference,
+    ) -> tuple[int, int, int]:
+        return (
+            int(bool(preference.title) and track.title == preference.title),
+            int(bool(preference.lang) and track.lang == preference.lang),
+            int(track.is_forced == preference.is_forced and track.is_default == preference.is_default),
+        )
+
+    def _matching_secondary_track_for_preference(self) -> SubtitleTrack | None:
+        if self._secondary_subtitle_preference.mode != "track" or not self._subtitle_tracks:
+            return None
+        ranked_tracks = sorted(
+            self._subtitle_tracks,
+            key=lambda track: self._secondary_subtitle_track_match_score(track, self._secondary_subtitle_preference),
+            reverse=True,
+        )
+        best_track = ranked_tracks[0]
+        if self._secondary_subtitle_track_match_score(best_track, self._secondary_subtitle_preference) == (0, 0, 0):
+            return None
+        return best_track
+
+    def _apply_secondary_subtitle_preference(self) -> None:
+        if self._secondary_subtitle_preference.mode == "off":
+            self.video.apply_secondary_subtitle_mode("off")
+            return
+        matched_track = self._matching_secondary_track_for_preference()
+        if matched_track is None:
+            self._secondary_subtitle_preference = SecondarySubtitlePreference()
+            self.video.apply_secondary_subtitle_mode("off")
+            return
+        self.video.apply_secondary_subtitle_mode("track", track_id=matched_track.id)
+
     def _refresh_subtitle_state(self) -> None:
         if not hasattr(self.video, "subtitle_tracks") or not hasattr(self.video, "apply_subtitle_mode"):
             self._subtitle_tracks = []
@@ -1087,6 +1122,10 @@ class PlayerWindow(QWidget):
             self._append_log(f"字幕加载失败: {exc}")
             return
         self._populate_subtitle_combo(self._subtitle_tracks)
+        if hasattr(self.video, "subtitle_position"):
+            self._main_subtitle_position = self.video.subtitle_position()
+        if hasattr(self.video, "secondary_subtitle_position"):
+            self._secondary_subtitle_position = self.video.secondary_subtitle_position()
         if not self._subtitle_tracks:
             self._subtitle_preference = SubtitlePreference()
             return
@@ -1096,6 +1135,22 @@ class PlayerWindow(QWidget):
             self._subtitle_preference = SubtitlePreference()
             self._reset_subtitle_combo()
             self._append_log(f"字幕切换失败: {exc}")
+        if hasattr(self.video, "apply_secondary_subtitle_mode"):
+            try:
+                self._apply_secondary_subtitle_preference()
+            except Exception as exc:
+                self._secondary_subtitle_preference = SecondarySubtitlePreference()
+                self._append_log(f"次字幕切换失败: {exc}")
+        if hasattr(self.video, "set_subtitle_position"):
+            try:
+                self.video.set_subtitle_position(self._main_subtitle_position)
+            except Exception as exc:
+                self._append_log(f"主字幕位置设置失败: {exc}")
+        if hasattr(self.video, "set_secondary_subtitle_position"):
+            try:
+                self.video.set_secondary_subtitle_position(self._secondary_subtitle_position)
+            except Exception as exc:
+                self._append_log(f"次字幕位置设置失败: {exc}")
 
     def _refresh_audio_state(self) -> None:
         if not hasattr(self.video, "audio_tracks") or not hasattr(self.video, "apply_audio_mode"):
@@ -1232,7 +1287,28 @@ class PlayerWindow(QWidget):
         return menu
 
     def _build_subtitle_position_menu(self, parent: QWidget, title: str, secondary: bool) -> QMenu:
-        return QMenu(title, parent)
+        menu = QMenu(title, parent)
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+        current_value = self._secondary_subtitle_position if secondary else self._main_subtitle_position
+
+        for label, value in self._SUBTITLE_POSITION_PRESETS.items():
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(current_value == value)
+            action.triggered.connect(
+                lambda _checked=False, value=value, secondary=secondary: self._set_subtitle_position_from_menu(
+                    value,
+                    secondary,
+                )
+            )
+            group.addAction(action)
+
+        menu.addSeparator()
+        menu.addAction("上移 5%", lambda secondary=secondary: self._step_subtitle_position(-5, secondary))
+        menu.addAction("下移 5%", lambda secondary=secondary: self._step_subtitle_position(5, secondary))
+        menu.addAction("重置", lambda secondary=secondary: self._set_subtitle_position_from_menu(50, secondary))
+        return menu
 
     def _build_audio_menu(self, parent: QWidget) -> QMenu:
         menu = QMenu("音轨", parent)
@@ -1298,6 +1374,23 @@ class PlayerWindow(QWidget):
             self.video.apply_secondary_subtitle_mode("track", track_id=track.id)
         except Exception as exc:
             self._append_log(f"次字幕切换失败: {exc}")
+
+    def _set_subtitle_position_from_menu(self, value: int, secondary: bool) -> None:
+        clamped = max(0, min(int(value), 100))
+        try:
+            if secondary:
+                self.video.set_secondary_subtitle_position(clamped)
+                self._secondary_subtitle_position = clamped
+            else:
+                self.video.set_subtitle_position(clamped)
+                self._main_subtitle_position = clamped
+        except Exception as exc:
+            label = "次字幕位置设置失败" if secondary else "主字幕位置设置失败"
+            self._append_log(f"{label}: {exc}")
+
+    def _step_subtitle_position(self, delta: int, secondary: bool) -> None:
+        current = self._secondary_subtitle_position if secondary else self._main_subtitle_position
+        self._set_subtitle_position_from_menu(current + delta, secondary)
 
     def _change_volume(self, value: int) -> None:
         try:
