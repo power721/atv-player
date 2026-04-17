@@ -87,7 +87,7 @@ class _RestoreSignals(QObject):
 
 class _SessionOpenSignals(QObject):
     succeeded = Signal(int, object, object, bool)
-    failed = Signal(int, str)
+    failed = Signal(int, str, bool)
 
 
 @dataclass(slots=True)
@@ -565,7 +565,7 @@ class MainWindow(QMainWindow):
                 session = self._create_player_session(request)
             except Exception as exc:
                 if self._is_window_alive():
-                    self._session_open_signals.failed.emit(request_id, str(exc))
+                    self._session_open_signals.failed.emit(request_id, str(exc), restore_paused_state)
                 return
             if not self._is_window_alive():
                 return
@@ -578,9 +578,12 @@ class MainWindow(QMainWindow):
             return
         self._apply_open_player(request, session, restore_paused_state=restore_paused_state)
 
-    def _handle_session_open_failed(self, request_id: int, message: str) -> None:
+    def _handle_session_open_failed(self, request_id: int, message: str, restore_paused_state: bool) -> None:
         if request_id != self._player_session_request_id:
             return
+        if restore_paused_state:
+            self.config.last_active_window = "main"
+            self._save_config()
         self.show_error(message)
 
     def _show_main_again(self) -> None:

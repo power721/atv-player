@@ -249,3 +249,54 @@ def test_main_window_async_restore_without_saved_request_resets_last_active_wind
 
     qtbot.waitUntil(lambda: config.last_active_window == "main")
     assert saved["count"] >= 1
+
+
+def test_main_window_async_restore_session_creation_failure_resets_last_active_window(qtbot) -> None:
+    class RestoreBrowseController(FakeStaticController):
+        def build_request_from_detail(self, vod_id: str):
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="Movie"),
+                playlist=[PlayItem(title="Episode 1", url="1.m3u8")],
+                clicked_index=0,
+                source_mode="detail",
+                source_vod_id=vod_id,
+            )
+
+    class FailingPlayerController(FakePlayerController):
+        def create_session(
+            self,
+            vod,
+            playlist,
+            clicked_index: int,
+            detail_resolver=None,
+            resolved_vod_by_id=None,
+            use_local_history=True,
+            restore_history=False,
+            playback_loader=None,
+            playback_progress_reporter=None,
+            playback_stopper=None,
+        ):
+            raise RuntimeError("session failed")
+
+    saved = {"count": 0}
+    errors: list[str] = []
+    config = AppConfig(
+        last_active_window="player",
+        last_playback_mode="detail",
+        last_playback_vod_id="vod-1",
+    )
+    window = MainWindow(
+        browse_controller=RestoreBrowseController(),
+        history_controller=FakeStaticController(),
+        player_controller=FailingPlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("count", saved["count"] + 1),
+    )
+    qtbot.addWidget(window)
+    window.show_error = errors.append
+
+    window._start_restore_last_player()
+
+    qtbot.waitUntil(lambda: config.last_active_window == "main")
+    assert errors == ["session failed"]
+    assert saved["count"] >= 1
