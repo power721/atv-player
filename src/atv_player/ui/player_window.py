@@ -215,6 +215,7 @@ class PlayerWindow(QWidget):
         self.video_widget.customContextMenuRequested.connect(self._show_video_context_menu)
         self.video_widget.context_menu_requested.connect(self._show_video_context_menu_at_cursor)
         self.video_widget.context_menu_dismiss_requested.connect(self._dismiss_video_context_menu_at_cursor)
+        self.video_widget.playback_failed.connect(self._append_log)
         self.video = self.video_widget
         self.playlist = QListWidget()
         self.play_button = self._create_icon_button("play.svg", "播放/暂停", "Space")

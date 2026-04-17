@@ -269,6 +269,77 @@ def test_mpv_widget_emits_playback_finished_only_for_natural_end(qtbot, monkeypa
     assert finished["count"] == 1
 
 
+def test_mpv_widget_emits_playback_failed_with_reason_from_end_file_event(qtbot, monkeypatch) -> None:
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.play_calls: list[str] = []
+            self.pause = False
+            self._end_file_callback = None
+
+        def event_callback(self, *event_types):
+            assert event_types == ("end-file",)
+
+            def register(callback):
+                self._end_file_callback = callback
+                return callback
+
+            return register
+
+        def play(self, url: str) -> None:
+            self.play_calls.append(url)
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = FakePlayer()
+    monkeypatch.setattr(widget, "_create_player", lambda: player)
+    failures: list[str] = []
+    widget.playback_failed.connect(failures.append)
+
+    widget.load("http://m/1.m3u8")
+    player._end_file_callback(
+        types.SimpleNamespace(
+            data=types.SimpleNamespace(
+                reason=2,
+                error="HTTP 403 Forbidden",
+            )
+        )
+    )
+
+    assert failures == ["播放失败: HTTP 403 Forbidden"]
+
+
+def test_mpv_widget_emits_playback_failed_with_unknown_error_fallback(qtbot, monkeypatch) -> None:
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.play_calls: list[str] = []
+            self.pause = False
+            self._end_file_callback = None
+
+        def event_callback(self, *event_types):
+            assert event_types == ("end-file",)
+
+            def register(callback):
+                self._end_file_callback = callback
+                return callback
+
+            return register
+
+        def play(self, url: str) -> None:
+            self.play_calls.append(url)
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = FakePlayer()
+    monkeypatch.setattr(widget, "_create_player", lambda: player)
+    failures: list[str] = []
+    widget.playback_failed.connect(failures.append)
+
+    widget.load("http://m/1.m3u8")
+    player._end_file_callback(types.SimpleNamespace(data=types.SimpleNamespace(reason=2, error="")))
+
+    assert failures == ["播放失败: 未知错误"]
+
+
 def test_mpv_widget_registers_right_click_binding_and_emits_context_menu_requested(qtbot, monkeypatch) -> None:
     class FakePlayer:
         def __init__(self) -> None:
