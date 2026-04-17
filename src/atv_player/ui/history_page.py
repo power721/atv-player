@@ -253,6 +253,7 @@ class HistoryPage(QWidget):
         selection_model = self.table.selectionModel()
         has_selection = bool(selection_model is not None and selection_model.hasSelection())
         self.delete_button.setEnabled(has_selection)
+        self.clear_button.setEnabled(bool(self.records))
 
     def _handle_load_succeeded(
         self,
