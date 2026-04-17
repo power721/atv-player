@@ -1125,6 +1125,10 @@ class PlayerWindow(QWidget):
             self._subtitle_preference = SubtitlePreference()
             self._reset_subtitle_combo()
             return
+        remembered_main_subtitle_scale = self._main_subtitle_scale
+        remembered_secondary_subtitle_scale = self._secondary_subtitle_scale
+        remembered_main_subtitle_scale_supported = self._main_subtitle_scale_supported
+        remembered_secondary_subtitle_scale_supported = self._secondary_subtitle_scale_supported
         try:
             self._subtitle_tracks = self.video.subtitle_tracks()
         except Exception as exc:
@@ -1152,9 +1156,17 @@ class PlayerWindow(QWidget):
             )()
         )
         if self._main_subtitle_scale_supported and hasattr(self.video, "subtitle_scale"):
-            self._main_subtitle_scale = self.video.subtitle_scale()
+            current_main_subtitle_scale = self.video.subtitle_scale()
+            if remembered_main_subtitle_scale_supported:
+                self._main_subtitle_scale = remembered_main_subtitle_scale
+            else:
+                self._main_subtitle_scale = current_main_subtitle_scale
         if self._secondary_subtitle_scale_supported and hasattr(self.video, "secondary_subtitle_scale"):
-            self._secondary_subtitle_scale = self.video.secondary_subtitle_scale()
+            current_secondary_subtitle_scale = self.video.secondary_subtitle_scale()
+            if remembered_secondary_subtitle_scale_supported:
+                self._secondary_subtitle_scale = remembered_secondary_subtitle_scale
+            else:
+                self._secondary_subtitle_scale = current_secondary_subtitle_scale
         if not self._subtitle_tracks:
             self._subtitle_preference = SubtitlePreference()
             return
@@ -1180,6 +1192,16 @@ class PlayerWindow(QWidget):
                 self.video.set_secondary_subtitle_position(self._secondary_subtitle_position)
             except Exception as exc:
                 self._append_log(f"次字幕位置设置失败: {exc}")
+        if self._main_subtitle_scale_supported and hasattr(self.video, "set_subtitle_scale"):
+            try:
+                self.video.set_subtitle_scale(self._main_subtitle_scale)
+            except Exception as exc:
+                self._append_log(f"主字幕大小设置失败: {exc}")
+        if self._secondary_subtitle_scale_supported and hasattr(self.video, "set_secondary_subtitle_scale"):
+            try:
+                self.video.set_secondary_subtitle_scale(self._secondary_subtitle_scale)
+            except Exception as exc:
+                self._append_log(f"次字幕大小设置失败: {exc}")
 
     def _refresh_audio_state(self) -> None:
         if not hasattr(self.video, "audio_tracks") or not hasattr(self.video, "apply_audio_mode"):
