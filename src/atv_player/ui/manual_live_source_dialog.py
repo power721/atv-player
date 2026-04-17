@@ -99,6 +99,7 @@ class ManualLiveSourceDialog(QDialog):
         self.reload_entries()
 
     def reload_entries(self) -> None:
+        selected_entry_id = self._selected_entry_id()
         entries = self.manager.list_manual_entries(self.source_id)
         self.entry_table.setRowCount(len(entries))
         for row, entry in enumerate(entries):
@@ -108,6 +109,7 @@ class ManualLiveSourceDialog(QDialog):
             self.entry_table.setItem(row, 1, QTableWidgetItem(entry.channel_name))
             self.entry_table.setItem(row, 2, QTableWidgetItem(entry.stream_url))
             self.entry_table.setItem(row, 3, QTableWidgetItem(entry.logo_url))
+        self._restore_selection(selected_entry_id)
         self._sync_action_state()
 
     def _has_selection(self) -> bool:
@@ -147,6 +149,18 @@ class ManualLiveSourceDialog(QDialog):
         self.delete_button.setEnabled(has_selection)
         self.up_button.setEnabled(has_selection and row > 0)
         self.down_button.setEnabled(has_selection and row >= 0 and row < last_row)
+
+    def _restore_selection(self, entry_id: int | None) -> None:
+        self.entry_table.clearSelection()
+        self.entry_table.setCurrentCell(-1, -1)
+        if entry_id is None:
+            return
+        for row in range(self.entry_table.rowCount()):
+            item = self.entry_table.item(row, 0)
+            if item is None or int(item.data(256)) != entry_id:
+                continue
+            self.entry_table.selectRow(row)
+            return
 
     def _prompt_entry(
         self,
