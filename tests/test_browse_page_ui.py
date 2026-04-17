@@ -829,6 +829,26 @@ def test_search_page_shows_latest_async_resolve_error(qtbot) -> None:
     qtbot.waitUntil(lambda: page.status_label.text() == "打开失败", timeout=1000)
 
 
+def test_search_page_restores_result_count_after_resolve_unauthorized(qtbot) -> None:
+    class Controller:
+        def resolve_search_result(self, item: VodItem) -> str:
+            raise UnauthorizedError("登录已失效")
+
+    page = SearchPage(Controller())
+    qtbot.addWidget(page)
+    unauthorized = []
+    page.unauthorized.connect(lambda: unauthorized.append(True))
+    page._results = [VodItem(vod_id="movie-1", vod_name="电影1", type_name="阿里")]
+    page._filtered_results = list(page._results)
+    page._apply_filter()
+
+    page._open_selected(0, 0)
+
+    qtbot.waitUntil(lambda: unauthorized == [True], timeout=1000)
+
+    assert page.status_label.text() == "1 条结果"
+
+
 @pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 def test_search_page_ignores_async_search_result_after_widget_deletion(qtbot) -> None:
     controller = AsyncSearchController()
