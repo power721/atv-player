@@ -164,3 +164,21 @@ def test_custom_live_service_build_request_copies_channel_headers(tmp_path: Path
         "Referer": "https://site.example/",
         "Origin": "https://origin.example",
     }
+
+
+def test_custom_live_service_exposes_live_source_management_methods(tmp_path: Path) -> None:
+    repo = LiveSourceRepository(tmp_path / "app.db")
+    service = CustomLiveService(repo, http_client=FakeHttpClient())
+
+    service.add_remote_source("https://example.com/live.m3u", "远程源")
+    service.add_local_source("/tmp/local.m3u", "本地源")
+    manual = service.add_manual_source("手动源")
+
+    sources = [item for item in service.list_sources() if item.display_name in {"远程源", "本地源", "手动源"}]
+
+    assert [(item.source_type, item.source_value, item.display_name) for item in sources] == [
+        ("remote", "https://example.com/live.m3u", "远程源"),
+        ("local", "/tmp/local.m3u", "本地源"),
+        ("manual", "", "手动源"),
+    ]
+    assert service.list_manual_entries(manual.id) == []
