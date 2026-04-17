@@ -18,12 +18,12 @@ from atv_player.controllers.login_controller import LoginController
 from atv_player.controllers.player_controller import PlayerController
 from atv_player.controllers.telegram_search_controller import TelegramSearchController
 from atv_player.models import AppConfig
+from atv_player.paths import app_cache_dir, app_data_dir
 from atv_player.plugins import SpiderPluginLoader, SpiderPluginManager
 from atv_player.plugins.repository import SpiderPluginRepository
 from atv_player.storage import SettingsRepository
 from atv_player.ui.login_window import LoginWindow
 from atv_player.ui.main_window import MainWindow
-from atv_player.ui.poster_loader import poster_cache_dir
 
 POSTER_CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 
@@ -43,7 +43,9 @@ def _app_icon_path() -> Path:
 
 def purge_stale_poster_cache(now: float | None = None) -> None:
     cutoff = (now if now is not None else time.time()) - POSTER_CACHE_MAX_AGE_SECONDS
-    for entry in poster_cache_dir().iterdir():
+    cache_dir = app_cache_dir() / "posters"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    for entry in cache_dir.iterdir():
         try:
             if not entry.is_file():
                 continue
@@ -57,7 +59,7 @@ def build_application() -> tuple[QApplication, SettingsRepository]:
     app = QApplication([])
     app.setApplicationName("atv-player")
     app.setWindowIcon(QIcon(str(_app_icon_path())))
-    data_dir = Path.home() / ".local" / "share" / "atv-player"
+    data_dir = app_data_dir()
     repo = SettingsRepository(data_dir / "app.db")
     purge_stale_poster_cache()
     return app, repo
