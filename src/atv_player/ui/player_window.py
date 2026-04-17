@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import cast
 
 import httpx
+import shiboken6
 from PySide6.QtCore import QEvent, QObject, QSize, QTimer, Qt, Signal
 from PySide6.QtGui import (
     QActionGroup,
@@ -121,6 +122,11 @@ class _PosterLoadSignals(QObject):
     loaded = Signal(int, object)
 
 
+class _PlayItemResolveSignals(QObject):
+    succeeded = Signal(int, object)
+    failed = Signal(int, str)
+
+
 @dataclass(slots=True)
 class SubtitlePreference:
     mode: str = "auto"
@@ -146,6 +152,15 @@ class AudioPreference:
     lang: str = ""
     is_default: bool = False
     is_forced: bool = False
+
+
+@dataclass(slots=True)
+class _PendingPlayItemLoad:
+    index: int
+    previous_index: int
+    start_position_seconds: int
+    pause: bool
+    wait_for_load: bool
 
 
 class PlayerWindow(QWidget):
@@ -192,6 +207,8 @@ class PlayerWindow(QWidget):
         self._last_cursor_pos = None
         self._last_cursor_activity_ms = 0
         self._poster_request_id = 0
+        self._play_item_request_id = 0
+        self._pending_play_item_load: _PendingPlayItemLoad | None = None
         self._video_context_menu: QMenu | None = None
         self._last_video_context_menu_request_ms = 0
         self._last_video_context_menu_request_global_pos: tuple[int, int] | None = None
@@ -200,6 +217,9 @@ class PlayerWindow(QWidget):
         self.help_dialog: ShortcutHelpDialog | None = None
         self._poster_load_signals = _PosterLoadSignals(self)
         self._poster_load_signals.loaded.connect(self._handle_poster_load_finished)
+        self._play_item_resolve_signals = _PlayItemResolveSignals(self)
+        self._play_item_resolve_signals.succeeded.connect(self._handle_play_item_resolve_succeeded)
+        self._play_item_resolve_signals.failed.connect(self._handle_play_item_resolve_failed)
         self.setWindowTitle(self._default_window_title())
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
@@ -597,6 +617,7 @@ class PlayerWindow(QWidget):
         self._restore_video_cursor()
 
     def open_session(self, session, start_paused: bool = False) -> None:
+        self._invalidate_play_item_resolution()
         self.session = session
         self._render_poster()
         self._render_metadata()
@@ -648,19 +669,41 @@ class PlayerWindow(QWidget):
                     raise
         self.video.load(url, pause=pause, start_seconds=start_seconds)
 
-    def _prepare_current_play_item(self) -> None:
+    def _prepare_current_play_item(
+        self,
+        *,
+        previous_index: int,
+        start_position_seconds: int,
+        pause: bool,
+    ) -> bool:
         if self.session is None:
-            return
-        self._resolve_current_play_item()
+            return True
         current_item = self.session.playlist[self.current_index]
+        resolved_vod = self._resolve_current_play_item()
         if self.session.playback_loader is not None:
             self.session.playback_loader(current_item)
+        if current_item.url:
+            if resolved_vod is None and current_item.vod_id and self.session.detail_resolver is not None:
+                self._start_play_item_resolution(
+                    previous_index=previous_index,
+                    start_position_seconds=start_position_seconds,
+                    pause=pause,
+                    wait_for_load=False,
+                )
+            return True
+        if current_item.vod_id and self.session.detail_resolver is not None:
+            self._start_play_item_resolution(
+                previous_index=previous_index,
+                start_position_seconds=start_position_seconds,
+                pause=pause,
+                wait_for_load=True,
+            )
+            return False
+        return True
 
-    def _load_current_item(self, start_position_seconds: int = 0, pause: bool = False) -> None:
+    def _start_current_item_playback(self, start_position_seconds: int = 0, pause: bool = False) -> None:
         if self.session is None:
             return
-        self._clear_manual_subtitle_switch_refresh()
-        self._prepare_current_play_item()
         current_item = self.session.playlist[self.current_index]
         self._append_log(f"当前: {current_item.title}")
         self._append_log(f"URL: {current_item.url}")
@@ -681,6 +724,25 @@ class PlayerWindow(QWidget):
         self._apply_muted_state()
         self._refresh_subtitle_state()
         self._refresh_audio_state()
+
+    def _load_current_item(
+        self,
+        start_position_seconds: int = 0,
+        pause: bool = False,
+        *,
+        previous_index: int | None = None,
+    ) -> None:
+        if self.session is None:
+            return
+        self._invalidate_play_item_resolution()
+        self._clear_manual_subtitle_switch_refresh()
+        if not self._prepare_current_play_item(
+            previous_index=self.current_index if previous_index is None else previous_index,
+            start_position_seconds=start_position_seconds,
+            pause=pause,
+        ):
+            return
+        self._start_current_item_playback(start_position_seconds=start_position_seconds, pause=pause)
 
     def _format_metadata_text(self, vod) -> str:
         if getattr(vod, "detail_style", "") == "live":
@@ -722,13 +784,16 @@ class PlayerWindow(QWidget):
         self._render_poster()
         self._render_metadata()
 
-    def _resolve_current_play_item(self) -> None:
+    def _resolve_current_play_item(self) -> VodItem | None:
         if self.session is None:
-            return
+            return None
         current_item = self.session.playlist[self.current_index]
+        if not current_item.vod_id or current_item.vod_id not in self.session.resolved_vod_by_id:
+            return None
         resolved_vod = self.controller.resolve_play_item_detail(self.session, current_item)
         if resolved_vod is not None:
             self._apply_resolved_vod(resolved_vod)
+        return resolved_vod
 
     def _play_item_at_index(self, index: int, start_position_seconds: int = 0, pause: bool = False) -> None:
         if self.session is None:
@@ -737,12 +802,14 @@ class PlayerWindow(QWidget):
         self.current_index = index
         try:
             self.playlist.setCurrentRow(self.current_index)
-            self._load_current_item(start_position_seconds=start_position_seconds, pause=pause)
+            self._load_current_item(
+                start_position_seconds=start_position_seconds,
+                pause=pause,
+                previous_index=previous_index,
+            )
             self._refresh_window_title()
         except Exception:
-            self.current_index = previous_index
-            self.playlist.setCurrentRow(previous_index)
-            self._refresh_window_title()
+            self._restore_current_index(previous_index)
             raise
 
     def _clear_poster(self) -> None:
@@ -851,6 +918,89 @@ class PlayerWindow(QWidget):
             return
         self.config.last_player_paused = paused
         self._save_config()
+
+    def _is_window_alive(self) -> bool:
+        return shiboken6.isValid(self)
+
+    def _invalidate_play_item_resolution(self) -> None:
+        self._play_item_request_id += 1
+        self._pending_play_item_load = None
+
+    def _start_play_item_resolution(
+        self,
+        *,
+        previous_index: int,
+        start_position_seconds: int,
+        pause: bool,
+        wait_for_load: bool,
+    ) -> None:
+        if self.session is None:
+            return
+        session = self.session
+        current_item = session.playlist[self.current_index]
+        self._play_item_request_id += 1
+        request_id = self._play_item_request_id
+        self._pending_play_item_load = _PendingPlayItemLoad(
+            index=self.current_index,
+            previous_index=previous_index,
+            start_position_seconds=start_position_seconds,
+            pause=pause,
+            wait_for_load=wait_for_load,
+        )
+
+        def run() -> None:
+            try:
+                resolved_vod = self.controller.resolve_play_item_detail(session, current_item)
+            except Exception as exc:
+                if self._is_window_alive():
+                    self._play_item_resolve_signals.failed.emit(request_id, str(exc))
+                return
+            if not self._is_window_alive():
+                return
+            self._play_item_resolve_signals.succeeded.emit(request_id, resolved_vod)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _restore_current_index(self, previous_index: int) -> None:
+        self.current_index = previous_index
+        self.playlist.setCurrentRow(previous_index)
+        self._refresh_window_title()
+
+    def _handle_play_item_resolve_succeeded(self, request_id: int, resolved_vod: VodItem | None) -> None:
+        if request_id != self._play_item_request_id:
+            return
+        pending_load = self._pending_play_item_load
+        self._pending_play_item_load = None
+        if resolved_vod is not None:
+            self._apply_resolved_vod(resolved_vod)
+        if pending_load is None or not pending_load.wait_for_load:
+            return
+        if self.session is None or self.current_index != pending_load.index:
+            return
+        current_item = self.session.playlist[self.current_index]
+        if not current_item.url:
+            self._restore_current_index(pending_load.previous_index)
+            self._append_log(f"播放失败: 没有可用的播放地址: {current_item.title}")
+            return
+        try:
+            self._start_current_item_playback(
+                start_position_seconds=pending_load.start_position_seconds,
+                pause=pending_load.pause,
+            )
+        except Exception as exc:
+            self._restore_current_index(pending_load.previous_index)
+            self._append_log(f"播放失败: {exc}")
+
+    def _handle_play_item_resolve_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._play_item_request_id:
+            return
+        pending_load = self._pending_play_item_load
+        self._pending_play_item_load = None
+        if pending_load is not None and pending_load.wait_for_load:
+            self._restore_current_index(pending_load.previous_index)
+            self._append_log(f"播放失败: {message}")
+            return
+        self._append_log(f"详情加载失败: {message}")
 
     def _attempt_resume_seek(self, seconds: int, retries_remaining: int) -> None:
         if hasattr(self.video, "can_seek") and not self.video.can_seek():
@@ -1818,6 +1968,7 @@ class PlayerWindow(QWidget):
 
     def _quit_application(self) -> None:
         self._quit_requested = True
+        self._invalidate_play_item_resolution()
         self.report_progress()
         self._stop_current_playback()
         if self.config is not None:
@@ -1845,6 +1996,7 @@ class PlayerWindow(QWidget):
         self.help_dialog = None
 
     def _return_to_main(self) -> None:
+        self._invalidate_play_item_resolution()
         try:
             self.video.pause()
         except Exception:
@@ -1934,6 +2086,7 @@ class PlayerWindow(QWidget):
     def closeEvent(self, event: QCloseEvent) -> None:
         try:
             self._poster_request_id += 1
+            self._invalidate_play_item_resolution()
             self._video_surface_ready = False
             self.report_progress()
             self._stop_current_playback()

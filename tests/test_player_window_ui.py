@@ -1,3 +1,6 @@
+import threading
+import time
+
 from PySide6.QtCore import QByteArray, QEvent, QObject, QRect, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QImage, QKeyEvent, QMouseEvent, QPixmap, QWindow
 from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QMenu, QTableWidget, QWidget
@@ -120,6 +123,14 @@ def make_player_session(start_index: int = 1, speed: float = 1.0) -> PlayerSessi
 def send_key(window: PlayerWindow, key: int, modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier, text: str = "") -> None:
     QApplication.sendEvent(window, QKeyEvent(QEvent.Type.KeyPress, key, modifiers, text))
     QApplication.sendEvent(window, QKeyEvent(QEvent.Type.KeyRelease, key, modifiers, text))
+
+
+def release_event_after(delay_seconds: float, event: threading.Event) -> None:
+    def run() -> None:
+        time.sleep(delay_seconds)
+        event.set()
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 def _submenu_actions(menu: QMenu, title: str) -> list[QAction]:
@@ -3846,7 +3857,7 @@ def test_player_window_play_next_resolves_target_episode_before_loading(qtbot) -
     window.video = FakeVideo()
     session = make_player_session(start_index=0)
     session.playlist = [
-        PlayItem(title="Episode 1", url="http://m/1.m3u8", vod_id="ep-1"),
+        PlayItem(title="Episode 1", url="http://m/1.m3u8"),
         PlayItem(title="Episode 2", url="", vod_id="ep-2"),
     ]
     session.detail_resolver = lambda item: resolved_vod
@@ -3855,8 +3866,8 @@ def test_player_window_play_next_resolves_target_episode_before_loading(qtbot) -
 
     window.play_next()
 
+    qtbot.waitUntil(lambda: window.video.load_calls == [("http://resolved/2.m3u8", 0)])
     assert window.current_index == 1
-    assert window.video.load_calls == [("http://resolved/2.m3u8", 0)]
     assert "resolved episode content" in window.metadata_view.toPlainText()
 
 
@@ -3877,7 +3888,7 @@ def test_player_window_reuses_cached_detail_when_returning_to_same_episode(qtbot
     window.video = RecordingVideo()
     session = make_player_session(start_index=0)
     session.playlist = [
-        PlayItem(title="Episode 1", url="", vod_id="ep-1"),
+        PlayItem(title="Episode 1", url="http://m/1.m3u8"),
         PlayItem(title="Episode 2", url="", vod_id="ep-2"),
     ]
     session.detail_resolver = detail_resolver
@@ -3886,6 +3897,7 @@ def test_player_window_reuses_cached_detail_when_returning_to_same_episode(qtbot
     window.video.load_calls.clear()
 
     window.play_next()
+    qtbot.waitUntil(lambda: ("http://resolved/ep-2.m3u8", 0) in window.video.load_calls)
     window.play_previous()
     window.play_next()
 
@@ -3910,7 +3922,7 @@ def test_player_window_keeps_current_index_when_next_episode_detail_resolution_f
     window.video = RecordingVideo()
     session = make_player_session(start_index=0)
     session.playlist = [
-        PlayItem(title="Episode 1", url="", vod_id="ep-1"),
+        PlayItem(title="Episode 1", url="http://m/1.m3u8"),
         PlayItem(title="Episode 2", url="", vod_id="ep-2"),
     ]
     session.detail_resolver = detail_resolver
@@ -3919,7 +3931,81 @@ def test_player_window_keeps_current_index_when_next_episode_detail_resolution_f
 
     window.play_next()
 
+    qtbot.waitUntil(lambda: "播放失败: detail failed" in window.log_view.toPlainText())
     assert window.current_index == 0
+    assert window.video.load_calls == []
+    assert "播放失败: detail failed" in window.log_view.toPlainText()
+
+
+def test_player_window_play_next_resolves_target_episode_without_blocking_ui(qtbot) -> None:
+    controller = RecordingPlayerController()
+    release_resolution = threading.Event()
+    resolved_vod = VodItem(
+        vod_id="ep-2",
+        vod_name="Resolved Episode 2",
+        vod_content="resolved episode content",
+        items=[PlayItem(title="Episode 2", url="http://resolved/2.m3u8", vod_id="ep-2")],
+    )
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = make_player_session(start_index=0)
+    session.playlist = [
+        PlayItem(title="Episode 1", url="http://m/1.m3u8"),
+        PlayItem(title="Episode 2", url="", vod_id="ep-2"),
+    ]
+
+    def detail_resolver(item: PlayItem) -> VodItem:
+        release_resolution.wait(timeout=1.0)
+        return resolved_vod
+
+    session.detail_resolver = detail_resolver
+    window.open_session(session)
+    window.video.load_calls.clear()
+    release_event_after(0.2, release_resolution)
+
+    started_at = time.perf_counter()
+    window.play_next()
+    elapsed_seconds = time.perf_counter() - started_at
+
+    assert elapsed_seconds < 0.1
+    assert window.current_index == 1
+    assert window.video.load_calls == []
+
+    qtbot.waitUntil(lambda: window.video.load_calls == [("http://resolved/2.m3u8", 0)])
+    assert "resolved episode content" in window.metadata_view.toPlainText()
+
+
+def test_player_window_reverts_index_after_async_detail_resolution_failure(qtbot) -> None:
+    controller = RecordingPlayerController()
+    release_resolution = threading.Event()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = make_player_session(start_index=0)
+    session.playlist = [
+        PlayItem(title="Episode 1", url="http://m/1.m3u8"),
+        PlayItem(title="Episode 2", url="", vod_id="ep-2"),
+    ]
+
+    def detail_resolver(item: PlayItem) -> VodItem:
+        release_resolution.wait(timeout=1.0)
+        raise RuntimeError("detail failed")
+
+    session.detail_resolver = detail_resolver
+    window.open_session(session)
+    window.video.load_calls.clear()
+    release_event_after(0.2, release_resolution)
+
+    started_at = time.perf_counter()
+    window.play_next()
+    elapsed_seconds = time.perf_counter() - started_at
+
+    assert elapsed_seconds < 0.1
+    assert window.current_index == 1
+
+    qtbot.waitUntil(lambda: window.current_index == 0)
+    assert window.playlist.currentRow() == 0
     assert window.video.load_calls == []
     assert "播放失败: detail failed" in window.log_view.toPlainText()
 
