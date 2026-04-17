@@ -90,11 +90,14 @@ class MpvWidget(QWidget):
             event_data = getattr(event, "data", None)
             if event_data is None:
                 return
+            reason = getattr(event_data, "reason", None)
             eof_reason = getattr(type(event_data), "EOF", 0)
-            if getattr(event_data, "reason", None) == eof_reason:
+            if reason == eof_reason:
                 self.playback_finished.emit()
                 return
-            self.playback_failed.emit(self._format_end_file_failure_message(event_data))
+            error_reason = getattr(type(event_data), "ERROR", 4)
+            if reason == error_reason:
+                self.playback_failed.emit(self._format_end_file_failure_message(event_data))
 
         self._end_file_handler = handle_end_file
         observe_property = getattr(self._player, "observe_property", None)

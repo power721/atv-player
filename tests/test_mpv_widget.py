@@ -299,13 +299,45 @@ def test_mpv_widget_emits_playback_failed_with_reason_from_end_file_event(qtbot,
     player._end_file_callback(
         types.SimpleNamespace(
             data=types.SimpleNamespace(
-                reason=2,
+                reason=4,
                 error="HTTP 403 Forbidden",
             )
         )
     )
 
     assert failures == ["播放失败: HTTP 403 Forbidden"]
+
+
+def test_mpv_widget_does_not_treat_aborted_end_file_as_failure(qtbot, monkeypatch) -> None:
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.play_calls: list[str] = []
+            self.pause = False
+            self._end_file_callback = None
+
+        def event_callback(self, *event_types):
+            assert event_types == ("end-file",)
+
+            def register(callback):
+                self._end_file_callback = callback
+                return callback
+
+            return register
+
+        def play(self, url: str) -> None:
+            self.play_calls.append(url)
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = FakePlayer()
+    monkeypatch.setattr(widget, "_create_player", lambda: player)
+    failures: list[str] = []
+    widget.playback_failed.connect(failures.append)
+
+    widget.load("http://m/1.m3u8")
+    player._end_file_callback(types.SimpleNamespace(data=types.SimpleNamespace(reason=2, error="")))
+
+    assert failures == []
 
 
 def test_mpv_widget_emits_playback_failed_with_unknown_error_fallback(qtbot, monkeypatch) -> None:
@@ -335,7 +367,7 @@ def test_mpv_widget_emits_playback_failed_with_unknown_error_fallback(qtbot, mon
     widget.playback_failed.connect(failures.append)
 
     widget.load("http://m/1.m3u8")
-    player._end_file_callback(types.SimpleNamespace(data=types.SimpleNamespace(reason=2, error="")))
+    player._end_file_callback(types.SimpleNamespace(data=types.SimpleNamespace(reason=4, error="")))
 
     assert failures == ["播放失败: 未知错误"]
 
