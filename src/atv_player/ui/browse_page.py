@@ -104,6 +104,12 @@ class _SearchSignals(QObject):
     unauthorized = Signal(int)
 
 
+class _FolderLoadSignals(QObject):
+    succeeded = Signal(int, str, int, int, object, int)
+    failed = Signal(int, str, int, int, str)
+    unauthorized = Signal(int)
+
+
 class BrowsePage(QWidget):
     open_requested = Signal(object)
     unauthorized = Signal()
@@ -153,7 +159,12 @@ class BrowsePage(QWidget):
         self._sortable_columns = {1, 2, 3, 4, 5}
         self._sorted_column: int | None = None
         self._sort_order = Qt.SortOrder.AscendingOrder
+        self._folder_request_id = 0
         self._search_request_id = 0
+        self._folder_signals = _FolderLoadSignals(self)
+        self._folder_signals.succeeded.connect(self._handle_folder_load_succeeded)
+        self._folder_signals.failed.connect(self._handle_folder_load_failed)
+        self._folder_signals.unauthorized.connect(self._handle_folder_load_unauthorized)
         self._search_signals = _SearchSignals(self)
         self._search_signals.succeeded.connect(self._handle_search_succeeded)
         self._search_signals.failed.connect(self._handle_search_failed)
@@ -259,23 +270,8 @@ class BrowsePage(QWidget):
             self._sync_page_size_combo()
         self.current_path = target_path
         self._update_breadcrumbs()
-        try:
-            items, total = self.controller.load_folder(
-                self.current_path,
-                page=self.current_page,
-                size=self.page_size,
-            )
-        except UnauthorizedError:
-            self.unauthorized.emit()
-            return
-        except ApiError as exc:
-            self._set_breadcrumb_status(str(exc))
-            return
-        self.total_items = total
-        self._page_state_by_path[self.current_path] = (self.current_page, self.page_size)
-        self.current_items = items
-        self._populate_table(items)
-        self._update_pagination_controls()
+        request_id = self._start_folder_load(self.current_path, self.current_page, self.page_size)
+        self._folder_request_id = request_id
 
     def reload(self) -> None:
         self.load_path(self.current_path)
@@ -478,6 +474,62 @@ class BrowsePage(QWidget):
         if request_id != self._search_request_id:
             return
         self._set_search_loading(False)
+        self.unauthorized.emit()
+
+    def _start_folder_load(self, path: str, page: int, size: int) -> int:
+        self._folder_request_id += 1
+        request_id = self._folder_request_id
+
+        def run() -> None:
+            try:
+                items, total = self.controller.load_folder(path, page=page, size=size)
+            except UnauthorizedError:
+                self._folder_signals.unauthorized.emit(request_id)
+                return
+            except ApiError as exc:
+                self._folder_signals.failed.emit(request_id, path, page, size, str(exc))
+                return
+            self._folder_signals.succeeded.emit(request_id, path, page, size, items, total)
+
+        threading.Thread(target=run, daemon=True).start()
+        return request_id
+
+    def _handle_folder_load_succeeded(
+        self,
+        request_id: int,
+        path: str,
+        page: int,
+        size: int,
+        items: list[VodItem],
+        total: int,
+    ) -> None:
+        if request_id != self._folder_request_id:
+            return
+        if path != self.current_path or page != self.current_page or size != self.page_size:
+            return
+        self.total_items = total
+        self._page_state_by_path[self.current_path] = (self.current_page, self.page_size)
+        self.current_items = items
+        self._populate_table(items)
+        self._update_pagination_controls()
+
+    def _handle_folder_load_failed(
+        self,
+        request_id: int,
+        path: str,
+        page: int,
+        size: int,
+        message: str,
+    ) -> None:
+        if request_id != self._folder_request_id:
+            return
+        if path != self.current_path or page != self.current_page or size != self.page_size:
+            return
+        self._set_breadcrumb_status(message)
+
+    def _handle_folder_load_unauthorized(self, request_id: int) -> None:
+        if request_id != self._folder_request_id:
+            return
         self.unauthorized.emit()
 
     def _populate_table(self, items: list[VodItem]) -> None:

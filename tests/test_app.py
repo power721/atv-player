@@ -1376,6 +1376,10 @@ def test_app_coordinator_show_main_keeps_window_open_when_initial_browse_times_o
     window.nav_tabs.setCurrentWidget(window.browse_page)
 
     assert isinstance(window, MainWindow)
+    qtbot.waitUntil(
+        lambda: window.browse_page.breadcrumb_layout.itemAt(0).widget().text() == "/电影 | 加载文件列表超时",
+        timeout=1000,
+    )
     status_widget = window.browse_page.breadcrumb_layout.itemAt(0).widget()
     assert status_widget.text() == "/电影 | 加载文件列表超时"
 

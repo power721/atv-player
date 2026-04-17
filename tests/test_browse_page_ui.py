@@ -66,6 +66,48 @@ class RecordingSearchController(FakeBrowseController):
         return []
 
 
+class AsyncBrowseController(FakeBrowseController):
+    def __init__(self) -> None:
+        super().__init__()
+        self._main_thread_id = threading.get_ident()
+        self._events_by_request: dict[tuple[str, int, int], list[threading.Event]] = {}
+        self._results_by_request: dict[tuple[str, int, int], tuple[list[VodItem], int]] = {}
+
+    def load_folder(self, path: str, page: int = 1, size: int = 50):
+        self.loaded_paths.append(path)
+        self.load_calls.append((path, page, size))
+        assert threading.get_ident() != self._main_thread_id
+        key = (path, page, size)
+        event = threading.Event()
+        self._events_by_request.setdefault(key, []).append(event)
+        assert event.wait(timeout=5), f"folder load for {key!r} was never released"
+        return self._results_by_request.get(key, ([], 0))
+
+    def finish(self, path: str, *, page: int = 1, size: int = 50, items: list[VodItem], total: int) -> None:
+        key = (path, page, size)
+        self._results_by_request[key] = (items, total)
+        self._events_by_request[key].pop(0).set()
+
+
+def _wait_for_folder_load(qtbot, controller: FakeBrowseController, path: str, page: int = 1, size: int = 50) -> None:
+    qtbot.waitUntil(lambda: (path, page, size) in controller.load_calls, timeout=1000)
+
+
+def _wait_for_folder_result(
+    qtbot,
+    page: BrowsePage,
+    controller: FakeBrowseController,
+    path: str,
+    page_number: int = 1,
+    size: int = 50,
+) -> None:
+    _wait_for_folder_load(qtbot, controller, path, page_number, size)
+    qtbot.waitUntil(
+        lambda: page._page_state_by_path.get(path) == (page_number, size) and page.total_items == controller.total,
+        timeout=1000,
+    )
+
+
 def test_browse_page_uses_split_view_for_search_and_file_list(qtbot) -> None:
     page = BrowsePage(FakeBrowseController())
     qtbot.addWidget(page)
@@ -201,6 +243,7 @@ def test_browse_page_breadcrumb_click_loads_target_folder(qtbot) -> None:
     page.show()
 
     page.load_path("/电影/国产/动作")
+    _wait_for_folder_result(qtbot, page, controller, "/电影/国产/动作")
 
     assert [button.text() for button in page.breadcrumb_buttons] == ["🏠首页", "电影", "国产", "动作"]
 
@@ -217,10 +260,55 @@ def test_browse_page_shows_folder_timeout_in_breadcrumb_status(qtbot) -> None:
     qtbot.addWidget(page)
 
     page.load_path("/电影")
+    qtbot.waitUntil(
+        lambda: page.breadcrumb_layout.count() > 0
+        and page.breadcrumb_layout.itemAt(0).widget() is not None
+        and page.breadcrumb_layout.itemAt(0).widget().text() == "/电影 | 加载文件列表超时",
+        timeout=1000,
+    )
 
     status_widget = page.breadcrumb_layout.itemAt(0).widget()
     assert status_widget.text() == "/电影 | 加载文件列表超时"
     assert page.table.rowCount() == 0
+
+
+def test_browse_page_loads_folders_outside_the_main_thread(qtbot) -> None:
+    controller = AsyncBrowseController()
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+    page.show()
+
+    page.load_path("/电影")
+
+    _wait_for_folder_load(qtbot, controller, "/电影")
+    controller.finish("/电影", items=[VodItem(vod_id="movie-1", vod_name="电影A", type=2)], total=1)
+
+    qtbot.waitUntil(lambda: page.table.rowCount() == 1, timeout=1000)
+
+    assert page.table.item(0, 1).text() == "电影A"
+    assert page.current_path == "/电影"
+
+
+def test_browse_page_uses_latest_async_folder_result(qtbot) -> None:
+    controller = AsyncBrowseController()
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+    page.show()
+
+    page.load_path("/电影")
+    _wait_for_folder_load(qtbot, controller, "/电影")
+
+    page.load_path("/剧集")
+    _wait_for_folder_load(qtbot, controller, "/剧集")
+
+    controller.finish("/剧集", items=[VodItem(vod_id="show-1", vod_name="剧集B", type=2)], total=1)
+    qtbot.waitUntil(lambda: page.table.rowCount() == 1 and page.table.item(0, 1).text() == "剧集B", timeout=1000)
+
+    controller.finish("/电影", items=[VodItem(vod_id="movie-1", vod_name="电影A", type=2)], total=1)
+    qtbot.wait(100)
+
+    assert page.table.item(0, 1).text() == "剧集B"
+    assert page.current_path == "/剧集"
 
 
 def test_browse_page_shows_size_dbid_and_rating_columns(qtbot) -> None:
@@ -555,9 +643,11 @@ def test_browse_page_loads_selected_page_and_page_size(qtbot) -> None:
 
     page.page_size_combo.setCurrentText("30")
     page.load_path("/电影")
+    _wait_for_folder_result(qtbot, page, controller, "/电影", 1, 30)
     controller.load_calls.clear()
 
     page.next_page()
+    _wait_for_folder_result(qtbot, page, controller, "/电影", 2, 30)
 
     assert controller.load_calls[-1] == ("/电影", 2, 30)
     assert page.page_label.text() == "第 2 / 4 页"
@@ -569,8 +659,11 @@ def test_browse_page_resets_to_first_page_for_new_path(qtbot) -> None:
     qtbot.addWidget(page)
 
     page.load_path("/电影")
+    _wait_for_folder_result(qtbot, page, controller, "/电影")
     page.next_page()
+    _wait_for_folder_result(qtbot, page, controller, "/电影", 2, 50)
     page.load_path("/剧集")
+    _wait_for_folder_result(qtbot, page, controller, "/剧集", 1, 50)
 
     assert controller.load_calls[-1] == ("/剧集", 1, 50)
     assert page.current_page == 1
@@ -583,9 +676,13 @@ def test_browse_page_remembers_page_state_per_path(qtbot) -> None:
 
     page.page_size_combo.setCurrentText("30")
     page.load_path("/电影")
+    _wait_for_folder_result(qtbot, page, controller, "/电影", 1, 30)
     page.next_page()
+    _wait_for_folder_result(qtbot, page, controller, "/电影", 2, 30)
     page.load_path("/剧集")
+    _wait_for_folder_result(qtbot, page, controller, "/剧集", 1, 30)
     page.load_path("/电影")
+    _wait_for_folder_result(qtbot, page, controller, "/电影", 2, 30)
 
     assert controller.load_calls[-1] == ("/电影", 2, 30)
     assert page.current_page == 2
@@ -599,6 +696,7 @@ def test_browse_page_disables_prev_and_next_when_unavailable(qtbot) -> None:
 
     page.page_size_combo.setCurrentText("30")
     page.load_path("/电影")
+    _wait_for_folder_result(qtbot, page, controller, "/电影", 1, 30)
 
     assert page.prev_page_button.isEnabled() is False
     assert page.next_page_button.isEnabled() is False
@@ -763,10 +861,13 @@ def test_browse_page_refresh_reuses_current_page_state(qtbot) -> None:
 
     page.page_size_combo.setCurrentText("30")
     page.load_path("/电影")
+    _wait_for_folder_result(qtbot, page, controller, "/电影", 1, 30)
     page.next_page()
+    _wait_for_folder_result(qtbot, page, controller, "/电影", 2, 30)
     controller.load_calls.clear()
 
     page.reload()
+    _wait_for_folder_result(qtbot, page, controller, "/电影", 2, 30)
 
     assert controller.load_calls == [("/电影", 2, 30)]
 
