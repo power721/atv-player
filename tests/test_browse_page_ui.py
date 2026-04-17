@@ -4,7 +4,7 @@ import pytest
 from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QSplitter, QTableWidgetItem
 
-from atv_player.api import ApiError
+from atv_player.api import ApiError, UnauthorizedError
 from atv_player.models import AppConfig, HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
 from atv_player.ui.browse_page import BrowsePage
 from atv_player.ui.history_page import HistoryPage
@@ -739,6 +739,28 @@ def test_search_page_updates_status_count_after_filtering(qtbot) -> None:
 
     assert page.results_table.rowCount() == 1
     assert page.status_label.text() == "1 条结果"
+
+
+def test_search_page_clears_loading_status_after_unauthorized(qtbot) -> None:
+    class Controller:
+        def search(self, keyword: str):
+            raise UnauthorizedError("登录已失效")
+
+    page = SearchPage(Controller())
+    qtbot.addWidget(page)
+    unauthorized = []
+    page.unauthorized.connect(lambda: unauthorized.append(True))
+    page.keyword_edit.setText("霸王别姬")
+
+    page.search()
+
+    qtbot.waitUntil(lambda: unauthorized == [True], timeout=1000)
+
+    assert page.keyword_edit.isEnabled() is True
+    assert page.search_button.isEnabled() is True
+    assert page.filter_combo.isEnabled() is True
+    assert page.clear_button.isEnabled() is True
+    assert page.status_label.text() == ""
 
 
 def test_search_page_resolves_selected_result_outside_main_thread(qtbot) -> None:

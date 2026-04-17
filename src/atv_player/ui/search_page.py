@@ -200,6 +200,7 @@ class SearchPage(QWidget):
         if request_id != self._search_request_id:
             return
         self._set_search_loading(False)
+        self.status_label.clear()
         self.unauthorized.emit()
 
     def _handle_resolve_succeeded(self, request_id: int, path: str) -> None:
