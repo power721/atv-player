@@ -10,9 +10,9 @@ def test_live_source_repository_inserts_default_example_source(tmp_path: Path) -
     sources = repo.list_sources()
 
     assert len(sources) == 1
-    assert sources[0].display_name == "IPTV"
+    assert sources[0].display_name == "咪咕"
     assert sources[0].source_type == "remote"
-    assert sources[0].source_value == "https://gh.llkk.cc/https://raw.githubusercontent.com/Kimentanm/aptv/master/m3u/iptv.m3u"
+    assert sources[0].source_value == "https://develop202.github.io/migu_video/interface.txt"
     assert sources[0].enabled is True
     assert sources[0].is_default is True
 

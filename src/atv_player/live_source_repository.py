@@ -5,8 +5,8 @@ from pathlib import Path
 
 from atv_player.models import LiveSourceConfig, LiveSourceEntry
 
-_DEFAULT_SOURCE_NAME = "IPTV"
-_DEFAULT_SOURCE_URL = "https://gh.llkk.cc/https://raw.githubusercontent.com/Kimentanm/aptv/master/m3u/iptv.m3u"
+_DEFAULT_SOURCE_NAME = "咪咕"
+_DEFAULT_SOURCE_URL = "https://develop202.github.io/migu_video/interface.txt"
 
 
 class LiveSourceRepository:
