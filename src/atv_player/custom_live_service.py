@@ -26,6 +26,9 @@ class CustomLiveService:
     def list_sources(self):
         return self._repository.list_sources()
 
+    def set_source_enabled(self, source_id: int, enabled: bool) -> None:
+        self._repository.set_source_enabled(source_id, enabled)
+
     def load_categories(self) -> list[DoubanCategory]:
         return [
             DoubanCategory(type_id=f"custom:{item.id}", type_name=item.display_name)

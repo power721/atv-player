@@ -42,6 +42,7 @@ class LiveSourceManagerDialog(QDialog):
         self.add_remote_button = QPushButton("添加远程源")
         self.add_local_button = QPushButton("添加本地源")
         self.add_manual_button = QPushButton("添加手动源")
+        self.toggle_button = QPushButton("启用/禁用")
         self.manage_channels_button = QPushButton("管理频道")
         self.refresh_button = QPushButton("刷新")
         actions = QHBoxLayout()
@@ -49,6 +50,7 @@ class LiveSourceManagerDialog(QDialog):
             self.add_remote_button,
             self.add_local_button,
             self.add_manual_button,
+            self.toggle_button,
             self.manage_channels_button,
             self.refresh_button,
         ):
@@ -59,6 +61,7 @@ class LiveSourceManagerDialog(QDialog):
         self.add_remote_button.clicked.connect(self._add_remote_source)
         self.add_local_button.clicked.connect(self._add_local_source)
         self.add_manual_button.clicked.connect(self._add_manual_source)
+        self.toggle_button.clicked.connect(self._toggle_selected_enabled)
         self.refresh_button.clicked.connect(self._refresh_selected)
         self.source_table.itemSelectionChanged.connect(self._sync_action_state)
         self.reload_sources()
@@ -136,6 +139,15 @@ class LiveSourceManagerDialog(QDialog):
         if not display_name:
             return
         self.manager.add_manual_source(display_name)
+        self.reload_sources()
+
+    def _toggle_selected_enabled(self) -> None:
+        source_id = self._selected_source_id()
+        if source_id is None:
+            return
+        row = self.source_table.currentRow()
+        enabled_text = self.source_table.item(row, 3).text()
+        self.manager.set_source_enabled(source_id, enabled_text != "是")
         self.reload_sources()
 
     def _refresh_selected(self) -> None:
