@@ -38,6 +38,8 @@ class FakeLiveSourceManager:
         self.add_remote_calls = []
         self.add_local_calls = []
         self.add_manual_calls = []
+        self.rename_calls = []
+        self.delete_calls = []
         self.toggle_calls = []
         self.refresh_calls = []
 
@@ -52,6 +54,12 @@ class FakeLiveSourceManager:
 
     def add_manual_source(self, display_name: str):
         self.add_manual_calls.append(display_name)
+
+    def rename_source(self, source_id: int, display_name: str):
+        self.rename_calls.append((source_id, display_name))
+
+    def delete_source(self, source_id: int):
+        self.delete_calls.append(source_id)
 
     def refresh_source(self, source_id: int):
         self.refresh_calls.append(source_id)
@@ -117,6 +125,45 @@ def test_live_source_manager_dialog_toggle_enables_disabled_source(qtbot) -> Non
     dialog._toggle_selected_enabled()
 
     assert manager.toggle_calls == [(1, True)]
+
+
+def test_live_source_manager_dialog_disables_rename_and_delete_without_selection(qtbot) -> None:
+    manager = FakeLiveSourceManager()
+    dialog = LiveSourceManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog.source_table.clearSelection()
+    dialog._sync_action_state()
+
+    assert dialog.rename_button.isEnabled() is False
+    assert dialog.delete_button.isEnabled() is False
+
+
+def test_live_source_manager_dialog_renames_selected_source(qtbot, monkeypatch) -> None:
+    manager = FakeLiveSourceManager()
+    dialog = LiveSourceManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.source_table.selectRow(0)
+    monkeypatch.setattr(dialog, "_prompt_rename_source", lambda current: "新的名称")
+
+    dialog._rename_selected()
+
+    assert manager.rename_calls == [(1, "新的名称")]
+
+
+def test_live_source_manager_dialog_deletes_selected_source_after_confirmation(qtbot, monkeypatch) -> None:
+    manager = FakeLiveSourceManager()
+    dialog = LiveSourceManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.source_table.selectRow(0)
+    monkeypatch.setattr(dialog, "_confirm_delete_source", lambda name: True)
+
+    dialog._delete_selected()
+
+    assert manager.delete_calls == [1]
 
 
 def test_manual_live_source_dialog_renders_existing_channels(qtbot) -> None:

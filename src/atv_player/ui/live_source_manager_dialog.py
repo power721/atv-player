@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QHBoxLayout,
     QInputDialog,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -42,6 +43,8 @@ class LiveSourceManagerDialog(QDialog):
         self.add_remote_button = QPushButton("添加远程源")
         self.add_local_button = QPushButton("添加本地源")
         self.add_manual_button = QPushButton("添加手动源")
+        self.rename_button = QPushButton("重命名")
+        self.delete_button = QPushButton("删除")
         self.toggle_button = QPushButton("启用/禁用")
         self.manage_channels_button = QPushButton("管理频道")
         self.refresh_button = QPushButton("刷新")
@@ -50,6 +53,8 @@ class LiveSourceManagerDialog(QDialog):
             self.add_remote_button,
             self.add_local_button,
             self.add_manual_button,
+            self.rename_button,
+            self.delete_button,
             self.toggle_button,
             self.manage_channels_button,
             self.refresh_button,
@@ -61,6 +66,8 @@ class LiveSourceManagerDialog(QDialog):
         self.add_remote_button.clicked.connect(self._add_remote_source)
         self.add_local_button.clicked.connect(self._add_local_source)
         self.add_manual_button.clicked.connect(self._add_manual_source)
+        self.rename_button.clicked.connect(self._rename_selected)
+        self.delete_button.clicked.connect(self._delete_selected)
         self.toggle_button.clicked.connect(self._toggle_selected_enabled)
         self.refresh_button.clicked.connect(self._refresh_selected)
         self.source_table.itemSelectionChanged.connect(self._sync_action_state)
@@ -81,6 +88,8 @@ class LiveSourceManagerDialog(QDialog):
         self._sync_action_state()
 
     def _selected_source_id(self) -> int | None:
+        if not self._has_selection():
+            return None
         row = self.source_table.currentRow()
         if row < 0:
             return None
@@ -90,6 +99,8 @@ class LiveSourceManagerDialog(QDialog):
         return int(item.data(256))
 
     def _selected_source_type(self) -> str:
+        if not self._has_selection():
+            return ""
         row = self.source_table.currentRow()
         if row < 0:
             return ""
@@ -98,8 +109,24 @@ class LiveSourceManagerDialog(QDialog):
             return ""
         return str(item.data(257) or "")
 
+    def _selected_source_name(self) -> str:
+        if not self._has_selection():
+            return ""
+        row = self.source_table.currentRow()
+        if row < 0:
+            return ""
+        item = self.source_table.item(row, 0)
+        return item.text() if item is not None else ""
+
+    def _has_selection(self) -> bool:
+        selection_model = self.source_table.selectionModel()
+        return bool(selection_model is not None and selection_model.hasSelection())
+
     def _sync_action_state(self) -> None:
+        has_selection = self._has_selection()
         source_type = self._selected_source_type()
+        self.rename_button.setEnabled(has_selection)
+        self.delete_button.setEnabled(has_selection)
         self.manage_channels_button.setEnabled(source_type == "manual")
 
     def _prompt_remote_source(self) -> tuple[str, str]:
@@ -120,6 +147,20 @@ class LiveSourceManagerDialog(QDialog):
         display_name, accepted = QInputDialog.getText(self, "添加手动源", "显示名称")
         return display_name.strip() if accepted else ""
 
+    def _prompt_rename_source(self, current_name: str) -> str:
+        display_name, accepted = QInputDialog.getText(self, "重命名直播源", "显示名称", text=current_name)
+        return display_name.strip() if accepted else ""
+
+    def _confirm_delete_source(self, source_name: str) -> bool:
+        return (
+            QMessageBox.question(
+                self,
+                "删除直播源",
+                f"确定删除直播源“{source_name}”吗？",
+            )
+            == QMessageBox.StandardButton.Yes
+        )
+
     def _add_remote_source(self) -> None:
         url, display_name = self._prompt_remote_source()
         if not url or not display_name:
@@ -139,6 +180,26 @@ class LiveSourceManagerDialog(QDialog):
         if not display_name:
             return
         self.manager.add_manual_source(display_name)
+        self.reload_sources()
+
+    def _rename_selected(self) -> None:
+        source_id = self._selected_source_id()
+        if source_id is None:
+            return
+        display_name = self._prompt_rename_source(self._selected_source_name())
+        if not display_name:
+            return
+        self.manager.rename_source(source_id, display_name)
+        self.reload_sources()
+
+    def _delete_selected(self) -> None:
+        source_id = self._selected_source_id()
+        if source_id is None:
+            return
+        source_name = self._selected_source_name()
+        if not self._confirm_delete_source(source_name):
+            return
+        self.manager.delete_source(source_id)
         self.reload_sources()
 
     def _toggle_selected_enabled(self) -> None:
