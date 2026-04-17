@@ -2779,13 +2779,13 @@ def test_player_window_left_click_on_native_video_window_closes_open_context_men
         def __init__(self) -> None:
             super().__init__()
             self.visible = True
-            self.close_calls = 0
+            self.hide_calls = 0
 
         def isVisible(self) -> bool:
             return self.visible
 
-        def close(self) -> None:
-            self.close_calls += 1
+        def hide(self) -> None:
+            self.hide_calls += 1
             self.visible = False
             self.aboutToHide.emit()
 
@@ -2815,8 +2815,8 @@ def test_player_window_left_click_on_native_video_window_closes_open_context_men
 
     handled = window.eventFilter(native_surface, event)
 
-    assert handled is True
-    assert fake_menu.close_calls == 1
+    assert handled is False
+    assert fake_menu.hide_calls == 1
     assert window._video_context_menu is None
 
 
@@ -2828,18 +2828,18 @@ def test_player_window_opening_video_context_menu_closes_previous_menu(qtbot, mo
             super().__init__()
             self.name = name
             self.visible = True
-            self.popup_calls: list[tuple[int, int]] = []
-            self.close_calls = 0
+            self.exec_calls: list[tuple[int, int]] = []
+            self.hide_calls = 0
 
-        def popup(self, pos) -> None:
+        def exec(self, pos) -> None:
             self.visible = True
-            self.popup_calls.append((pos.x(), pos.y()))
+            self.exec_calls.append((pos.x(), pos.y()))
 
         def isVisible(self) -> bool:
             return self.visible
 
-        def close(self) -> None:
-            self.close_calls += 1
+        def hide(self) -> None:
+            self.hide_calls += 1
             self.visible = False
             self.aboutToHide.emit()
 
@@ -2862,11 +2862,11 @@ def test_player_window_opening_video_context_menu_closes_previous_menu(qtbot, mo
 
     window._show_video_context_menu(second_pos)
 
-    assert first_menu.close_calls == 1
+    assert first_menu.hide_calls == 1
     assert window._video_context_menu is not None
     assert window._video_context_menu is not first_menu
     second_global_pos = window.video_widget.mapToGlobal(second_pos)
-    assert window._video_context_menu.popup_calls == [(second_global_pos.x(), second_global_pos.y())]
+    assert window._video_context_menu.exec_calls == [(second_global_pos.x(), second_global_pos.y())]
 
 
 def test_player_window_left_click_inside_open_menu_does_not_close_it(qtbot) -> None:
@@ -2904,14 +2904,14 @@ def test_player_window_left_click_inside_open_menu_does_not_close_it(qtbot) -> N
         def __init__(self, geometry: QRect) -> None:
             super().__init__()
             self.visible = True
-            self.close_calls = 0
+            self.hide_calls = 0
             self._geometry = geometry
 
         def isVisible(self) -> bool:
             return self.visible
 
-        def close(self) -> None:
-            self.close_calls += 1
+        def hide(self) -> None:
+            self.hide_calls += 1
             self.visible = False
             self.aboutToHide.emit()
 
@@ -2946,8 +2946,61 @@ def test_player_window_left_click_inside_open_menu_does_not_close_it(qtbot) -> N
     handled = window.eventFilter(native_surface, event)
 
     assert handled is False
-    assert fake_menu.close_calls == 0
+    assert fake_menu.hide_calls == 0
     assert window._video_context_menu is fake_menu
+
+
+def test_player_window_app_level_left_click_outside_menu_closes_it(qtbot) -> None:
+    class FakeMenu(QObject):
+        aboutToHide = Signal()
+
+        def __init__(self, geometry: QRect) -> None:
+            super().__init__()
+            self.visible = True
+            self.hide_calls = 0
+            self._geometry = geometry
+
+        def isVisible(self) -> bool:
+            return self.visible
+
+        def hide(self) -> None:
+            self.hide_calls += 1
+            self.visible = False
+            self.aboutToHide.emit()
+
+        def geometry(self) -> QRect:
+            return self._geometry
+
+        def deleteLater(self) -> None:
+            return None
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+
+    menu_rect = QRect(window.video_widget.mapToGlobal(window.video_widget.rect().center()), window.video_widget.rect().center())
+    fake_menu = FakeMenu(menu_rect)
+    window._video_context_menu = fake_menu
+
+    other_widget = QWidget(window)
+    other_widget.setGeometry(10, 10, 40, 40)
+    other_widget.show()
+    local_pos = other_widget.rect().center()
+    global_pos = other_widget.mapToGlobal(local_pos)
+    event = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        local_pos,
+        global_pos,
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+    handled = window.eventFilter(other_widget, event)
+
+    assert handled is False
+    assert fake_menu.hide_calls == 1
+    assert window._video_context_menu is None
 
 
 def test_player_window_mpv_right_click_signal_opens_context_menu_at_cursor(qtbot, monkeypatch) -> None:
@@ -3000,6 +3053,167 @@ def test_player_window_mpv_right_click_signal_opens_context_menu_at_cursor(qtbot
     window.video_widget.context_menu_requested.emit()
 
     assert shown == [(local_pos.x(), local_pos.y())]
+
+
+def test_player_window_mpv_left_click_signal_closes_open_menu_at_cursor(qtbot, monkeypatch) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 1
+
+        def duration_seconds(self) -> int:
+            return 120
+
+    class FakeMenu(QObject):
+        aboutToHide = Signal()
+
+        def __init__(self, geometry: QRect) -> None:
+            super().__init__()
+            self.visible = True
+            self.hide_calls = 0
+            self._geometry = geometry
+
+        def isVisible(self) -> bool:
+            return self.visible
+
+        def hide(self) -> None:
+            self.hide_calls += 1
+            self.visible = False
+            self.aboutToHide.emit()
+
+        def geometry(self) -> QRect:
+            return self._geometry
+
+        def deleteLater(self) -> None:
+            return None
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.show()
+    window.open_session(make_player_session(start_index=0))
+
+    menu_rect = QRect(window.video_widget.mapToGlobal(window.video_widget.rect().center()), window.video_widget.rect().center())
+    fake_menu = FakeMenu(menu_rect)
+    window._video_context_menu = fake_menu
+
+    outside_widget = QWidget(window)
+    outside_widget.setGeometry(10, 10, 40, 40)
+    outside_widget.show()
+    monkeypatch.setattr(player_window_module.QCursor, "pos", staticmethod(lambda: outside_widget.mapToGlobal(outside_widget.rect().center())))
+
+    window.video_widget.context_menu_dismiss_requested.emit()
+
+    assert fake_menu.hide_calls == 1
+    assert window._video_context_menu is None
+
+
+def test_player_window_mpv_duplicate_open_request_does_not_reopen_visible_menu(qtbot, monkeypatch) -> None:
+    class FakeMenu(QObject):
+        aboutToHide = Signal()
+
+        def __init__(self, geometry: QRect) -> None:
+            super().__init__()
+            self.visible = True
+            self.hide_calls = 0
+            self._geometry = geometry
+
+        def isVisible(self) -> bool:
+            return self.visible
+
+        def hide(self) -> None:
+            self.hide_calls += 1
+            self.visible = False
+            self.aboutToHide.emit()
+
+        def geometry(self) -> QRect:
+            return self._geometry
+
+        def deleteLater(self) -> None:
+            return None
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+
+    menu_rect = QRect(window.video_widget.mapToGlobal(window.video_widget.rect().center()), window.video_widget.rect().center())
+    fake_menu = FakeMenu(menu_rect)
+    window._video_context_menu = fake_menu
+
+    rebuilt = {"count": 0}
+    monkeypatch.setattr(window, "_build_video_context_menu", lambda: rebuilt.__setitem__("count", rebuilt["count"] + 1))
+    monkeypatch.setattr(player_window_module.QCursor, "pos", staticmethod(lambda: menu_rect.center()))
+
+    window._show_video_context_menu_at_cursor()
+
+    assert fake_menu.hide_calls == 0
+    assert rebuilt["count"] == 0
+    assert window._video_context_menu is fake_menu
+
+
+def test_player_window_recent_duplicate_open_request_ignores_same_click_before_menu_is_visible(qtbot, monkeypatch) -> None:
+    class FakeMenu(QObject):
+        aboutToHide = Signal()
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.visible = False
+            self.exec_calls: list[tuple[int, int]] = []
+            self.hide_calls = 0
+
+        def exec(self, pos) -> None:
+            self.exec_calls.append((pos.x(), pos.y()))
+
+        def isVisible(self) -> bool:
+            return self.visible
+
+        def hide(self) -> None:
+            self.hide_calls += 1
+            self.visible = False
+            self.aboutToHide.emit()
+
+        def deleteLater(self) -> None:
+            return None
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+
+    menus = [FakeMenu()]
+    monkeypatch.setattr(window, "_build_video_context_menu", lambda: menus.pop(0))
+    first_pos = window.video_widget.rect().center()
+    global_pos = window.video_widget.mapToGlobal(first_pos)
+    monkeypatch.setattr(player_window_module.QCursor, "pos", staticmethod(lambda: global_pos))
+
+    window._show_video_context_menu(first_pos)
+    first_menu = window._video_context_menu
+    assert first_menu is not None
+
+    window._show_video_context_menu_at_cursor()
+
+    assert first_menu.exec_calls == [(global_pos.x(), global_pos.y())]
+    assert first_menu.hide_calls == 0
+    assert window._video_context_menu is first_menu
 
 
 def test_player_window_populates_embedded_subtitle_options_after_open_session(qtbot) -> None:

@@ -154,6 +154,8 @@ class PlayerWindow(QWidget):
     _MODIFIED_SEEK_SHORTCUT_SECONDS = 60
     _VOLUME_SHORTCUT_STEP = 5
     _CURSOR_HIDE_DELAY_MS = 2000
+    _VIDEO_CONTEXT_MENU_DUPLICATE_WINDOW_MS = 250
+    _VIDEO_CONTEXT_MENU_DUPLICATE_DISTANCE = 8
     _POSTER_SIZE = QSize(180, 260)
     _POSTER_REQUEST_TIMEOUT_SECONDS = 10.0
     _DEFAULT_MAIN_SPLITTER_SIZES = [960, 320]
@@ -190,6 +192,8 @@ class PlayerWindow(QWidget):
         self._last_cursor_activity_ms = 0
         self._poster_request_id = 0
         self._video_context_menu: QMenu | None = None
+        self._last_video_context_menu_request_ms = 0
+        self._last_video_context_menu_request_global_pos: tuple[int, int] | None = None
         self._video_surface_ready = False
         self._auto_advance_locked = False
         self.help_dialog: ShortcutHelpDialog | None = None
@@ -209,6 +213,7 @@ class PlayerWindow(QWidget):
         self.video_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.video_widget.customContextMenuRequested.connect(self._show_video_context_menu)
         self.video_widget.context_menu_requested.connect(self._show_video_context_menu_at_cursor)
+        self.video_widget.context_menu_dismiss_requested.connect(self._dismiss_video_context_menu_at_cursor)
         self.video = self.video_widget
         self.playlist = QListWidget()
         self.play_button = self._create_icon_button("play.svg", "播放/暂停", "Space")
@@ -1282,12 +1287,15 @@ class PlayerWindow(QWidget):
         self.video.apply_audio_mode("track", track_id=track_id)
 
     def _show_video_context_menu(self, pos) -> None:
+        global_pos = self.video_widget.mapToGlobal(pos)
+        if self._should_ignore_video_context_menu_request(global_pos):
+            return
         self._close_video_context_menu()
         menu = self._build_video_context_menu()
         self._video_context_menu = menu
         menu.aboutToHide.connect(lambda menu=menu: self._handle_video_context_menu_hidden(menu))
         menu.aboutToHide.connect(menu.deleteLater)
-        menu.popup(self.video_widget.mapToGlobal(pos))
+        menu.exec(global_pos)
 
     def _show_video_context_menu_from_widget(self, widget: QWidget, pos) -> None:
         mapped_pos = pos if widget is self.video_widget else self.video_widget.mapFromGlobal(widget.mapToGlobal(pos))
@@ -1298,6 +1306,11 @@ class PlayerWindow(QWidget):
 
     def _show_video_context_menu_at_cursor(self) -> None:
         self._show_video_context_menu_from_global_pos(QCursor.pos())
+
+    def _dismiss_video_context_menu_at_cursor(self) -> None:
+        global_pos = QCursor.pos()
+        if not self._video_context_menu_contains_global_pos(global_pos):
+            self._close_video_context_menu()
 
     def _contains_video_global_pos(self, global_pos) -> bool:
         return self.video_widget.isVisible() and self.video_widget.rect().contains(self.video_widget.mapFromGlobal(global_pos))
@@ -1319,6 +1332,24 @@ class PlayerWindow(QWidget):
             return active_popup.geometry().contains(global_pos)
         return True
 
+    def _should_ignore_video_context_menu_request(self, global_pos) -> bool:
+        if self._video_context_menu_contains_global_pos(global_pos):
+            return True
+        last_pos = self._last_video_context_menu_request_global_pos
+        now_ms = int(time.monotonic() * 1000)
+        duplicate_window = now_ms - self._last_video_context_menu_request_ms <= self._VIDEO_CONTEXT_MENU_DUPLICATE_WINDOW_MS
+        if last_pos is None or not duplicate_window:
+            self._last_video_context_menu_request_ms = now_ms
+            self._last_video_context_menu_request_global_pos = (global_pos.x(), global_pos.y())
+            return False
+        dx = abs(last_pos[0] - global_pos.x())
+        dy = abs(last_pos[1] - global_pos.y())
+        if dx <= self._VIDEO_CONTEXT_MENU_DUPLICATE_DISTANCE and dy <= self._VIDEO_CONTEXT_MENU_DUPLICATE_DISTANCE:
+            return True
+        self._last_video_context_menu_request_ms = now_ms
+        self._last_video_context_menu_request_global_pos = (global_pos.x(), global_pos.y())
+        return False
+
     def _handle_video_context_menu_hidden(self, menu: QMenu) -> None:
         if self._video_context_menu is menu:
             self._video_context_menu = None
@@ -1328,9 +1359,8 @@ class PlayerWindow(QWidget):
         if menu is None:
             return False
         if menu.isVisible():
-            menu.close()
-            if not menu.isVisible():
-                self._video_context_menu = None
+            menu.hide()
+            self._video_context_menu = None
             return True
         self._video_context_menu = None
         return False
@@ -1870,6 +1900,17 @@ class PlayerWindow(QWidget):
         super().closeEvent(event)
 
     def eventFilter(self, watched: object, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.MouseButtonPress and isinstance(event, QMouseEvent):
+            global_pos = event.globalPosition().toPoint()
+            if (
+                event.button() == Qt.MouseButton.LeftButton
+                and self._video_context_menu is not None
+                and not self._video_context_menu_contains_global_pos(global_pos)
+            ):
+                self._close_video_context_menu()
+        if event.type() == QEvent.Type.ContextMenu and isinstance(event, QContextMenuEvent):
+            if self._video_context_menu_contains_global_pos(event.globalPos()):
+                return False
         if event.type() == QEvent.Type.MouseMove and self._belongs_to_player_window(watched):
             self._refresh_video_pointer_inside_state()
             if self.is_playing and self._video_pointer_inside:
@@ -1925,6 +1966,12 @@ class PlayerWindow(QWidget):
             if isinstance(event, QMouseEvent) and event.button() == Qt.MouseButton.LeftButton and self._close_video_context_menu():
                 event.accept()
                 return True
+            if isinstance(event, QMouseEvent):
+                if event.button() == Qt.MouseButton.RightButton:
+                    self._show_video_context_menu_from_global_pos(global_pos)
+                    event.accept()
+                    return True
+                return False
             self._show_video_context_menu_from_global_pos(global_pos)
             event.accept()
             return True

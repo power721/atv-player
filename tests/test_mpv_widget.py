@@ -275,6 +275,7 @@ def test_mpv_widget_registers_right_click_binding_and_emits_context_menu_request
             self.play_calls: list[str] = []
             self.pause = False
             self._right_click_handler = None
+            self._left_click_handler = None
 
         def event_callback(self, *_event_types):
             def register(callback):
@@ -286,9 +287,14 @@ def test_mpv_widget_registers_right_click_binding_and_emits_context_menu_request
             return None
 
         def register_key_binding(self, keydef: str, callback, mode: str = "force") -> None:
-            assert keydef == "MBTN_RIGHT"
             assert mode == "force"
-            self._right_click_handler = callback
+            if keydef == "MBTN_RIGHT":
+                self._right_click_handler = callback
+                return
+            if keydef == "MBTN_LEFT":
+                self._left_click_handler = callback
+                return
+            raise AssertionError(keydef)
 
         def play(self, url: str) -> None:
             self.play_calls.append(url)
@@ -304,10 +310,58 @@ def test_mpv_widget_registers_right_click_binding_and_emits_context_menu_request
 
     assert player.play_calls == ["http://m/1.m3u8"]
     assert player._right_click_handler is not None
+    assert player._left_click_handler is not None
 
     player._right_click_handler("d", "MBTN_RIGHT", None, None, None)
 
     assert opened["count"] == 1
+
+
+def test_mpv_widget_registers_left_click_binding_and_emits_context_menu_dismiss_requested(qtbot, monkeypatch) -> None:
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.play_calls: list[str] = []
+            self.pause = False
+            self._right_click_handler = None
+            self._left_click_handler = None
+
+        def event_callback(self, *_event_types):
+            def register(callback):
+                return callback
+
+            return register
+
+        def observe_property(self, _name: str, _handler) -> None:
+            return None
+
+        def register_key_binding(self, keydef: str, callback, mode: str = "force") -> None:
+            assert mode == "force"
+            if keydef == "MBTN_RIGHT":
+                self._right_click_handler = callback
+                return
+            if keydef == "MBTN_LEFT":
+                self._left_click_handler = callback
+                return
+            raise AssertionError(keydef)
+
+        def play(self, url: str) -> None:
+            self.play_calls.append(url)
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = FakePlayer()
+    monkeypatch.setattr(widget, "_create_player", lambda: player)
+    dismissed = {"count": 0}
+    widget.context_menu_dismiss_requested.connect(lambda: dismissed.__setitem__("count", dismissed["count"] + 1))
+
+    widget.load("http://m/1.m3u8")
+
+    assert player.play_calls == ["http://m/1.m3u8"]
+    assert player._left_click_handler is not None
+
+    player._left_click_handler("d", "MBTN_LEFT", None, None, None)
+
+    assert dismissed["count"] == 1
 
 
 def test_mpv_widget_emits_subtitle_tracks_changed_when_mpv_track_list_updates(qtbot, monkeypatch) -> None:

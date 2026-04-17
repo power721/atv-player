@@ -34,6 +34,7 @@ class MpvWidget(QWidget):
     subtitle_tracks_changed = Signal()
     audio_tracks_changed = Signal()
     context_menu_requested = Signal()
+    context_menu_dismiss_requested = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -111,8 +112,13 @@ class MpvWidget(QWidget):
         def handle_right_click(*_args) -> None:
             self.context_menu_requested.emit()
 
+        def handle_left_click(*_args) -> None:
+            self.context_menu_dismiss_requested.emit()
+
         register_key_binding("MBTN_RIGHT", handle_right_click, mode="force")
+        register_key_binding("MBTN_LEFT", handle_left_click, mode="force")
         self._right_click_handler = handle_right_click
+        self._left_click_handler = handle_left_click
 
     def _build_http_header_fields(self, headers: dict[str, str] | None) -> list[str]:
         if not headers:
