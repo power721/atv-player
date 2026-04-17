@@ -292,9 +292,15 @@ class MpvWidget(QWidget):
     def _subtitle_language_label(self, lang: str) -> str:
         normalized = lang.strip().lower()
         return {
-            "zh": "中文",
-            "chi": "中文",
-            "zho": "中文",
+            "zh": "简体中文",
+            "chi": "简体中文",
+            "zho": "简体中文",
+            "chs": "简体中文",
+            "zh-cn": "简体中文",
+            "zh-hans": "简体中文",
+            "zh-tw": "繁体中文",
+            "cht": "繁体中文",
+            "zh-hant": "繁体中文",
             "en": "English",
             "eng": "English",
             "ja": "日本語",
@@ -313,7 +319,7 @@ class MpvWidget(QWidget):
         return f"{base} ({'/'.join(suffixes)})"
 
     def _is_chinese_subtitle_track(self, track: SubtitleTrack) -> bool:
-        if track.lang in {"zh", "chi", "zho"}:
+        if track.lang in {"zh", "chi", "zho", "chs", "zh-cn", "zh-hans", "zh-tw", "cht", "zh-hant"}:
             return True
         lowered_title = track.title.casefold()
         return any(token in lowered_title for token in ("中文", "简中", "繁中", "中字", "chinese"))
@@ -321,15 +327,17 @@ class MpvWidget(QWidget):
     def _chinese_subtitle_preference(self, track: SubtitleTrack) -> int:
         normalized_lang = track.lang.casefold()
         lowered_title = track.title.casefold()
-        simplified_tokens = ("简中", "简体", "chs", "sc", "gb", "hans")
-        traditional_tokens = ("繁中", "繁體", "繁体", "cht", "tc", "big5", "hant")
-        if any(token in normalized_lang for token in simplified_tokens) or any(
-            token in lowered_title for token in simplified_tokens
-        ):
+        simplified_langs = {"zh", "chi", "zho", "chs", "zh-cn", "zh-hans"}
+        traditional_langs = {"zh-tw", "cht", "zh-hant"}
+        simplified_tokens = ("简中", "简体", "chs", "sc", "gb", "hans", "simplified")
+        traditional_tokens = ("繁中", "繁體", "繁体", "cht", "tc", "big5", "hant", "traditional", "tranditional")
+        if any(token in lowered_title for token in simplified_tokens):
             return 2
-        if any(token in normalized_lang for token in traditional_tokens) or any(
-            token in lowered_title for token in traditional_tokens
-        ):
+        if any(token in lowered_title for token in traditional_tokens):
+            return 0
+        if normalized_lang in simplified_langs:
+            return 2
+        if normalized_lang in traditional_langs:
             return 0
         return 1
 
