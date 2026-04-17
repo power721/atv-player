@@ -354,3 +354,32 @@ def test_manual_live_source_dialog_moves_selected_entry(qtbot) -> None:
     dialog._move_selected_entry(-1)
 
     assert manager.move_entry_calls == [(11, -1)]
+
+
+def test_manual_live_source_dialog_disables_move_buttons_at_list_edges(qtbot) -> None:
+    manager = FakeLiveSourceManager()
+    manager.entries[2].append(
+        LiveSourceEntry(
+            id=11,
+            source_id=2,
+            group_name="央视",
+            channel_name="CCTV-2",
+            stream_url="https://live.example/cctv2.m3u8",
+            logo_url="",
+            sort_order=1,
+        )
+    )
+    dialog = ManualLiveSourceDialog(manager, source_id=2)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.reload_entries()
+
+    dialog.entry_table.selectRow(0)
+    dialog._sync_action_state()
+    assert dialog.up_button.isEnabled() is False
+    assert dialog.down_button.isEnabled() is True
+
+    dialog.entry_table.selectRow(1)
+    dialog._sync_action_state()
+    assert dialog.up_button.isEnabled() is True
+    assert dialog.down_button.isEnabled() is False
