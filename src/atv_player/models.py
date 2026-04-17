@@ -85,6 +85,30 @@ class HistoryRecord:
 
 
 @dataclass(slots=True)
+class LiveSourceConfig:
+    id: int = 0
+    source_type: str = ""
+    source_value: str = ""
+    display_name: str = ""
+    enabled: bool = True
+    sort_order: int = 0
+    is_default: bool = False
+    last_refreshed_at: int = 0
+    last_error: str = ""
+    cache_text: str = ""
+
+
+@dataclass(slots=True)
+class LiveSourceEntry:
+    id: int = 0
+    source_id: int = 0
+    group_name: str = ""
+    channel_name: str = ""
+    stream_url: str = ""
+    sort_order: int = 0
+
+
+@dataclass(slots=True)
 class SpiderPluginConfig:
     id: int = 0
     source_type: str = ""
