@@ -350,6 +350,7 @@ class BrowsePage(QWidget):
         self._search_request_id += 1
         self._resolve_request_id += 1
         self.keyword_edit.clear()
+        self.filter_combo.setCurrentIndex(0)
         self._results = []
         self._filtered_results = []
         self.results_table.setRowCount(0)

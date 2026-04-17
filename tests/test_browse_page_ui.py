@@ -946,6 +946,24 @@ def test_browse_page_clear_results_clears_keyword(qtbot) -> None:
     assert page.search_panel.isHidden() is True
 
 
+def test_browse_page_clear_results_resets_drive_filter(qtbot) -> None:
+    page = BrowsePage(FakeBrowseController())
+    qtbot.addWidget(page)
+    page.show()
+
+    page.filter_combo.setCurrentIndex(page.filter_combo.findData("10"))
+    page.keyword_edit.setText("霸王别姬")
+    page._search_request_id = 1
+    page._handle_search_succeeded(
+        1,
+        [VodItem(vod_id="1", vod_name="全集", share_type="10", type_name="百度", vod_play_from="频道A", vod_time="2026-04-15")],
+    )
+
+    page.clear_results()
+
+    assert page.filter_combo.currentData() == ""
+
+
 def test_browse_page_keeps_search_panel_visible_when_filter_has_no_matches(qtbot) -> None:
     page = BrowsePage(FakeBrowseController())
     qtbot.addWidget(page)
