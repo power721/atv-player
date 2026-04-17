@@ -136,6 +136,9 @@ class MpvWidget(QWidget):
                 return
             raise
 
+    def _is_missing_mpv_property_error(self, exc: Exception) -> bool:
+        return "property does not exist" in str(exc)
+
     def load(
         self,
         url: str,
@@ -296,10 +299,12 @@ class MpvWidget(QWidget):
             "chi": "简体中文",
             "zho": "简体中文",
             "chs": "简体中文",
+            "simplified": "简体中文",
             "zh-cn": "简体中文",
             "zh-hans": "简体中文",
             "zh-tw": "繁体中文",
             "cht": "繁体中文",
+            "traditional": "繁体中文",
             "zh-hant": "繁体中文",
             "en": "English",
             "eng": "English",
@@ -445,9 +450,72 @@ class MpvWidget(QWidget):
         except (TypeError, ValueError):
             return 50
 
+    def supports_secondary_subtitle_position(self) -> bool:
+        if self._player is None:
+            return False
+        try:
+            self._player_property("secondary-sub-pos", 50)
+            if hasattr(self._player, "__getitem__"):
+                _ = self._player["secondary-sub-pos"]
+            return True
+        except Exception as exc:
+            if self._is_missing_mpv_property_error(exc):
+                return False
+            if getattr(self._player, "core_shutdown", False):
+                return False
+            raise
+
     def set_secondary_subtitle_position(self, value: int) -> None:
         clamped = max(0, min(int(value), 100))
         self._set_player_property("secondary-sub-pos", clamped)
+
+    def subtitle_scale(self) -> int:
+        value = self._player_property("sub-scale", 1.0)
+        try:
+            return int(round(float(value) * 100))
+        except (TypeError, ValueError):
+            return 100
+
+    def set_subtitle_scale(self, value: int) -> None:
+        clamped = max(50, min(int(value), 200))
+        self._set_player_property("sub-scale", clamped / 100)
+
+    def secondary_subtitle_scale(self) -> int:
+        value = self._player_property("secondary-sub-scale", 1.0)
+        try:
+            return int(round(float(value) * 100))
+        except (TypeError, ValueError):
+            return 100
+
+    def set_secondary_subtitle_scale(self, value: int) -> None:
+        clamped = max(50, min(int(value), 200))
+        self._set_player_property("secondary-sub-scale", clamped / 100)
+
+    def supports_subtitle_scale(self) -> bool:
+        if self._player is None:
+            return False
+        try:
+            _ = self._player["sub-scale"]
+            return True
+        except Exception as exc:
+            if self._is_missing_mpv_property_error(exc):
+                return False
+            if getattr(self._player, "core_shutdown", False):
+                return False
+            raise
+
+    def supports_secondary_subtitle_scale(self) -> bool:
+        if self._player is None:
+            return False
+        try:
+            _ = self._player["secondary-sub-scale"]
+            return True
+        except Exception as exc:
+            if self._is_missing_mpv_property_error(exc):
+                return False
+            if getattr(self._player, "core_shutdown", False):
+                return False
+            raise
 
     def _audio_language_label(self, lang: str) -> str:
         normalized = lang.strip().lower()
