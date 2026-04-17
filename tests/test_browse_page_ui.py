@@ -706,6 +706,22 @@ def test_search_page_clear_results_clears_keyword(qtbot) -> None:
     assert page.status_label.text() == ""
 
 
+def test_search_page_clear_results_resets_drive_filter(qtbot) -> None:
+    page = SearchPage(FakeSearchController())
+    qtbot.addWidget(page)
+
+    page.filter_combo.setCurrentIndex(page.filter_combo.findData("10"))
+    page.keyword_edit.setText("霸王别姬")
+    page._results = [VodItem(vod_id="1", vod_name="全集", type_name="百度", share_type="10")]
+    page._filtered_results = list(page._results)
+    page.results_table.setRowCount(1)
+    page.status_label.setText("1 条结果")
+
+    page.clear_results()
+
+    assert page.filter_combo.currentData() == ""
+
+
 def test_search_page_updates_status_count_after_filtering(qtbot) -> None:
     page = SearchPage(FakeSearchController())
     qtbot.addWidget(page)
