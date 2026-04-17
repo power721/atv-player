@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.api import ApiError, UnauthorizedError
-from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url
+from atv_player.ui.poster_loader import load_local_poster_image, load_remote_poster_image, normalize_poster_url
 
 
 class _PosterGridSignals(QObject):
@@ -439,7 +439,8 @@ class PosterGridPage(QWidget):
         self.search_requested.emit(item.vod_name)
 
     def _start_card_poster_load(self, button: QToolButton, item) -> None:
-        image_url = normalize_poster_url(item.vod_pic)
+        poster_source = item.vod_pic or ""
+        image_url = normalize_poster_url(poster_source)
         if not image_url:
             return
 
@@ -448,7 +449,9 @@ class PosterGridPage(QWidget):
         def load() -> None:
             self._poster_semaphore.acquire()
             try:
-                image = load_remote_poster_image(image_url, self._CARD_POSTER_SIZE)
+                image = load_local_poster_image(poster_source, self._CARD_POSTER_SIZE)
+                if image is None:
+                    image = load_remote_poster_image(image_url, self._CARD_POSTER_SIZE)
                 if image is not None and gen == self._poster_generation:
                     self._signals.poster_loaded.emit(button, image)
             finally:

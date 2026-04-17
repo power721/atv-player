@@ -73,6 +73,22 @@ def _load_cached_poster_image(cache_path: Path, target_size: QSize) -> QImage | 
     return _load_scaled_image_from_bytes(cached_bytes, target_size)
 
 
+def load_local_poster_image(source: str, target_size: QSize) -> QImage | None:
+    if not source:
+        return None
+    source_path = Path(source)
+    if not source_path.is_file():
+        return None
+    image = QImage(str(source_path))
+    if image.isNull():
+        return None
+    return image.scaled(
+        target_size,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+
+
 def load_remote_poster_image(
     image_url: str,
     target_size: QSize,

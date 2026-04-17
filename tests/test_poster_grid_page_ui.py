@@ -343,6 +343,35 @@ def test_poster_grid_page_renders_loaded_poster_icon_on_card(qtbot, monkeypatch)
     assert page.card_buttons[0].icon().isNull() is False
 
 
+def test_poster_grid_page_renders_local_poster_file_on_card(qtbot, monkeypatch, tmp_path) -> None:
+    class ImmediateThread:
+        def __init__(self, target, daemon=None) -> None:
+            self._target = target
+
+        def start(self) -> None:
+            self._target()
+
+    from PySide6.QtGui import QImage
+
+    poster_path = tmp_path / "live.png"
+    image = QImage(20, 40, QImage.Format.Format_RGB32)
+    image.fill(0x00FF00)
+    assert image.save(str(poster_path))
+
+    controller = FakeDoubanController()
+    controller.items_by_category["suggestion"] = (
+        [VodItem(vod_id="m1", vod_name="霸王别姬", vod_pic=str(poster_path), vod_remarks="9.6")],
+        60,
+    )
+
+    monkeypatch.setattr(poster_grid_page_module.threading, "Thread", ImmediateThread)
+
+    page = show_loaded_page(qtbot, PosterGridPage(controller))
+    qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
+
+    assert page.card_buttons[0].icon().isNull() is False
+
+
 def test_poster_grid_page_cards_use_wider_size_and_pointing_cursor(qtbot) -> None:
     page = show_loaded_page(qtbot, PosterGridPage(FakeDoubanController()))
 
