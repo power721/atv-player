@@ -1912,6 +1912,7 @@ def test_main_window_open_player_hides_main_and_updates_last_active_state(qtbot,
 
     window.open_player(request)
 
+    qtbot.waitUntil(lambda: window.player_window is not None)
     assert window.isHidden() is True
     assert config.last_active_window == "player"
     assert config.last_playback_mode == "detail"

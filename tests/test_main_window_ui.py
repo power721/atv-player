@@ -1,4 +1,7 @@
+import time
+
 from atv_player.models import AppConfig, OpenPlayerRequest, PlayItem, VodItem
+import atv_player.ui.main_window as main_window_module
 from atv_player.ui.main_window import MainWindow
 
 
@@ -114,3 +117,91 @@ def test_main_window_shows_live_source_manager_button_after_plugin_manager(qtbot
 
     assert window.plugin_manager_button.text() == "插件管理"
     assert window.live_source_manager_button.text() == "直播源管理"
+
+
+def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monkeypatch) -> None:
+    class FakeSignal:
+        def connect(self, _callback) -> None:
+            return None
+
+    class SlowPlayerController(FakePlayerController):
+        def create_session(
+            self,
+            vod,
+            playlist,
+            clicked_index: int,
+            detail_resolver=None,
+            resolved_vod_by_id=None,
+            use_local_history=True,
+            restore_history=False,
+            playback_loader=None,
+            playback_progress_reporter=None,
+            playback_stopper=None,
+        ):
+            time.sleep(0.15)
+            return super().create_session(
+                vod,
+                playlist,
+                clicked_index,
+                detail_resolver=detail_resolver,
+                resolved_vod_by_id=resolved_vod_by_id,
+                use_local_history=use_local_history,
+                restore_history=restore_history,
+                playback_loader=playback_loader,
+                playback_progress_reporter=playback_progress_reporter,
+                playback_stopper=playback_stopper,
+            )
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.opened: list[tuple[object, bool]] = []
+            self.show_calls = 0
+            self.raise_calls = 0
+            self.activate_calls = 0
+            self.closed_to_main = FakeSignal()
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            self.show_calls += 1
+
+        def raise_(self) -> None:
+            self.raise_calls += 1
+
+        def activateWindow(self) -> None:
+            self.activate_calls += 1
+
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    config = AppConfig()
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=SlowPlayerController(),
+        config=config,
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    window.show()
+    request = OpenPlayerRequest(
+        vod=VodItem(vod_id="vod-1", vod_name="Movie"),
+        playlist=[PlayItem(title="Episode 1", url="1.m3u8")],
+        clicked_index=0,
+        source_mode="detail",
+        source_vod_id="vod-1",
+    )
+
+    started_at = time.perf_counter()
+    window.open_player(request)
+    elapsed_seconds = time.perf_counter() - started_at
+
+    assert elapsed_seconds < 0.1
+    assert window.isHidden() is False
+    assert window.player_window is None
+
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) == 1)
+    assert window.isHidden() is True
+    assert config.last_active_window == "player"
+    assert config.last_playback_mode == "detail"
+    assert config.last_playback_vod_id == "vod-1"
+    assert config.last_player_paused is False

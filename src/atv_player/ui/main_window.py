@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
+import shiboken6
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -82,6 +83,11 @@ class _AsyncRequestSignals(QObject):
 class _RestoreSignals(QObject):
     succeeded = Signal(int, object)
     failed = Signal(int)
+
+
+class _SessionOpenSignals(QObject):
+    succeeded = Signal(int, object, object, bool)
+    failed = Signal(int, str)
 
 
 @dataclass(slots=True)
@@ -166,6 +172,7 @@ class MainWindow(QMainWindow):
         self._open_request_id = 0
         self._media_request_id = 0
         self._restore_request_id = 0
+        self._player_session_request_id = 0
         self._open_request_signals = _AsyncRequestSignals(self)
         self._open_request_signals.succeeded.connect(self._handle_open_request_succeeded)
         self._open_request_signals.failed.connect(self._handle_open_request_failed)
@@ -175,6 +182,9 @@ class MainWindow(QMainWindow):
         self._restore_signals = _RestoreSignals(self)
         self._restore_signals.succeeded.connect(self._handle_restore_succeeded)
         self._restore_signals.failed.connect(self._handle_restore_failed)
+        self._session_open_signals = _SessionOpenSignals(self)
+        self._session_open_signals.succeeded.connect(self._handle_session_open_succeeded)
+        self._session_open_signals.failed.connect(self._handle_session_open_failed)
 
         self.nav_tabs.addTab(self.douban_page, "豆瓣电影")
         self.nav_tabs.addTab(self.telegram_page, "电报影视")
@@ -503,8 +513,15 @@ class MainWindow(QMainWindow):
             return
         self.show_error(message)
 
-    def open_player(self, request, restore_paused_state: bool = False) -> None:
-        session = self.player_controller.create_session(
+    def _is_window_alive(self) -> bool:
+        return shiboken6.isValid(self)
+
+    def _next_player_session_request_id(self) -> int:
+        self._player_session_request_id += 1
+        return self._player_session_request_id
+
+    def _create_player_session(self, request):
+        return self.player_controller.create_session(
             request.vod,
             request.playlist,
             request.clicked_index,
@@ -516,6 +533,8 @@ class MainWindow(QMainWindow):
             playback_progress_reporter=request.playback_progress_reporter,
             playback_stopper=request.playback_stopper,
         )
+
+    def _apply_open_player(self, request, session, restore_paused_state: bool = False) -> None:
         if self.player_window is None:
             self.player_window = PlayerWindow(self.player_controller, self.config, self._save_config)
             if hasattr(self.player_window, "closed_to_main"):
@@ -537,6 +556,32 @@ class MainWindow(QMainWindow):
         self.player_window.raise_()
         self.player_window.activateWindow()
         self.hide()
+
+    def open_player(self, request, restore_paused_state: bool = False) -> None:
+        request_id = self._next_player_session_request_id()
+
+        def run() -> None:
+            try:
+                session = self._create_player_session(request)
+            except Exception as exc:
+                if self._is_window_alive():
+                    self._session_open_signals.failed.emit(request_id, str(exc))
+                return
+            if not self._is_window_alive():
+                return
+            self._session_open_signals.succeeded.emit(request_id, request, session, restore_paused_state)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _handle_session_open_succeeded(self, request_id: int, request, session, restore_paused_state: bool) -> None:
+        if request_id != self._player_session_request_id:
+            return
+        self._apply_open_player(request, session, restore_paused_state=restore_paused_state)
+
+    def _handle_session_open_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._player_session_request_id:
+            return
+        self.show_error(message)
 
     def _show_main_again(self) -> None:
         self.config.last_active_window = "main"
@@ -566,7 +611,9 @@ class MainWindow(QMainWindow):
             return None
         if request is None:
             return None
-        self.open_player(request, restore_paused_state=True)
+        self._next_player_session_request_id()
+        session = self._create_player_session(request)
+        self._apply_open_player(request, session, restore_paused_state=True)
         return self.player_window
 
     def _build_restore_request(self) -> OpenPlayerRequest | None:
