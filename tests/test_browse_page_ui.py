@@ -1106,6 +1106,26 @@ def test_browse_page_resolves_search_result_outside_main_thread(qtbot) -> None:
     qtbot.waitUntil(lambda: page.current_path == "/movies/1", timeout=1000)
 
 
+def test_browse_page_restores_result_count_after_resolve_unauthorized(qtbot) -> None:
+    class Controller(FakeBrowseController):
+        def resolve_search_result(self, item: VodItem) -> str:
+            raise UnauthorizedError("登录已失效")
+
+    page = BrowsePage(Controller())
+    qtbot.addWidget(page)
+    page.show()
+    unauthorized = []
+    page.unauthorized.connect(lambda: unauthorized.append(True))
+    page._search_request_id = 1
+    page._handle_search_succeeded(1, [VodItem(vod_id="movie-1", vod_name="电影1", type_name="阿里")])
+
+    page._open_search_result(0, 0)
+
+    qtbot.waitUntil(lambda: unauthorized == [True], timeout=1000)
+
+    assert page.status_label.text() == "1 条结果"
+
+
 def test_browse_page_uses_latest_async_search_result_resolution(qtbot) -> None:
     controller = AsyncResolveController()
     page = BrowsePage(controller)

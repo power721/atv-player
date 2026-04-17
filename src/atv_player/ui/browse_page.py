@@ -708,4 +708,7 @@ class BrowsePage(QWidget):
     def _handle_resolve_unauthorized(self, request_id: int) -> None:
         if request_id != self._resolve_request_id:
             return
+        self._show_search_results_panel()
+        self.status_label.show()
+        self.status_label.setText(f"{len(self._filtered_results)} 条结果")
         self.unauthorized.emit()
