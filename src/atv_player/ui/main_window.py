@@ -19,6 +19,7 @@ from atv_player.ui.browse_page import BrowsePage
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.poster_grid_page import PosterGridPage
 from atv_player.ui.history_page import HistoryPage
+from atv_player.ui.live_source_manager_dialog import LiveSourceManagerDialog
 from atv_player.ui.plugin_manager_dialog import PluginManagerDialog
 from atv_player.ui.player_window import PlayerWindow
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
@@ -74,6 +75,7 @@ class MainWindow(QMainWindow):
             douban_controller=None,
             telegram_controller=None,
             live_controller=None,
+            live_source_manager=None,
             emby_controller=None,
             jellyfin_controller=None,
             spider_plugins=None,
@@ -85,9 +87,11 @@ class MainWindow(QMainWindow):
         self._save_config = save_config or (lambda: None)
         self._plugin_definitions = list(spider_plugins or [])
         self._plugin_manager = plugin_manager
+        self._live_source_manager = live_source_manager
         self._plugin_pages: list[tuple[PosterGridPage, object, str]] = []
         self.nav_tabs = QTabWidget()
         self.plugin_manager_button = QPushButton("插件管理")
+        self.live_source_manager_button = QPushButton("直播源管理")
         self.logout_button = QPushButton("退出登录")
         self.browse_page = BrowsePage(browse_controller, config=config, save_config=self._save_config)
         self.douban_page = PosterGridPage(douban_controller or _EmptyDoubanController())
@@ -140,9 +144,11 @@ class MainWindow(QMainWindow):
         self._rebuild_spider_plugin_tabs()
         self.logout_button.clicked.connect(self.logout_requested.emit)
         self.plugin_manager_button.clicked.connect(self._open_plugin_manager)
+        self.live_source_manager_button.clicked.connect(self._open_live_source_manager)
         header_layout = QHBoxLayout()
         header_layout.addStretch(1)
         header_layout.addWidget(self.plugin_manager_button)
+        header_layout.addWidget(self.live_source_manager_button)
         header_layout.addWidget(self.logout_button)
         container = QWidget()
         container_layout = QVBoxLayout(container)
@@ -350,6 +356,13 @@ class MainWindow(QMainWindow):
         if callable(load_enabled_plugins):
             self._plugin_definitions = list(load_enabled_plugins())
             self._rebuild_spider_plugin_tabs()
+
+    def _open_live_source_manager(self) -> None:
+        if self._live_source_manager is None:
+            return
+        dialog = LiveSourceManagerDialog(self._live_source_manager, self)
+        dialog.exec()
+        self.live_page.reload_categories()
 
     def _open_media_folder(self, page: PosterGridPage, controller: Any, item: Any) -> None:
         try:

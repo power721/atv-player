@@ -76,6 +76,16 @@ class FakeLiveController(FakeDoubanController):
         return [VodItem(vod_id="child-live-1", vod_name="直播间", vod_tag="file")], 1
 
 
+class FakeLiveSourceManager:
+    def list_sources(self):
+        return []
+
+
+class FakePluginManager:
+    def load_enabled_plugins(self):
+        return []
+
+
 class FakeEmbyController(FakeDoubanController):
     def __init__(self) -> None:
         super().__init__()
@@ -363,6 +373,40 @@ def test_main_window_logout_button_emits_logout_requested(qtbot) -> None:
     assert window.logout_button.text() == "退出登录"
     with qtbot.waitSignal(window.logout_requested, timeout=1000):
         window.logout_button.click()
+
+
+def test_main_window_opens_live_source_manager_dialog_and_reloads_live_categories(qtbot, monkeypatch) -> None:
+    controller = FakeLiveController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=controller,
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        live_source_manager=FakeLiveSourceManager(),
+        plugin_manager=FakePluginManager(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    reloaded = []
+    monkeypatch.setattr(window.live_page, "reload_categories", lambda: reloaded.append(True))
+
+    class FakeDialog:
+        def __init__(self, manager, parent=None) -> None:
+            self.manager = manager
+
+        def exec(self) -> int:
+            return 1
+
+    monkeypatch.setattr(main_window_module, "LiveSourceManagerDialog", FakeDialog)
+
+    window._open_live_source_manager()
+
+    assert reloaded == [True]
 
 
 def test_main_window_passes_config_and_save_callback_to_browse_page(qtbot) -> None:
