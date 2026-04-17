@@ -9,8 +9,8 @@ from typing import cast
 
 import httpx
 from PySide6.QtCore import QEvent, QObject, QSize, QTimer, Qt, Signal
-from PySide6.QtGui import QCloseEvent, QCursor, QIcon, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPixmap, QShortcut
-from PySide6.QtWidgets import QApplication, QStyle, QStyleOptionSlider, QToolTip
+from PySide6.QtGui import QActionGroup, QCloseEvent, QCursor, QIcon, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPixmap, QShortcut
+from PySide6.QtWidgets import QApplication, QMenu, QStyle, QStyleOptionSlider, QToolTip
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -118,6 +118,15 @@ class SubtitlePreference:
 
 
 @dataclass(slots=True)
+class SecondarySubtitlePreference:
+    mode: str = "off"
+    title: str = ""
+    lang: str = ""
+    is_default: bool = False
+    is_forced: bool = False
+
+
+@dataclass(slots=True)
 class AudioPreference:
     mode: str = "auto"
     title: str = ""
@@ -135,6 +144,13 @@ class PlayerWindow(QWidget):
     _POSTER_SIZE = QSize(180, 260)
     _POSTER_REQUEST_TIMEOUT_SECONDS = 10.0
     _DEFAULT_MAIN_SPLITTER_SIZES = [960, 320]
+    _SUBTITLE_POSITION_PRESETS = {
+        "顶部": 10,
+        "偏上": 30,
+        "默认": 50,
+        "偏下": 70,
+        "底部": 90,
+    }
 
     def __init__(self, controller, config=None, save_config=None) -> None:
         super().__init__()
@@ -169,6 +185,8 @@ class PlayerWindow(QWidget):
 
         self.video_widget = MpvWidget(self)
         self._configure_video_surface_widgets()
+        self.video_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.video_widget.customContextMenuRequested.connect(self._show_video_context_menu)
         self.video = self.video_widget
         self.playlist = QListWidget()
         self.play_button = self._create_icon_button("play.svg", "播放/暂停", "Space")
@@ -193,6 +211,9 @@ class PlayerWindow(QWidget):
         self.speed_combo.setCurrentText("1.0x")
         self._subtitle_tracks: list[SubtitleTrack] = []
         self._subtitle_preference = SubtitlePreference()
+        self._secondary_subtitle_preference = SecondarySubtitlePreference()
+        self._main_subtitle_position = 50
+        self._secondary_subtitle_position = 50
         self.subtitle_combo = QComboBox()
         self.subtitle_combo.addItem("自动选择", ("auto", None))
         self.subtitle_combo.setEnabled(False)
@@ -1138,6 +1159,145 @@ class PlayerWindow(QWidget):
             return
         self._remember_audio_track_preference(track)
         self.video.apply_audio_mode("track", track_id=track_id)
+
+    def _show_video_context_menu(self, pos) -> None:
+        menu = self._build_video_context_menu()
+        menu.exec(self.video_widget.mapToGlobal(pos))
+
+    def _build_video_context_menu(self) -> QMenu:
+        menu = QMenu(self)
+        menu.addMenu(self._build_primary_subtitle_menu(menu))
+        menu.addMenu(self._build_secondary_subtitle_menu(menu))
+        menu.addMenu(self._build_subtitle_position_menu(menu, title="主字幕位置", secondary=False))
+        menu.addMenu(self._build_subtitle_position_menu(menu, title="次字幕位置", secondary=True))
+        menu.addMenu(self._build_audio_menu(menu))
+        return menu
+
+    def _build_primary_subtitle_menu(self, parent: QWidget) -> QMenu:
+        menu = QMenu("主字幕", parent)
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+
+        auto_action = menu.addAction("自动选择")
+        auto_action.setCheckable(True)
+        auto_action.setChecked(self._subtitle_preference.mode == "auto")
+        auto_action.triggered.connect(lambda: self._set_primary_subtitle_from_menu("auto", None))
+        group.addAction(auto_action)
+
+        off_action = menu.addAction("关闭字幕")
+        off_action.setCheckable(True)
+        off_action.setChecked(self._subtitle_preference.mode == "off")
+        off_action.triggered.connect(lambda: self._set_primary_subtitle_from_menu("off", None))
+        group.addAction(off_action)
+
+        for track in self._subtitle_tracks:
+            action = menu.addAction(track.label)
+            action.setCheckable(True)
+            action.setChecked(
+                self._subtitle_preference.mode == "track"
+                and self._subtitle_preference.title == track.title
+                and self._subtitle_preference.lang == track.lang
+            )
+            action.triggered.connect(
+                lambda _checked=False, track_id=track.id: self._set_primary_subtitle_from_menu("track", track_id)
+            )
+            group.addAction(action)
+
+        return menu
+
+    def _build_secondary_subtitle_menu(self, parent: QWidget) -> QMenu:
+        menu = QMenu("次字幕", parent)
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+
+        off_action = menu.addAction("关闭次字幕")
+        off_action.setCheckable(True)
+        off_action.setChecked(self._secondary_subtitle_preference.mode == "off")
+        off_action.triggered.connect(lambda: self._set_secondary_subtitle_from_menu("off", None))
+        group.addAction(off_action)
+
+        for track in self._subtitle_tracks:
+            action = menu.addAction(track.label)
+            action.setCheckable(True)
+            action.setChecked(
+                self._secondary_subtitle_preference.mode == "track"
+                and self._secondary_subtitle_preference.title == track.title
+                and self._secondary_subtitle_preference.lang == track.lang
+            )
+            action.triggered.connect(
+                lambda _checked=False, track_id=track.id: self._set_secondary_subtitle_from_menu("track", track_id)
+            )
+            group.addAction(action)
+
+        return menu
+
+    def _build_subtitle_position_menu(self, parent: QWidget, title: str, secondary: bool) -> QMenu:
+        return QMenu(title, parent)
+
+    def _build_audio_menu(self, parent: QWidget) -> QMenu:
+        menu = QMenu("音轨", parent)
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+
+        auto_action = menu.addAction("自动选择")
+        auto_action.setCheckable(True)
+        auto_action.setChecked(self._audio_preference.mode == "auto")
+        auto_action.triggered.connect(lambda: self._set_audio_from_menu("auto", None))
+        group.addAction(auto_action)
+
+        for track in self._audio_tracks:
+            action = menu.addAction(track.label)
+            action.setCheckable(True)
+            action.setChecked(
+                self._audio_preference.mode == "track"
+                and self._audio_preference.title == track.title
+                and self._audio_preference.lang == track.lang
+            )
+            action.triggered.connect(lambda _checked=False, track_id=track.id: self._set_audio_from_menu("track", track_id))
+            group.addAction(action)
+
+        return menu
+
+    def _set_primary_subtitle_from_menu(self, mode: str, track_id: int | None) -> None:
+        if mode == "auto":
+            self.subtitle_combo.setCurrentIndex(0)
+            return
+        if mode == "off":
+            self.subtitle_combo.setCurrentIndex(1)
+            return
+        for index in range(self.subtitle_combo.count()):
+            if self.subtitle_combo.itemData(index) == ("track", track_id):
+                self.subtitle_combo.setCurrentIndex(index)
+                return
+
+    def _set_audio_from_menu(self, mode: str, track_id: int | None) -> None:
+        if mode == "auto":
+            self.audio_combo.setCurrentIndex(0)
+            return
+        for index in range(self.audio_combo.count()):
+            if self.audio_combo.itemData(index) == ("track", track_id):
+                self.audio_combo.setCurrentIndex(index)
+                return
+
+    def _set_secondary_subtitle_from_menu(self, mode: str, track_id: int | None) -> None:
+        try:
+            if mode == "off":
+                self._secondary_subtitle_preference = SecondarySubtitlePreference()
+                self.video.apply_secondary_subtitle_mode("off")
+                return
+            track = next((track for track in self._subtitle_tracks if track.id == track_id), None)
+            if track is None:
+                return
+            self._secondary_subtitle_preference = SecondarySubtitlePreference(
+                mode="track",
+                title=track.title,
+                lang=track.lang,
+                is_default=track.is_default,
+                is_forced=track.is_forced,
+            )
+            self.video.apply_secondary_subtitle_mode("track", track_id=track.id)
+        except Exception as exc:
+            self._append_log(f"次字幕切换失败: {exc}")
 
     def _change_volume(self, value: int) -> None:
         try:
