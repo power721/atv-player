@@ -1,7 +1,7 @@
 import threading
 
 from PySide6.QtCore import QByteArray, Qt
-from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QSplitter
+from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QSplitter, QTableWidgetItem
 
 from atv_player.api import ApiError
 from atv_player.models import AppConfig, HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
@@ -30,6 +30,67 @@ class ErroringBrowseController(FakeBrowseController):
 class FakeHistoryController:
     def load_page(self, page: int, size: int):
         return [], 0
+
+
+class AsyncHistoryPageController:
+    def __init__(self) -> None:
+        self.load_calls: list[tuple[int, int]] = []
+        self.delete_one_calls: list[int] = []
+        self.delete_many_calls: list[list[int]] = []
+        self.clear_all_calls = 0
+        self._main_thread_id = threading.get_ident()
+        self._load_events_by_request: dict[tuple[int, int], list[threading.Event]] = {}
+        self._load_results_by_request: dict[tuple[int, int], list[tuple[list[HistoryRecord], int]]] = {}
+        self._delete_one_events: list[threading.Event] = []
+        self._delete_many_events: list[threading.Event] = []
+        self._clear_all_events: list[threading.Event] = []
+
+    def load_page(self, page: int, size: int):
+        self.load_calls.append((page, size))
+        assert threading.get_ident() != self._main_thread_id
+        key = (page, size)
+        event = threading.Event()
+        self._load_events_by_request.setdefault(key, []).append(event)
+        assert event.wait(timeout=5), f"history load for {key!r} was never released"
+        results = self._load_results_by_request.get(key)
+        if results:
+            return results.pop(0)
+        return [], 0
+
+    def finish_load(self, page: int, size: int, *, records: list[HistoryRecord], total: int) -> None:
+        key = (page, size)
+        self._load_results_by_request.setdefault(key, []).append((records, total))
+        self._load_events_by_request[key].pop(0).set()
+
+    def delete_one(self, history_id: int) -> None:
+        self.delete_one_calls.append(history_id)
+        assert threading.get_ident() != self._main_thread_id
+        event = threading.Event()
+        self._delete_one_events.append(event)
+        assert event.wait(timeout=5), "delete_one was never released"
+
+    def finish_delete_one(self) -> None:
+        self._delete_one_events.pop(0).set()
+
+    def delete_many(self, history_ids: list[int]) -> None:
+        self.delete_many_calls.append(list(history_ids))
+        assert threading.get_ident() != self._main_thread_id
+        event = threading.Event()
+        self._delete_many_events.append(event)
+        assert event.wait(timeout=5), "delete_many was never released"
+
+    def finish_delete_many(self) -> None:
+        self._delete_many_events.pop(0).set()
+
+    def clear_all(self) -> None:
+        self.clear_all_calls += 1
+        assert threading.get_ident() != self._main_thread_id
+        event = threading.Event()
+        self._clear_all_events.append(event)
+        assert event.wait(timeout=5), "clear_all was never released"
+
+    def finish_clear_all(self) -> None:
+        self._clear_all_events.pop(0).set()
 
 
 class FakeSearchController:
@@ -200,6 +261,10 @@ def _wait_for_open_call(qtbot, controller: AsyncOpenController, kind: str, vod_i
 
 def _wait_for_resolve_call(qtbot, controller: AsyncResolveController, vod_id: str) -> None:
     qtbot.waitUntil(lambda: vod_id in controller.resolve_calls, timeout=1000)
+
+
+def _wait_for_history_load(qtbot, controller: AsyncHistoryPageController, page: int, size: int) -> None:
+    qtbot.waitUntil(lambda: (page, size) in controller.load_calls, timeout=1000)
 
 
 def test_browse_page_uses_split_view_for_search_and_file_list(qtbot) -> None:
@@ -511,6 +576,7 @@ def test_history_page_formats_episode_progress_and_time(qtbot) -> None:
     qtbot.addWidget(page)
 
     page.load_history()
+    qtbot.waitUntil(lambda: page.table.rowCount() == 1, timeout=1000)
 
     assert page.table.columnCount() == 5
     assert page.table.horizontalHeaderItem(1).text() == "集数"
@@ -926,28 +992,43 @@ def test_history_page_loads_selected_page_and_page_size(qtbot) -> None:
     qtbot.addWidget(page)
 
     page.page_size_combo.setCurrentText("30")
-    page.load_history()
+    qtbot.waitUntil(
+        lambda: bool(controller.calls) and controller.calls[-1] == (1, 30) and page.page_label.text() == "第 1 / 4 页",
+        timeout=1000,
+    )
     controller.calls.clear()
 
     page.next_page()
 
-    assert controller.calls[-1] == (2, 30)
-    assert page.page_label.text() == "第 2 / 4 页"
+    qtbot.waitUntil(
+        lambda: bool(controller.calls) and controller.calls[-1] == (2, 30) and page.page_label.text() == "第 2 / 4 页",
+        timeout=1000,
+    )
 
 
 def test_history_page_disables_prev_and_next_when_unavailable(qtbot) -> None:
     class Controller:
+        def __init__(self) -> None:
+            self.calls: list[tuple[int, int]] = []
+
         def load_page(self, page: int, size: int):
+            self.calls.append((page, size))
             return [], 20
 
-    page = HistoryPage(Controller())
+    controller = Controller()
+    page = HistoryPage(controller)
     qtbot.addWidget(page)
 
     page.page_size_combo.setCurrentText("20")
-    page.load_history()
 
-    assert page.prev_page_button.isEnabled() is False
-    assert page.next_page_button.isEnabled() is False
+    qtbot.waitUntil(
+        lambda: controller.calls == [(1, 20)]
+        and page.total_items == 20
+        and page.page_label.text() == "第 1 / 1 页"
+        and page.prev_page_button.isEnabled() is False
+        and page.next_page_button.isEnabled() is False,
+        timeout=1000,
+    )
 
 
 def test_history_page_delete_reloads_previous_page_when_last_page_becomes_empty(qtbot) -> None:
@@ -989,11 +1070,14 @@ def test_history_page_delete_reloads_previous_page_when_last_page_becomes_empty(
     page.page_size = 50
 
     page.load_history()
+    qtbot.waitUntil(
+        lambda: controller.calls[0] == (2, 50) and page.table.rowCount() == 1 and page.page_label.text() == "第 2 / 2 页",
+        timeout=1000,
+    )
     page.table.selectRow(0)
     page.delete_selected()
 
-    assert controller.calls[-1] == (1, 50)
-    assert page.current_page == 1
+    qtbot.waitUntil(lambda: controller.calls[-1] == (1, 50) and page.current_page == 1, timeout=1000)
 
 
 def test_history_page_clear_all_resets_to_first_page(qtbot) -> None:
@@ -1033,12 +1117,17 @@ def test_history_page_clear_all_resets_to_first_page(qtbot) -> None:
     page.page_size = 50
 
     page.load_history()
+    qtbot.waitUntil(
+        lambda: controller.calls == [(2, 50)] and page.table.rowCount() == 1 and page.page_label.text() == "第 2 / 2 页",
+        timeout=1000,
+    )
     controller.calls.clear()
     page.clear_all()
 
-    assert page.current_page == 1
-    assert controller.calls == [(1, 50)]
-    assert page.page_label.text() == "第 1 / 1 页"
+    qtbot.waitUntil(
+        lambda: page.current_page == 1 and controller.calls == [(1, 50)] and page.page_label.text() == "第 1 / 1 页",
+        timeout=1000,
+    )
 
 
 def test_history_page_refresh_reuses_current_page_state(qtbot) -> None:
@@ -1055,13 +1144,163 @@ def test_history_page_refresh_reuses_current_page_state(qtbot) -> None:
     qtbot.addWidget(page)
 
     page.page_size_combo.setCurrentText("30")
-    page.load_history()
+    qtbot.waitUntil(
+        lambda: bool(controller.calls) and controller.calls[-1] == (1, 30) and page.page_label.text() == "第 1 / 4 页",
+        timeout=1000,
+    )
     page.next_page()
+    qtbot.waitUntil(lambda: controller.calls[-1] == (2, 30) and page.page_label.text() == "第 2 / 4 页", timeout=1000)
     controller.calls.clear()
 
     page.refresh_button.click()
 
-    assert controller.calls == [(2, 30)]
+    qtbot.waitUntil(lambda: controller.calls == [(2, 30)], timeout=1000)
+
+
+def test_history_page_loads_history_outside_main_thread(qtbot) -> None:
+    controller = AsyncHistoryPageController()
+    page = HistoryPage(controller)
+    qtbot.addWidget(page)
+
+    page.load_history()
+    _wait_for_history_load(qtbot, controller, 1, 100)
+    controller.finish_load(
+        1,
+        100,
+        records=[
+            HistoryRecord(
+                id=1,
+                key="movie-1",
+                vod_name="Movie",
+                vod_pic="",
+                vod_remarks="Episode 1",
+                episode=0,
+                episode_url="",
+                position=60000,
+                opening=0,
+                ending=0,
+                speed=1.0,
+                create_time=1,
+            )
+        ],
+        total=1,
+    )
+
+    qtbot.waitUntil(lambda: page.table.rowCount() == 1, timeout=1000)
+    assert page.table.item(0, 0).text() == "Movie"
+
+
+def test_history_page_uses_latest_async_load_result(qtbot) -> None:
+    controller = AsyncHistoryPageController()
+    page = HistoryPage(controller)
+    qtbot.addWidget(page)
+    page.page_size = 50
+
+    page.load_history()
+    _wait_for_history_load(qtbot, controller, 1, 50)
+
+    page.current_page = 2
+    page.load_history()
+    _wait_for_history_load(qtbot, controller, 2, 50)
+
+    controller.finish_load(
+        2,
+        50,
+        records=[
+            HistoryRecord(
+                id=2,
+                key="movie-2",
+                vod_name="Second",
+                vod_pic="",
+                vod_remarks="Episode 2",
+                episode=1,
+                episode_url="",
+                position=0,
+                opening=0,
+                ending=0,
+                speed=1.0,
+                create_time=1,
+            )
+        ],
+        total=120,
+    )
+    qtbot.waitUntil(lambda: page.table.rowCount() == 1 and page.table.item(0, 0).text() == "Second", timeout=1000)
+
+    controller.finish_load(
+        1,
+        50,
+        records=[
+            HistoryRecord(
+                id=1,
+                key="movie-1",
+                vod_name="First",
+                vod_pic="",
+                vod_remarks="Episode 1",
+                episode=0,
+                episode_url="",
+                position=0,
+                opening=0,
+                ending=0,
+                speed=1.0,
+                create_time=1,
+            )
+        ],
+        total=120,
+    )
+    qtbot.wait(100)
+
+    assert page.table.item(0, 0).text() == "Second"
+    assert page.current_page == 2
+
+
+def test_history_page_delete_selected_runs_off_main_thread_and_reloads(qtbot) -> None:
+    controller = AsyncHistoryPageController()
+    page = HistoryPage(controller)
+    qtbot.addWidget(page)
+    page.records = [
+        HistoryRecord(
+            id=9,
+            key="movie-1",
+            vod_name="Movie",
+            vod_pic="",
+            vod_remarks="Ep",
+            episode=0,
+            episode_url="",
+            position=0,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+        )
+    ]
+    page.total_items = 1
+    page.table.setRowCount(1)
+    page.table.setItem(0, 0, QTableWidgetItem("Movie"))
+    page.table.selectRow(0)
+
+    page.delete_selected()
+    qtbot.waitUntil(lambda: controller.delete_one_calls == [9], timeout=1000)
+    controller.finish_delete_one()
+    _wait_for_history_load(qtbot, controller, 1, 100)
+    controller.finish_load(1, 100, records=[], total=0)
+
+    qtbot.waitUntil(lambda: page.table.rowCount() == 0 and page.page_label.text() == "第 1 / 1 页", timeout=1000)
+
+
+def test_history_page_clear_all_runs_off_main_thread_and_resets_first_page(qtbot) -> None:
+    controller = AsyncHistoryPageController()
+    page = HistoryPage(controller)
+    qtbot.addWidget(page)
+    page.current_page = 2
+    page.page_size = 50
+
+    page.clear_all()
+    qtbot.waitUntil(lambda: controller.clear_all_calls == 1, timeout=1000)
+    controller.finish_clear_all()
+    _wait_for_history_load(qtbot, controller, 1, 50)
+    controller.finish_load(1, 50, records=[], total=0)
+
+    qtbot.waitUntil(lambda: page.current_page == 1 and page.page_label.text() == "第 1 / 1 页", timeout=1000)
 
 
 def test_browse_page_refresh_reuses_current_page_state(qtbot) -> None:

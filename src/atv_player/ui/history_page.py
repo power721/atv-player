@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+import threading
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -15,10 +16,23 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+import shiboken6
 
 from atv_player.api import ApiError, UnauthorizedError
 from atv_player.models import HistoryRecord
 from atv_player.ui.table_utils import configure_table_columns
+
+
+class _HistoryLoadSignals(QObject):
+    succeeded = Signal(int, int, int, object, int)
+    failed = Signal(int)
+    unauthorized = Signal(int)
+
+
+class _HistoryMutationSignals(QObject):
+    succeeded = Signal(int, int)
+    failed = Signal(int)
+    unauthorized = Signal(int)
 
 
 class HistoryPage(QWidget):
@@ -46,6 +60,16 @@ class HistoryPage(QWidget):
         self.current_page = 1
         self.page_size = 100
         self.total_items = 0
+        self._load_request_id = 0
+        self._mutation_request_id = 0
+        self._load_signals = _HistoryLoadSignals(self)
+        self._load_signals.succeeded.connect(self._handle_load_succeeded)
+        self._load_signals.failed.connect(self._handle_load_failed)
+        self._load_signals.unauthorized.connect(self._handle_load_unauthorized)
+        self._mutation_signals = _HistoryMutationSignals(self)
+        self._mutation_signals.succeeded.connect(self._handle_mutation_succeeded)
+        self._mutation_signals.failed.connect(self._handle_mutation_failed)
+        self._mutation_signals.unauthorized.connect(self._handle_mutation_unauthorized)
         for size in ("20", "30", "50", "100"):
             self.page_size_combo.addItem(size, int(size))
         self.page_size_combo.setCurrentText(str(self.page_size))
@@ -94,53 +118,83 @@ class HistoryPage(QWidget):
 
     def load_history(self) -> None:
         self._initial_load_started = True
-        try:
-            records, total = self.controller.load_page(page=self.current_page, size=self.page_size)
-        except UnauthorizedError:
-            self.unauthorized.emit()
-            return
-        except ApiError:
-            return
-        self.total_items = total
-        self.records = records
-        self.table.setRowCount(len(records))
-        for row, record in enumerate(records):
-            self.table.setItem(row, 0, QTableWidgetItem(record.vod_name))
-            self.table.setItem(row, 1, QTableWidgetItem(self._format_episode(record.episode)))
-            self.table.setItem(row, 2, QTableWidgetItem(record.vod_remarks))
-            self.table.setItem(row, 3, QTableWidgetItem(self._format_duration(record.position)))
-            self.table.setItem(row, 4, QTableWidgetItem(self._format_timestamp(record.create_time)))
-        self._update_pagination_controls()
+        self._load_request_id += 1
+        request_id = self._load_request_id
+        page = self.current_page
+        size = self.page_size
+
+        def run() -> None:
+            try:
+                records, total = self.controller.load_page(page=page, size=size)
+            except UnauthorizedError:
+                if not self._can_deliver_worker_result():
+                    return
+                self._load_signals.unauthorized.emit(request_id)
+                return
+            except ApiError:
+                if not self._can_deliver_worker_result():
+                    return
+                self._load_signals.failed.emit(request_id)
+                return
+            if not self._can_deliver_worker_result():
+                return
+            self._load_signals.succeeded.emit(request_id, page, size, records, total)
+
+        threading.Thread(target=run, daemon=True).start()
 
     def delete_selected(self) -> None:
         rows = sorted({index.row() for index in self.table.selectionModel().selectedRows()})
         if not rows:
             return
         ids = [self.records[row].id for row in rows]
-        try:
-            if len(ids) == 1:
-                self.controller.delete_one(ids[0])
-            else:
-                self.controller.delete_many(ids)
-        except UnauthorizedError:
-            self.unauthorized.emit()
-            return
-        except ApiError:
-            return
-        if len(ids) == len(self.records) and self.current_page > 1:
-            self.current_page -= 1
-        self.load_history()
+        next_page = self.current_page - 1 if len(ids) == len(self.records) and self.current_page > 1 else self.current_page
+
+        def run() -> None:
+            try:
+                if len(ids) == 1:
+                    self.controller.delete_one(ids[0])
+                else:
+                    self.controller.delete_many(ids)
+            except UnauthorizedError:
+                if not self._can_deliver_worker_result():
+                    return
+                self._mutation_signals.unauthorized.emit(request_id)
+                return
+            except ApiError:
+                if not self._can_deliver_worker_result():
+                    return
+                self._mutation_signals.failed.emit(request_id)
+                return
+            if not self._can_deliver_worker_result():
+                return
+            self._mutation_signals.succeeded.emit(request_id, next_page)
+
+        self._mutation_request_id += 1
+        request_id = self._mutation_request_id
+        threading.Thread(target=run, daemon=True).start()
 
     def clear_all(self) -> None:
-        try:
-            self.controller.clear_all()
-        except UnauthorizedError:
-            self.unauthorized.emit()
-            return
-        except ApiError:
-            return
-        self.current_page = 1
-        self.load_history()
+        self._mutation_request_id += 1
+        request_id = self._mutation_request_id
+
+        def run() -> None:
+            try:
+                self.controller.clear_all()
+            except UnauthorizedError:
+                if not self._can_deliver_worker_result():
+                    return
+                self._mutation_signals.unauthorized.emit(request_id)
+                return
+            except ApiError:
+                if not self._can_deliver_worker_result():
+                    return
+                self._mutation_signals.failed.emit(request_id)
+                return
+            if not self._can_deliver_worker_result():
+                return
+            self._mutation_signals.succeeded.emit(request_id, 1)
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _open_selected(self, row: int, _column: int) -> None:
         if not (0 <= row < len(self.records)):
@@ -192,3 +246,53 @@ class HistoryPage(QWidget):
         self.page_label.setText(f"第 {self.current_page} / {total_pages} 页")
         self.prev_page_button.setEnabled(self.current_page > 1)
         self.next_page_button.setEnabled(self.current_page < total_pages)
+
+    def _handle_load_succeeded(
+        self,
+        request_id: int,
+        page: int,
+        size: int,
+        records: list[HistoryRecord],
+        total: int,
+    ) -> None:
+        if request_id != self._load_request_id:
+            return
+        if page != self.current_page or size != self.page_size:
+            return
+        self.total_items = total
+        self.records = list(records)
+        self.table.setRowCount(len(records))
+        for row, record in enumerate(records):
+            self.table.setItem(row, 0, QTableWidgetItem(record.vod_name))
+            self.table.setItem(row, 1, QTableWidgetItem(self._format_episode(record.episode)))
+            self.table.setItem(row, 2, QTableWidgetItem(record.vod_remarks))
+            self.table.setItem(row, 3, QTableWidgetItem(self._format_duration(record.position)))
+            self.table.setItem(row, 4, QTableWidgetItem(self._format_timestamp(record.create_time)))
+        self._update_pagination_controls()
+
+    def _handle_load_failed(self, request_id: int) -> None:
+        if request_id != self._load_request_id:
+            return
+
+    def _handle_load_unauthorized(self, request_id: int) -> None:
+        if request_id != self._load_request_id:
+            return
+        self.unauthorized.emit()
+
+    def _handle_mutation_succeeded(self, request_id: int, next_page: int) -> None:
+        if request_id != self._mutation_request_id:
+            return
+        self.current_page = next_page
+        self.load_history()
+
+    def _handle_mutation_failed(self, request_id: int) -> None:
+        if request_id != self._mutation_request_id:
+            return
+
+    def _handle_mutation_unauthorized(self, request_id: int) -> None:
+        if request_id != self._mutation_request_id:
+            return
+        self.unauthorized.emit()
+
+    def _can_deliver_worker_result(self) -> bool:
+        return shiboken6.isValid(self)
