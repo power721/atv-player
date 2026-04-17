@@ -2,6 +2,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -25,6 +26,9 @@ class LoginWindow(QWidget):
         self.username_edit = QLineEdit(defaults.username)
         self.password_edit = QLineEdit()
         self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.error_label = QLabel("")
+        self.error_label.setWordWrap(True)
+        self.error_label.hide()
         self.login_button = QPushButton("登录")
         self.login_button.clicked.connect(self._on_login_clicked)
 
@@ -44,6 +48,7 @@ class LoginWindow(QWidget):
         content_layout = QVBoxLayout(self.content_container)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.addLayout(form)
+        content_layout.addWidget(self.error_label)
         content_layout.addWidget(self.login_button)
 
         centered_row = QHBoxLayout()
@@ -67,3 +72,7 @@ class LoginWindow(QWidget):
             QMessageBox.critical(self, "登录失败", str(exc))
             return
         self.login_succeeded.emit()
+
+    def set_error_message(self, message: str) -> None:
+        self.error_label.setText(message)
+        self.error_label.setVisible(bool(message))

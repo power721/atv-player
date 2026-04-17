@@ -93,6 +93,8 @@ class AppCoordinator(QObject):
             except UnauthorizedError:
                 self.repo.clear_token()
                 return self._show_login()
+            except ApiError as exc:
+                return self._show_login(error_message=str(exc))
             return self._show_main()
         return self._show_login()
 
@@ -116,12 +118,14 @@ class AppCoordinator(QObject):
         self.repo.save_config(config)
         return vod_token
 
-    def _show_login(self) -> LoginWindow:
+    def _show_login(self, error_message: str = "") -> LoginWindow:
         login_controller = LoginController(
             self.repo,
             lambda base_url: ApiClient(base_url),
         )
         self.login_window = LoginWindow(login_controller)
+        if error_message and hasattr(self.login_window, "set_error_message"):
+            self.login_window.set_error_message(error_message)
         self.login_window.login_succeeded.connect(self._handle_login_succeeded)
         if self.main_window is not None:
             self.main_window.close()

@@ -1079,6 +1079,63 @@ def test_app_coordinator_start_does_not_require_vod_root_probe(monkeypatch) -> N
     assert FakeApiClient.list_vod_calls == 0
 
 
+def test_app_coordinator_start_returns_login_window_when_vod_token_fetch_raises_api_error(monkeypatch) -> None:
+    class FakeRepo:
+        def __init__(self) -> None:
+            self.config = AppConfig(
+                base_url="http://127.0.0.1:4567",
+                username="alice",
+                token="auth-123",
+                vod_token="",
+                last_path="/",
+            )
+
+        def load_config(self) -> AppConfig:
+            return self.config
+
+        def save_config(self, config: AppConfig) -> None:
+            self.config = config
+
+        def clear_token(self) -> None:
+            self.config.token = ""
+            self.config.vod_token = ""
+
+    class FailingApiClient:
+        def __init__(self, base_url: str, token: str = "", vod_token: str = "") -> None:
+            self.base_url = base_url
+            self.token = token
+            self.vod_token = vod_token
+
+        def fetch_vod_token(self) -> str:
+            raise app_module.ApiError("请求超时")
+
+    class SignalStub:
+        def connect(self, callback) -> None:
+            self.callback = callback
+
+    class FakeLoginWindow:
+        def __init__(self, controller) -> None:
+            self.controller = controller
+            self.login_succeeded = SignalStub()
+            self.error_message = ""
+
+        def set_error_message(self, message: str) -> None:
+            self.error_message = message
+
+    repo = FakeRepo()
+    coordinator = AppCoordinator(repo)
+
+    monkeypatch.setattr(app_module, "ApiClient", FailingApiClient)
+    monkeypatch.setattr(app_module, "LoginWindow", FakeLoginWindow)
+
+    widget = coordinator.start()
+
+    assert isinstance(widget, FakeLoginWindow)
+    assert widget.error_message == "请求超时"
+    assert repo.config.token == "auth-123"
+    assert repo.config.vod_token == ""
+
+
 def test_app_coordinator_falls_back_to_main_when_player_restore_fails(monkeypatch) -> None:
     class FakeRepo:
         def __init__(self) -> None:
