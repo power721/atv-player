@@ -2049,6 +2049,7 @@ class PlayerWindow(QWidget):
     def _return_to_main(self) -> None:
         self._invalidate_play_item_resolution()
         self._close_help_dialog()
+        self._close_video_context_menu()
         try:
             self.video.pause()
         except Exception:
@@ -2141,6 +2142,7 @@ class PlayerWindow(QWidget):
             self._invalidate_play_item_resolution()
             self._video_surface_ready = False
             self._close_help_dialog()
+            self._close_video_context_menu()
             self.report_progress()
             self._stop_current_playback()
             self.session = None

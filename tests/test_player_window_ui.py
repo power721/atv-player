@@ -4710,6 +4710,39 @@ def test_player_window_return_to_main_closes_shortcut_help_dialog(qtbot) -> None
     assert window.help_dialog is None
 
 
+def test_player_window_return_to_main_closes_video_context_menu(qtbot) -> None:
+    class FakeMenu(QObject):
+        aboutToHide = Signal()
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.visible = True
+            self.hide_calls = 0
+
+        def isVisible(self) -> bool:
+            return self.visible
+
+        def hide(self) -> None:
+            self.hide_calls += 1
+            self.visible = False
+            self.aboutToHide.emit()
+
+        def deleteLater(self) -> None:
+            return None
+
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(last_active_window="player"), save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session())
+    fake_menu = FakeMenu()
+    window._video_context_menu = fake_menu
+
+    window._return_to_main()
+
+    assert fake_menu.hide_calls == 1
+    assert window._video_context_menu is None
+
+
 def test_player_window_keyboard_shortcuts_control_playback_navigation_and_view(qtbot) -> None:
     controller = RecordingPlayerController()
     video = RecordingVideo()
