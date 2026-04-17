@@ -516,6 +516,7 @@ class BrowsePage(QWidget):
         if request_id != self._search_request_id:
             return
         self._set_search_loading(False)
+        self.status_label.clear()
         self.unauthorized.emit()
 
     def _start_folder_load(self, path: str, page: int, size: int) -> int:

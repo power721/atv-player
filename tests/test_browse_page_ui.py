@@ -1016,6 +1016,29 @@ def test_browse_page_keeps_search_panel_visible_when_filter_has_no_matches(qtbot
     assert page.status_label.text() == "1 条结果"
 
 
+def test_browse_page_clears_loading_status_after_unauthorized(qtbot) -> None:
+    class Controller(FakeBrowseController):
+        def search(self, keyword: str):
+            raise UnauthorizedError("登录已失效")
+
+    page = BrowsePage(Controller())
+    qtbot.addWidget(page)
+    page.show()
+    unauthorized = []
+    page.unauthorized.connect(lambda: unauthorized.append(True))
+    page.keyword_edit.setText("霸王别姬")
+
+    page.search()
+
+    qtbot.waitUntil(lambda: unauthorized == [True], timeout=1000)
+
+    assert page.keyword_edit.isEnabled() is True
+    assert page.search_button.isEnabled() is True
+    assert page.filter_combo.isEnabled() is True
+    assert page.clear_button.isEnabled() is True
+    assert page.status_label.text() == ""
+
+
 def test_browse_page_uses_latest_async_search_result(qtbot) -> None:
     controller = AsyncSearchController()
     page = BrowsePage(controller)
