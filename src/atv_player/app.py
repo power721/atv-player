@@ -190,6 +190,10 @@ class AppCoordinator(QObject):
             self.login_window.close()
             self.login_window = None
         if config.last_active_window == "player":
+            start_restore_last_player = getattr(self.main_window, "_start_restore_last_player", None)
+            if callable(start_restore_last_player):
+                start_restore_last_player()
+                return self.main_window
             try:
                 restored = self.main_window.restore_last_player()
             except Exception:

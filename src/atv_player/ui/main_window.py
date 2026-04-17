@@ -656,6 +656,8 @@ class MainWindow(QMainWindow):
     def _handle_restore_failed(self, request_id: int) -> None:
         if request_id != self._restore_request_id:
             return
+        self.config.last_active_window = "main"
+        self._save_config()
 
     def _build_detail_restore_request(self, source: str, vod_id: str):
         if source == "telegram":

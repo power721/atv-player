@@ -205,3 +205,29 @@ def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monk
     assert config.last_playback_mode == "detail"
     assert config.last_playback_vod_id == "vod-1"
     assert config.last_player_paused is False
+
+
+def test_main_window_async_restore_failure_resets_last_active_window(qtbot) -> None:
+    class FailingBrowseController(FakeStaticController):
+        def build_request_from_detail(self, vod_id: str):
+            raise RuntimeError(f"failed to restore {vod_id}")
+
+    saved = {"count": 0}
+    config = AppConfig(
+        last_active_window="player",
+        last_playback_mode="detail",
+        last_playback_vod_id="vod-1",
+    )
+    window = MainWindow(
+        browse_controller=FailingBrowseController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("count", saved["count"] + 1),
+    )
+    qtbot.addWidget(window)
+
+    window._start_restore_last_player()
+
+    qtbot.waitUntil(lambda: config.last_active_window == "main")
+    assert saved["count"] >= 1

@@ -1679,6 +1679,64 @@ def test_app_coordinator_falls_back_to_main_when_player_restore_fails(monkeypatc
     assert repo.config.last_active_window == "main"
 
 
+def test_app_coordinator_show_main_starts_async_player_restore_when_supported(monkeypatch) -> None:
+    class FakeRepo:
+        def __init__(self) -> None:
+            self.config = AppConfig(
+                base_url="http://127.0.0.1:4567",
+                username="alice",
+                token="auth-123",
+                vod_token="vod-123",
+                last_active_window="player",
+                last_playback_mode="detail",
+                last_playback_vod_id="vod-1",
+            )
+
+        def load_config(self) -> AppConfig:
+            return self.config
+
+        def save_config(self, config: AppConfig) -> None:
+            self.config = config
+
+        def clear_token(self) -> None:
+            self.config.token = ""
+            self.config.vod_token = ""
+
+    class FakeApiClient:
+        def __init__(self, base_url: str, token: str = "", vod_token: str = "") -> None:
+            self.base_url = base_url
+            self.token = token
+            self.vod_token = vod_token
+
+        def set_vod_token(self, vod_token: str) -> None:
+            self.vod_token = vod_token
+
+    class FakeMainWindow:
+        logout_requested = type("SignalStub", (), {"connect": lambda self, cb: None})()
+
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+            self.async_restore_calls = 0
+
+        def _start_restore_last_player(self) -> None:
+            self.async_restore_calls += 1
+
+        def restore_last_player(self):
+            raise AssertionError("sync restore should not be used when async restore is supported")
+
+    repo = FakeRepo()
+    coordinator = AppCoordinator(repo)
+
+    monkeypatch.setattr(app_module, "ApiClient", FakeApiClient)
+    monkeypatch.setattr(app_module, "MainWindow", FakeMainWindow)
+    monkeypatch.setattr(coordinator, "_build_api_client", lambda: FakeApiClient("http://127.0.0.1:4567", "auth-123", "vod-123"))
+
+    widget = coordinator._show_main()
+
+    assert isinstance(widget, FakeMainWindow)
+    assert widget.async_restore_calls == 1
+
+
 def test_app_coordinator_show_main_uses_capabilities_to_toggle_media_tabs(monkeypatch) -> None:
     class FakeRepo:
         def __init__(self) -> None:
