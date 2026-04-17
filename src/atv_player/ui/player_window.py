@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import queue
 import threading
 import time
 from collections.abc import Callable
@@ -127,6 +128,10 @@ class _PlayItemResolveSignals(QObject):
     failed = Signal(int, str)
 
 
+class _BackgroundTaskSignals(QObject):
+    failed = Signal(str)
+
+
 @dataclass(slots=True)
 class SubtitlePreference:
     mode: str = "auto"
@@ -220,6 +225,14 @@ class PlayerWindow(QWidget):
         self._play_item_resolve_signals = _PlayItemResolveSignals(self)
         self._play_item_resolve_signals.succeeded.connect(self._handle_play_item_resolve_succeeded)
         self._play_item_resolve_signals.failed.connect(self._handle_play_item_resolve_failed)
+        self._background_task_signals = _BackgroundTaskSignals(self)
+        self._background_task_signals.failed.connect(self._append_log)
+        self._controller_task_queue: queue.SimpleQueue[tuple[str, Callable[[], None]] | None] = queue.SimpleQueue()
+        self._controller_task_worker = threading.Thread(
+            target=self._run_controller_task_queue,
+            daemon=True,
+        )
+        self._controller_task_worker.start()
         self.setWindowTitle(self._default_window_title())
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
@@ -926,6 +939,24 @@ class PlayerWindow(QWidget):
         self._play_item_request_id += 1
         self._pending_play_item_load = None
 
+    def _run_controller_task_queue(self) -> None:
+        while True:
+            task_entry = self._controller_task_queue.get()
+            if task_entry is None:
+                return
+            error_prefix, task = task_entry
+            try:
+                task()
+            except Exception as exc:
+                if self._is_window_alive():
+                    self._background_task_signals.failed.emit(f"{error_prefix}: {exc}")
+
+    def _enqueue_controller_task(self, error_prefix: str, task: Callable[[], None]) -> None:
+        self._controller_task_queue.put((error_prefix, task))
+
+    def _shutdown_controller_task_queue(self) -> None:
+        self._controller_task_queue.put(None)
+
     def _start_play_item_resolution(
         self,
         *,
@@ -1030,27 +1061,39 @@ class PlayerWindow(QWidget):
             position_seconds = self.video.position_seconds()
             if position_seconds is None:
                 return
-            self.session.opening_seconds = self.opening_spin.value()
-            self.session.ending_seconds = self.ending_spin.value()
-            self.controller.report_progress(
-                self.session,
-                current_index=self.current_index,
-                position_seconds=position_seconds,
-                speed=self.current_speed,
-                opening_seconds=self.session.opening_seconds,
-                ending_seconds=self.session.ending_seconds,
-                paused=not self.is_playing,
-            )
+            opening_seconds = self.opening_spin.value()
+            ending_seconds = self.ending_spin.value()
+            session = self.session
+            current_index = self.current_index
+            speed = self.current_speed
+            paused = not self.is_playing
+            session.opening_seconds = opening_seconds
+            session.ending_seconds = ending_seconds
+
+            def report() -> None:
+                self.controller.report_progress(
+                    session,
+                    current_index=current_index,
+                    position_seconds=position_seconds,
+                    speed=speed,
+                    opening_seconds=opening_seconds,
+                    ending_seconds=ending_seconds,
+                    paused=paused,
+                )
+
+            self._enqueue_controller_task("进度上报失败", report)
         except Exception as exc:
             self._append_log(f"进度上报失败: {exc}")
 
     def _stop_current_playback(self) -> None:
         if self.session is None:
             return
-        try:
-            self.controller.stop_playback(self.session, self.current_index)
-        except Exception as exc:
-            self._append_log(f"停止上报失败: {exc}")
+        session = self.session
+        current_index = self.current_index
+        self._enqueue_controller_task(
+            "停止上报失败",
+            lambda: self.controller.stop_playback(session, current_index),
+        )
 
     def _update_sidebar_visibility(self) -> None:
         self._apply_visibility_state()
@@ -2091,6 +2134,7 @@ class PlayerWindow(QWidget):
             self.report_progress()
             self._stop_current_playback()
         finally:
+            self._shutdown_controller_task_queue()
             self.report_timer.stop()
             self.progress_timer.stop()
             self._restore_video_cursor()

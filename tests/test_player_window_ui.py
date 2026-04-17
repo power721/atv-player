@@ -3837,6 +3837,7 @@ def test_player_window_advances_to_next_item_when_playback_finishes(qtbot) -> No
     assert window.current_index == 1
     assert window.playlist.currentRow() == 1
     assert video.load_calls == [("http://m/2.m3u8", 0)]
+    qtbot.waitUntil(lambda: controller.progress_calls == [(0, 30, 1.0, 0, 0, False)])
     assert controller.progress_calls == [(0, 30, 1.0, 0, 0, False)]
 
 
@@ -4055,9 +4056,60 @@ def test_player_window_stops_session_when_switching_items(qtbot) -> None:
 
     window.play_next()
 
+    qtbot.waitUntil(
+        lambda: controller.progress_calls == [(0, 30, 1.0, 0, 0, False)] and controller.stop_calls == [0]
+    )
     assert controller.progress_calls == [(0, 30, 1.0, 0, 0, False)]
     assert controller.stop_calls == [0]
     assert window.video.load_calls == [("http://m/2.m3u8", 0)]
+
+
+def test_player_window_play_next_reports_progress_and_stops_without_blocking_ui(qtbot) -> None:
+    class SlowRecordingPlayerController(RecordingPlayerController):
+        def report_progress(
+            self,
+            session,
+            current_index: int,
+            position_seconds: int,
+            speed: float,
+            opening_seconds: int,
+            ending_seconds: int,
+            paused: bool,
+        ) -> None:
+            time.sleep(0.15)
+            super().report_progress(
+                session,
+                current_index,
+                position_seconds,
+                speed,
+                opening_seconds,
+                ending_seconds,
+                paused,
+            )
+
+        def stop_playback(self, session, current_index: int) -> None:
+            time.sleep(0.15)
+            super().stop_playback(session, current_index)
+
+    controller = SlowRecordingPlayerController()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session(start_index=0))
+    controller.progress_calls.clear()
+    controller.stop_calls.clear()
+    window.video.load_calls.clear()
+
+    started_at = time.perf_counter()
+    window.play_next()
+    elapsed_seconds = time.perf_counter() - started_at
+
+    assert elapsed_seconds < 0.1
+    assert window.current_index == 1
+    assert window.video.load_calls == [("http://m/2.m3u8", 0)]
+    qtbot.waitUntil(
+        lambda: controller.progress_calls == [(0, 30, 1.0, 0, 0, False)] and controller.stop_calls == [0]
+    )
 
 
 def test_player_window_playback_controls_show_shortcuts_and_pointing_cursor(qtbot) -> None:
@@ -4464,8 +4516,60 @@ def test_player_window_quit_application_reports_progress_and_stops_current_playb
     window._quit_application()
 
     assert called["count"] == 1
+    qtbot.waitUntil(
+        lambda: controller.progress_calls == [(1, 30, 1.0, 0, 0, False)] and controller.stop_calls == [1]
+    )
     assert controller.progress_calls == [(1, 30, 1.0, 0, 0, False)]
     assert controller.stop_calls == [1]
+
+
+def test_player_window_quit_application_reports_progress_and_stop_without_blocking_ui(qtbot, monkeypatch) -> None:
+    class SlowRecordingPlayerController(RecordingPlayerController):
+        def report_progress(
+            self,
+            session,
+            current_index: int,
+            position_seconds: int,
+            speed: float,
+            opening_seconds: int,
+            ending_seconds: int,
+            paused: bool,
+        ) -> None:
+            time.sleep(0.15)
+            super().report_progress(
+                session,
+                current_index,
+                position_seconds,
+                speed,
+                opening_seconds,
+                ending_seconds,
+                paused,
+            )
+
+        def stop_playback(self, session, current_index: int) -> None:
+            time.sleep(0.15)
+            super().stop_playback(session, current_index)
+
+    called = {"count": 0}
+    controller = SlowRecordingPlayerController()
+    window = PlayerWindow(controller, config=AppConfig(last_active_window="player"), save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session(start_index=1))
+    controller.progress_calls.clear()
+    controller.stop_calls.clear()
+
+    monkeypatch.setattr(QApplication, "quit", lambda *args, **kwargs: called.__setitem__("count", called["count"] + 1))
+
+    started_at = time.perf_counter()
+    window._quit_application()
+    elapsed_seconds = time.perf_counter() - started_at
+
+    assert elapsed_seconds < 0.1
+    assert called["count"] == 1
+    qtbot.waitUntil(
+        lambda: controller.progress_calls == [(1, 30, 1.0, 0, 0, False)] and controller.stop_calls == [1]
+    )
 
 
 def test_player_window_quit_application_preserves_current_paused_state(qtbot, monkeypatch) -> None:
@@ -4597,6 +4701,7 @@ def test_player_window_keyboard_shortcuts_control_playback_navigation_and_view(q
     send_key(window, Qt.Key.Key_PageDown)
     assert window.current_index == 1
     assert window.playlist.currentRow() == 1
+    qtbot.waitUntil(lambda: controller.progress_calls == [(1, 30, 1.0, 0, 0, False), (0, 30, 1.0, 0, 0, False)])
     assert controller.progress_calls == [(1, 30, 1.0, 0, 0, False), (0, 30, 1.0, 0, 0, False)]
 
 
@@ -4710,6 +4815,7 @@ def test_player_window_return_to_main_reports_current_progress_without_stopping_
 
     window._return_to_main()
 
+    qtbot.waitUntil(lambda: controller.progress_calls == [(1, 30, 1.0, 0, 0, True)])
     assert controller.progress_calls == [(1, 30, 1.0, 0, 0, True)]
     assert controller.stop_calls == []
 
