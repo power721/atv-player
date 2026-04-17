@@ -31,6 +31,7 @@ class AudioTrack:
 class MpvWidget(QWidget):
     double_clicked = Signal()
     playback_finished = Signal()
+    playback_failed = Signal(str)
     subtitle_tracks_changed = Signal()
     audio_tracks_changed = Signal()
     context_menu_requested = Signal()
@@ -92,6 +93,8 @@ class MpvWidget(QWidget):
             eof_reason = getattr(type(event_data), "EOF", 0)
             if getattr(event_data, "reason", None) == eof_reason:
                 self.playback_finished.emit()
+                return
+            self.playback_failed.emit(self._format_end_file_failure_message(event_data))
 
         self._end_file_handler = handle_end_file
         observe_property = getattr(self._player, "observe_property", None)
@@ -155,6 +158,12 @@ class MpvWidget(QWidget):
 
     def _is_missing_mpv_property_error(self, exc: Exception) -> bool:
         return "property does not exist" in str(exc)
+
+    def _format_end_file_failure_message(self, event_data: object | None) -> str:
+        error = str(getattr(event_data, "error", "") or "").strip()
+        if error:
+            return f"播放失败: {error}"
+        return "播放失败: 未知错误"
 
     def load(
         self,
