@@ -1,5 +1,6 @@
 import threading
 
+import pytest
 from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QSplitter, QTableWidgetItem
 
@@ -750,6 +751,51 @@ def test_search_page_shows_latest_async_resolve_error(qtbot) -> None:
     controller.finish_resolve("broken", exc=ApiError("打开失败"))
 
     qtbot.waitUntil(lambda: page.status_label.text() == "打开失败", timeout=1000)
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_search_page_ignores_async_search_result_after_widget_deletion(qtbot) -> None:
+    controller = AsyncSearchController()
+    page = SearchPage(controller)
+    destroyed = {"count": 0}
+    page.destroyed.connect(lambda *_args: destroyed.__setitem__("count", destroyed["count"] + 1))
+
+    page.keyword_edit.setText("霸王别姬")
+    page.search()
+    qtbot.waitUntil(lambda: controller.calls == ["霸王别姬"], timeout=1000)
+
+    page.deleteLater()
+    qtbot.waitUntil(lambda: destroyed["count"] == 1, timeout=1000)
+
+    controller.finish("霸王别姬", [VodItem(vod_id="1", vod_name="全集", type_name="阿里")])
+    qtbot.wait(100)
+
+    assert destroyed["count"] == 1
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_search_page_ignores_async_resolve_result_after_widget_deletion(qtbot) -> None:
+    controller = AsyncResolveController()
+    page = SearchPage(controller)
+    destroyed = {"count": 0}
+    browsed: list[str] = []
+    page.destroyed.connect(lambda *_args: destroyed.__setitem__("count", destroyed["count"] + 1))
+    page.browse_requested.connect(browsed.append)
+
+    page._results = [VodItem(vod_id="movie-1", vod_name="电影1", type_name="阿里")]
+    page._filtered_results = list(page._results)
+    page._apply_filter()
+    page._open_selected(0, 0)
+    _wait_for_resolve_call(qtbot, controller, "movie-1")
+
+    page.deleteLater()
+    qtbot.waitUntil(lambda: destroyed["count"] == 1, timeout=1000)
+
+    controller.finish_resolve("movie-1", path="/movies/1")
+    qtbot.wait(100)
+
+    assert destroyed["count"] == 1
+    assert browsed == []
 
 
 def test_browse_page_allows_empty_keyword_and_displays_loading_during_async_search(qtbot) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 
+import shiboken6
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -99,6 +100,9 @@ class SearchPage(QWidget):
         self.filter_combo.currentIndexChanged.connect(self._apply_filter)
         self.results_table.cellDoubleClicked.connect(self._open_selected)
 
+    def _is_widget_alive(self) -> bool:
+        return shiboken6.isValid(self)
+
     def search(self) -> None:
         keyword = self.keyword_edit.text().strip()
         self._search_request_id += 1
@@ -113,12 +117,15 @@ class SearchPage(QWidget):
             try:
                 results = self.controller.search(keyword)
             except UnauthorizedError:
-                self._search_signals.unauthorized.emit(request_id)
+                if self._is_widget_alive():
+                    self._search_signals.unauthorized.emit(request_id)
                 return
             except ApiError as exc:
-                self._search_signals.failed.emit(request_id, str(exc))
+                if self._is_widget_alive():
+                    self._search_signals.failed.emit(request_id, str(exc))
                 return
-            self._search_signals.succeeded.emit(request_id, results)
+            if self._is_widget_alive():
+                self._search_signals.succeeded.emit(request_id, results)
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -154,12 +161,15 @@ class SearchPage(QWidget):
             try:
                 path = self.controller.resolve_search_result(item)
             except UnauthorizedError:
-                self._resolve_signals.unauthorized.emit(request_id)
+                if self._is_widget_alive():
+                    self._resolve_signals.unauthorized.emit(request_id)
                 return
             except ApiError as exc:
-                self._resolve_signals.failed.emit(request_id, str(exc))
+                if self._is_widget_alive():
+                    self._resolve_signals.failed.emit(request_id, str(exc))
                 return
-            self._resolve_signals.succeeded.emit(request_id, path)
+            if self._is_widget_alive():
+                self._resolve_signals.succeeded.emit(request_id, path)
 
         threading.Thread(target=run, daemon=True).start()
 
