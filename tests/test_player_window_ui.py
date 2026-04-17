@@ -1,6 +1,6 @@
 from PySide6.QtCore import QByteArray, QEvent, Qt
-from PySide6.QtGui import QColor, QCursor, QImage, QKeyEvent, QMouseEvent, QPixmap
-from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QTableWidget
+from PySide6.QtGui import QAction, QColor, QCursor, QImage, QKeyEvent, QMouseEvent, QPixmap
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QMenu, QTableWidget
 from PySide6.QtWidgets import QSplitter, QToolTip
 from atv_player.controllers.player_controller import PlayerSession
 from atv_player.models import AppConfig, PlayItem, VodItem
@@ -120,6 +120,12 @@ def make_player_session(start_index: int = 1, speed: float = 1.0) -> PlayerSessi
 def send_key(window: PlayerWindow, key: int, modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier, text: str = "") -> None:
     QApplication.sendEvent(window, QKeyEvent(QEvent.Type.KeyPress, key, modifiers, text))
     QApplication.sendEvent(window, QKeyEvent(QEvent.Type.KeyRelease, key, modifiers, text))
+
+
+def _submenu_actions(menu: QMenu, title: str) -> list[QAction]:
+    submenu = next(action.menu() for action in menu.actions() if action.text() == title)
+    assert submenu is not None
+    return submenu.actions()
 
 
 def test_player_window_has_reasonable_default_size_and_horizontal_progress(qtbot) -> None:
@@ -1599,6 +1605,201 @@ def test_player_window_refreshes_audio_options_when_mpv_reports_tracks_after_loa
     ]
     assert window.audio_combo.isEnabled() is True
     assert audio_apply_calls == [("auto", None)]
+
+
+def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return [
+                SubtitleTrack(id=11, title="", lang="zh", is_default=True, is_forced=False, label="中文 (默认)"),
+                SubtitleTrack(id=12, title="English", lang="eng", is_default=False, is_forced=False, label="English"),
+            ]
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return [
+                AudioTrack(id=31, title="", lang="cmn", is_default=True, is_forced=False, label="国语 (默认)"),
+                AudioTrack(id=32, title="English Dub", lang="eng", is_default=False, is_forced=False, label="English Dub"),
+            ]
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return 11 if mode == "auto" else track_id
+
+        def apply_secondary_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None if mode == "off" else track_id
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return 31 if mode == "auto" else track_id
+
+        def subtitle_position(self) -> int:
+            return 50
+
+        def set_subtitle_position(self, value: int) -> None:
+            return None
+
+        def secondary_subtitle_position(self) -> int:
+            return 50
+
+        def set_secondary_subtitle_position(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(make_player_session(start_index=0))
+
+    menu = window._build_video_context_menu()
+
+    assert [action.text() for action in menu.actions()] == [
+        "主字幕",
+        "次字幕",
+        "主字幕位置",
+        "次字幕位置",
+        "音轨",
+    ]
+    assert [action.text() for action in _submenu_actions(menu, "主字幕")] == ["自动选择", "关闭字幕", "中文 (默认)", "English"]
+    assert [action.text() for action in _submenu_actions(menu, "次字幕")] == ["关闭次字幕", "中文 (默认)", "English"]
+    assert [action.text() for action in _submenu_actions(menu, "音轨")] == ["自动选择", "国语 (默认)", "English Dub"]
+
+
+def test_player_window_context_menu_primary_subtitle_action_syncs_bottom_combo(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
+            self.audio_apply_calls: list[tuple[str, int | None]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return [
+                SubtitleTrack(id=11, title="", lang="zh", is_default=True, is_forced=False, label="中文 (默认)"),
+                SubtitleTrack(id=12, title="English", lang="eng", is_default=False, is_forced=False, label="English"),
+            ]
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return [AudioTrack(id=31, title="", lang="cmn", is_default=True, is_forced=False, label="国语 (默认)")]
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
+            return track_id
+
+        def apply_secondary_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.audio_apply_calls.append((mode, track_id))
+            return 31
+
+        def subtitle_position(self) -> int:
+            return 50
+
+        def set_subtitle_position(self, value: int) -> None:
+            return None
+
+        def secondary_subtitle_position(self) -> int:
+            return 50
+
+        def set_secondary_subtitle_position(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(make_player_session(start_index=0))
+    window.video.subtitle_apply_calls.clear()
+
+    menu = window._build_video_context_menu()
+    english_action = next(action for action in _submenu_actions(menu, "主字幕") if action.text() == "English")
+    english_action.trigger()
+
+    assert window.video.subtitle_apply_calls == [("track", 12)]
+    assert window.subtitle_combo.currentText() == "English"
+
+
+def test_player_window_context_menu_secondary_subtitle_and_audio_actions_call_video_layer(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.secondary_subtitle_apply_calls: list[tuple[str, int | None]] = []
+            self.audio_apply_calls: list[tuple[str, int | None]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return [SubtitleTrack(id=11, title="", lang="zh", is_default=True, is_forced=False, label="中文 (默认)")]
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return [
+                AudioTrack(id=31, title="", lang="cmn", is_default=True, is_forced=False, label="国语 (默认)"),
+                AudioTrack(id=32, title="English Dub", lang="eng", is_default=False, is_forced=False, label="English Dub"),
+            ]
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return 11
+
+        def apply_secondary_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.secondary_subtitle_apply_calls.append((mode, track_id))
+            return track_id
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.audio_apply_calls.append((mode, track_id))
+            return track_id if mode == "track" else 31
+
+        def subtitle_position(self) -> int:
+            return 50
+
+        def set_subtitle_position(self, value: int) -> None:
+            return None
+
+        def secondary_subtitle_position(self) -> int:
+            return 50
+
+        def set_secondary_subtitle_position(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(make_player_session(start_index=0))
+    window.video.audio_apply_calls.clear()
+
+    menu = window._build_video_context_menu()
+    next(action for action in _submenu_actions(menu, "次字幕") if action.text() == "中文 (默认)").trigger()
+    next(action for action in _submenu_actions(menu, "音轨") if action.text() == "English Dub").trigger()
+
+    assert window.video.secondary_subtitle_apply_calls == [("track", 11)]
+    assert window.video.audio_apply_calls == [("track", 32)]
+    assert window.audio_combo.currentText() == "English Dub"
 
 
 def test_player_window_populates_embedded_subtitle_options_after_open_session(qtbot) -> None:
