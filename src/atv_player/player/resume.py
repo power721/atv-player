@@ -15,11 +15,11 @@ def resolve_resume_index(
 ) -> int:
     if history is None:
         return clicked_index
-    if 0 <= history.episode < len(playlist):
-        return history.episode
     if history.episode_url:
         target = _basename(history.episode_url)
         for index, item in enumerate(playlist):
             if _basename(item.url) == target:
                 return index
+    if 0 <= history.episode < len(playlist):
+        return history.episode
     return clicked_index
