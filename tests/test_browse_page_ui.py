@@ -1156,6 +1156,37 @@ def test_history_page_disables_prev_and_next_when_unavailable(qtbot) -> None:
     )
 
 
+def test_history_page_disables_delete_without_selection(qtbot) -> None:
+    page = HistoryPage(FakeHistoryController())
+    qtbot.addWidget(page)
+    page.records = [
+        HistoryRecord(
+            id=1,
+            key="movie-1",
+            vod_name="Movie",
+            vod_pic="",
+            vod_remarks="Ep",
+            episode=0,
+            episode_url="",
+            position=0,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+        )
+    ]
+    page.table.setRowCount(1)
+    page.table.setItem(0, 0, QTableWidgetItem("Movie"))
+
+    assert page.delete_button.isEnabled() is False
+
+    page.table.selectRow(0)
+    assert page.delete_button.isEnabled() is True
+
+    page.table.clearSelection()
+    assert page.delete_button.isEnabled() is False
+
+
 def test_history_page_delete_reloads_previous_page_when_last_page_becomes_empty(qtbot) -> None:
     class Controller:
         def __init__(self) -> None:

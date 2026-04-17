@@ -105,10 +105,12 @@ class HistoryPage(QWidget):
         self.clear_button.clicked.connect(self.clear_all)
         self.refresh_button.clicked.connect(self.load_history)
         self.table.cellDoubleClicked.connect(self._open_selected)
+        self.table.itemSelectionChanged.connect(self._sync_action_state)
         self.prev_page_button.clicked.connect(self.previous_page)
         self.next_page_button.clicked.connect(self.next_page)
         self.page_size_combo.currentIndexChanged.connect(self._change_page_size)
         self._update_pagination_controls()
+        self._sync_action_state()
 
     def ensure_loaded(self) -> None:
         if self._initial_load_started:
@@ -247,6 +249,11 @@ class HistoryPage(QWidget):
         self.prev_page_button.setEnabled(self.current_page > 1)
         self.next_page_button.setEnabled(self.current_page < total_pages)
 
+    def _sync_action_state(self) -> None:
+        selection_model = self.table.selectionModel()
+        has_selection = bool(selection_model is not None and selection_model.hasSelection())
+        self.delete_button.setEnabled(has_selection)
+
     def _handle_load_succeeded(
         self,
         request_id: int,
@@ -268,6 +275,7 @@ class HistoryPage(QWidget):
             self.table.setItem(row, 2, QTableWidgetItem(record.vod_remarks))
             self.table.setItem(row, 3, QTableWidgetItem(self._format_duration(record.position)))
             self.table.setItem(row, 4, QTableWidgetItem(self._format_timestamp(record.create_time)))
+        self._sync_action_state()
         self._update_pagination_controls()
 
     def _handle_load_failed(self, request_id: int) -> None:
