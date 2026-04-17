@@ -110,10 +110,12 @@ class PluginManagerDialog(QDialog):
 
     def _sync_action_state(self) -> None:
         has_selection = self._has_selection()
+        row = self.plugin_table.currentRow()
+        last_row = self.plugin_table.rowCount() - 1
         self.rename_button.setEnabled(has_selection)
         self.toggle_button.setEnabled(has_selection)
-        self.up_button.setEnabled(has_selection)
-        self.down_button.setEnabled(has_selection)
+        self.up_button.setEnabled(has_selection and row > 0)
+        self.down_button.setEnabled(has_selection and row >= 0 and row < last_row)
         self.refresh_button.setEnabled(has_selection)
         self.logs_button.setEnabled(has_selection)
         self.delete_button.setEnabled(has_selection)

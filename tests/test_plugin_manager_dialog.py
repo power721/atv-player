@@ -99,6 +99,22 @@ def test_plugin_manager_dialog_disables_row_actions_without_selection(qtbot) -> 
     assert dialog.delete_button.isEnabled() is False
 
 
+def test_plugin_manager_dialog_disables_move_buttons_at_table_edges(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog.plugin_table.selectRow(0)
+    dialog._sync_action_state()
+    assert dialog.up_button.isEnabled() is False
+    assert dialog.down_button.isEnabled() is True
+
+    dialog.plugin_table.selectRow(1)
+    dialog._sync_action_state()
+    assert dialog.up_button.isEnabled() is True
+    assert dialog.down_button.isEnabled() is False
+
+
 def test_plugin_manager_dialog_actions_call_manager(qtbot, monkeypatch) -> None:
     manager = FakePluginManager()
     dialog = PluginManagerDialog(manager)
