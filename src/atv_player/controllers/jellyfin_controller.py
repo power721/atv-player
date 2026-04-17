@@ -129,8 +129,6 @@ class JellyfinController:
             source_mode="detail",
             source_vod_id=detail.vod_id,
             detail_resolver=self.resolve_playlist_item,
-            use_local_history=False,
-            restore_history=True,
             playback_loader=self.load_playback_item,
             playback_progress_reporter=self.report_playback_progress,
             playback_stopper=self.stop_playback,

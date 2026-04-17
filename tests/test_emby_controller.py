@@ -143,7 +143,7 @@ def test_build_request_from_detail_uses_ids_endpoint_and_playlist_parsing() -> N
     assert [item.vod_id for item in request.playlist] == ["1-3282", "1-3283"]
 
 
-def test_build_request_disables_local_history_and_exposes_emby_playback_hooks() -> None:
+def test_build_request_enables_local_history_and_exposes_emby_playback_hooks() -> None:
     api = FakeApiClient()
     api.detail_payload = {
         "list": [
@@ -160,8 +160,8 @@ def test_build_request_disables_local_history_and_exposes_emby_playback_hooks() 
     request = controller.build_request("1-3281")
     first_item = request.playlist[0]
 
-    assert request.use_local_history is False
-    assert request.restore_history is True
+    assert request.use_local_history is True
+    assert request.restore_history is False
     assert request.playback_loader is not None
     assert request.playback_progress_reporter is not None
     assert request.playback_stopper is not None

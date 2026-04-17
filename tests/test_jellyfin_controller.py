@@ -120,7 +120,7 @@ def test_load_folder_items_uses_t_query_and_first_page() -> None:
     assert [item.vod_remarks for item in items] == ["2022", "2022 - 8.8"]
 
 
-def test_build_request_disables_local_history_and_exposes_jellyfin_playback_hooks() -> None:
+def test_build_request_enables_local_history_and_exposes_jellyfin_playback_hooks() -> None:
     from atv_player.controllers.jellyfin_controller import JellyfinController
 
     api = FakeApiClient()
@@ -139,8 +139,8 @@ def test_build_request_disables_local_history_and_exposes_jellyfin_playback_hook
     request = controller.build_request("1-3281")
     first_item = request.playlist[0]
 
-    assert request.use_local_history is False
-    assert request.restore_history is True
+    assert request.use_local_history is True
+    assert request.restore_history is False
     assert request.playback_loader is not None
     assert request.playback_progress_reporter is not None
     assert request.playback_stopper is not None
