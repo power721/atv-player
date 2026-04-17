@@ -110,6 +110,12 @@ class _FolderLoadSignals(QObject):
     unauthorized = Signal(int)
 
 
+class _OpenRequestSignals(QObject):
+    succeeded = Signal(int, object)
+    failed = Signal(int, str)
+    unauthorized = Signal(int)
+
+
 class BrowsePage(QWidget):
     open_requested = Signal(object)
     unauthorized = Signal()
@@ -160,11 +166,16 @@ class BrowsePage(QWidget):
         self._sorted_column: int | None = None
         self._sort_order = Qt.SortOrder.AscendingOrder
         self._folder_request_id = 0
+        self._open_request_id = 0
         self._search_request_id = 0
         self._folder_signals = _FolderLoadSignals(self)
         self._folder_signals.succeeded.connect(self._handle_folder_load_succeeded)
         self._folder_signals.failed.connect(self._handle_folder_load_failed)
         self._folder_signals.unauthorized.connect(self._handle_folder_load_unauthorized)
+        self._open_signals = _OpenRequestSignals(self)
+        self._open_signals.succeeded.connect(self._handle_open_request_succeeded)
+        self._open_signals.failed.connect(self._handle_open_request_failed)
+        self._open_signals.unauthorized.connect(self._handle_open_request_unauthorized)
         self._search_signals = _SearchSignals(self)
         self._search_signals.succeeded.connect(self._handle_search_succeeded)
         self._search_signals.failed.connect(self._handle_search_failed)
@@ -605,15 +616,41 @@ class BrowsePage(QWidget):
         if item.type == 1:
             self.load_path(item.path)
             return
-        try:
-            if item.type == 2:
-                request = self.controller.build_request_from_folder_item(item, self.current_items)
-            else:
-                request = self.controller.build_request_from_detail(item.vod_id)
-        except UnauthorizedError:
-            self.unauthorized.emit()
+        folder_items = list(self.current_items)
+        if item.type == 2:
+            self._start_open_request(lambda: self.controller.build_request_from_folder_item(item, folder_items))
             return
-        except ApiError as exc:
-            self._set_breadcrumb_status(str(exc))
+        self._start_open_request(lambda: self.controller.build_request_from_detail(item.vod_id))
+
+    def _start_open_request(self, builder) -> int:
+        self._open_request_id += 1
+        request_id = self._open_request_id
+
+        def run() -> None:
+            try:
+                request = builder()
+            except UnauthorizedError:
+                self._open_signals.unauthorized.emit(request_id)
+                return
+            except ApiError as exc:
+                self._open_signals.failed.emit(request_id, str(exc))
+                return
+            self._open_signals.succeeded.emit(request_id, request)
+
+        threading.Thread(target=run, daemon=True).start()
+        return request_id
+
+    def _handle_open_request_succeeded(self, request_id: int, request: object) -> None:
+        if request_id != self._open_request_id:
             return
         self.open_requested.emit(request)
+
+    def _handle_open_request_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._open_request_id:
+            return
+        self._set_breadcrumb_status(message)
+
+    def _handle_open_request_unauthorized(self, request_id: int) -> None:
+        if request_id != self._open_request_id:
+            return
+        self.unauthorized.emit()

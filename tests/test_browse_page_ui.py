@@ -4,7 +4,7 @@ from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QSplitter
 
 from atv_player.api import ApiError
-from atv_player.models import AppConfig, HistoryRecord, VodItem
+from atv_player.models import AppConfig, HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
 from atv_player.ui.browse_page import BrowsePage
 from atv_player.ui.history_page import HistoryPage
 from atv_player.ui.search_page import SearchPage
@@ -89,6 +89,61 @@ class AsyncBrowseController(FakeBrowseController):
         self._events_by_request[key].pop(0).set()
 
 
+class AsyncOpenController(FakeBrowseController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[tuple[str, str]] = []
+        self._main_thread_id = threading.get_ident()
+        self._events_by_key: dict[tuple[str, str], list[threading.Event]] = {}
+        self._results_by_key: dict[tuple[str, str], list[OpenPlayerRequest]] = {}
+        self._errors_by_key: dict[tuple[str, str], list[Exception]] = {}
+
+    def build_request_from_detail(self, vod_id: str):
+        return self._wait_for_request(("detail", vod_id), _make_open_request(vod_id, "Detail"))
+
+    def build_request_from_folder_item(self, item, folder_items):
+        return self._wait_for_request(("folder", item.vod_id), _make_open_request(item.vod_id, item.vod_name))
+
+    def _wait_for_request(self, key: tuple[str, str], default_request: OpenPlayerRequest):
+        self.calls.append(key)
+        assert threading.get_ident() != self._main_thread_id
+        event = threading.Event()
+        self._events_by_key.setdefault(key, []).append(event)
+        assert event.wait(timeout=5), f"open request for {key!r} was never released"
+        errors = self._errors_by_key.get(key)
+        if errors:
+            raise errors.pop(0)
+        results = self._results_by_key.get(key)
+        if results:
+            return results.pop(0)
+        return default_request
+
+    def finish(
+        self,
+        kind: str,
+        vod_id: str,
+        *,
+        request: OpenPlayerRequest | None = None,
+        exc: Exception | None = None,
+    ) -> None:
+        key = (kind, vod_id)
+        if request is not None:
+            self._results_by_key.setdefault(key, []).append(request)
+        if exc is not None:
+            self._errors_by_key.setdefault(key, []).append(exc)
+        self._events_by_key[key].pop(0).set()
+
+
+def _make_open_request(vod_id: str, vod_name: str) -> OpenPlayerRequest:
+    return OpenPlayerRequest(
+        vod=VodItem(vod_id=vod_id, vod_name=vod_name),
+        playlist=[PlayItem(title="Episode 1", url="", vod_id=f"{vod_id}-ep-1")],
+        clicked_index=0,
+        source_mode="detail",
+        source_vod_id=vod_id,
+    )
+
+
 def _wait_for_folder_load(qtbot, controller: FakeBrowseController, path: str, page: int = 1, size: int = 50) -> None:
     qtbot.waitUntil(lambda: (path, page, size) in controller.load_calls, timeout=1000)
 
@@ -106,6 +161,10 @@ def _wait_for_folder_result(
         lambda: page._page_state_by_path.get(path) == (page_number, size) and page.total_items == controller.total,
         timeout=1000,
     )
+
+
+def _wait_for_open_call(qtbot, controller: AsyncOpenController, kind: str, vod_id: str) -> None:
+    qtbot.waitUntil(lambda: (kind, vod_id) in controller.calls, timeout=1000)
 
 
 def test_browse_page_uses_split_view_for_search_and_file_list(qtbot) -> None:
@@ -438,6 +497,10 @@ def test_browse_page_handles_open_errors_without_missing_widget_crash(qtbot) -> 
 
     page._handle_open(0, 0)
 
+    qtbot.waitUntil(
+        lambda: page.breadcrumb_layout.count() > 0 and page.breadcrumb_layout.itemAt(0).widget() is not None,
+        timeout=1000,
+    )
     breadcrumb_label = page.breadcrumb_layout.itemAt(0).widget()
     assert breadcrumb_label.text() == "/Movies | detail failed"
 
@@ -1056,8 +1119,61 @@ def test_browse_page_opens_item_from_sorted_row_order(qtbot) -> None:
     })()
     page.current_items = [first_item, second_item]
     page._populate_table(page.current_items)
+    opened: list[object] = []
+    page.open_requested.connect(opened.append)
 
     page.table.horizontalHeader().sectionClicked.emit(1)
     page._handle_open(0, 0)
 
-    assert controller.requests == ["alpha-id"]
+    qtbot.waitUntil(lambda: controller.requests == ["alpha-id"] and len(opened) == 1, timeout=1000)
+
+
+def test_browse_page_builds_open_requests_outside_the_main_thread(qtbot) -> None:
+    controller = AsyncOpenController()
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+    page.show()
+    page.current_items = [type("Item", (), {"type": 9, "vod_id": "movie-1"})()]
+
+    opened: list[OpenPlayerRequest] = []
+    page.open_requested.connect(opened.append)
+
+    page._handle_open(0, 0)
+    _wait_for_open_call(qtbot, controller, "detail", "movie-1")
+    controller.finish("detail", "movie-1")
+
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
+
+    assert opened[0].vod.vod_name == "Detail"
+    assert opened[0].source_vod_id == "movie-1"
+
+
+def test_browse_page_uses_latest_async_open_request(qtbot) -> None:
+    controller = AsyncOpenController()
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+    page.show()
+
+    first_item = type("Item", (), {"type": 9, "vod_id": "movie-1", "vod_name": "Movie 1", "vod_time": "", "vod_remarks": "", "dbid": 0})()
+    second_item = type("Item", (), {"type": 9, "vod_id": "movie-2", "vod_name": "Movie 2", "vod_time": "", "vod_remarks": "", "dbid": 0})()
+    page.current_items = [first_item, second_item]
+    page._populate_table(page.current_items)
+
+    opened: list[OpenPlayerRequest] = []
+    page.open_requested.connect(opened.append)
+
+    page._handle_open(0, 0)
+    _wait_for_open_call(qtbot, controller, "detail", "movie-1")
+
+    page._handle_open(1, 0)
+    _wait_for_open_call(qtbot, controller, "detail", "movie-2")
+
+    controller.finish("detail", "movie-2", request=_make_open_request("movie-2", "Second"))
+    qtbot.waitUntil(lambda: len(opened) == 1 and opened[0].source_vod_id == "movie-2", timeout=1000)
+
+    controller.finish("detail", "movie-1", request=_make_open_request("movie-1", "First"))
+    qtbot.wait(100)
+
+    assert len(opened) == 1
+    assert opened[0].vod.vod_name == "Second"
+    assert opened[0].source_vod_id == "movie-2"
