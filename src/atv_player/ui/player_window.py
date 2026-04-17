@@ -881,7 +881,8 @@ class PlayerWindow(QWidget):
                 timeout=self._POSTER_REQUEST_TIMEOUT_SECONDS,
                 get=httpx.get,
             )
-            self._poster_load_signals.loaded.emit(request_id, image)
+            if self._is_window_alive():
+                self._poster_load_signals.loaded.emit(request_id, image)
 
         threading.Thread(target=load, daemon=True).start()
 

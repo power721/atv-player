@@ -1,6 +1,7 @@
 import threading
 import time
 
+import pytest
 from PySide6.QtCore import QByteArray, QEvent, QObject, QRect, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QImage, QKeyEvent, QMouseEvent, QPixmap, QWindow
 from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QMenu, QTableWidget, QWidget
@@ -307,6 +308,54 @@ def test_player_window_starts_remote_poster_load_without_blocking_open_session(q
     assert started == ["https://img3.doubanio.com/view/photo/s_ratio_poster/public/p123.jpg"]
     assert rendered is None or rendered.isNull() is True
     assert window.video.load_calls == [("http://m/1.m3u8", False, 0)]
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_player_window_ignores_async_poster_result_after_window_deletion(qtbot, monkeypatch) -> None:
+    release_poster = threading.Event()
+    destroyed = {"count": 0}
+
+    def fake_load_remote_poster_image(*args, **kwargs):
+        assert release_poster.wait(timeout=5), "poster load was never released"
+        image = QImage(20, 30, QImage.Format.Format_RGB32)
+        image.fill(QColor("green"))
+        return image
+
+    monkeypatch.setattr(player_window_module, "load_remote_poster_image", fake_load_remote_poster_image)
+
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    window.destroyed.connect(lambda *_args: destroyed.__setitem__("count", destroyed["count"] + 1))
+    window.video = FakeVideo()
+    window.open_session(
+        PlayerSession(
+            vod=VodItem(vod_id="movie-1", vod_name="Movie", vod_pic="https://img3.doubanio.com/view/photo/s_ratio_poster/public/p123.jpg"),
+            playlist=[PlayItem(title="正片", url="http://m/1.m3u8")],
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+        )
+    )
+
+    window.deleteLater()
+    qtbot.waitUntil(lambda: destroyed["count"] == 1, timeout=1000)
+
+    release_poster.set()
+    qtbot.wait(100)
+
+    assert destroyed["count"] == 1
 
 
 def test_player_window_ignores_stale_async_poster_results(qtbot, monkeypatch) -> None:
