@@ -26,8 +26,20 @@ class CustomLiveService:
     def list_sources(self):
         return self._repository.list_sources()
 
+    def add_remote_source(self, url: str, display_name: str):
+        return self._repository.add_source("remote", url, display_name)
+
+    def add_local_source(self, path: str, display_name: str):
+        return self._repository.add_source("local", path, display_name)
+
+    def add_manual_source(self, display_name: str):
+        return self._repository.add_source("manual", "", display_name)
+
     def set_source_enabled(self, source_id: int, enabled: bool) -> None:
         self._repository.set_source_enabled(source_id, enabled)
+
+    def list_manual_entries(self, source_id: int):
+        return self._repository.list_manual_entries(source_id)
 
     def load_categories(self) -> list[DoubanCategory]:
         return [
