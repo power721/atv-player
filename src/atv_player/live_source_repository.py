@@ -44,10 +44,17 @@ class LiveSourceRepository:
                     group_name TEXT NOT NULL DEFAULT '',
                     channel_name TEXT NOT NULL,
                     stream_url TEXT NOT NULL,
+                    logo_url TEXT NOT NULL DEFAULT '',
                     sort_order INTEGER NOT NULL
                 )
                 """
             )
+            entry_columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(live_source_entry)").fetchall()
+            }
+            if "logo_url" not in entry_columns:
+                conn.execute("ALTER TABLE live_source_entry ADD COLUMN logo_url TEXT NOT NULL DEFAULT ''")
             existing = conn.execute("SELECT COUNT(*) FROM live_source WHERE is_default = 1").fetchone()[0]
             if existing == 0:
                 next_order = conn.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM live_source").fetchone()[0]
@@ -157,7 +164,15 @@ class LiveSourceRepository:
             conn.execute("DELETE FROM live_source_entry WHERE source_id = ?", (source_id,))
             conn.execute("DELETE FROM live_source WHERE id = ?", (source_id,))
 
-    def add_manual_entry(self, source_id: int, *, group_name: str, channel_name: str, stream_url: str) -> LiveSourceEntry:
+    def add_manual_entry(
+        self,
+        source_id: int,
+        *,
+        group_name: str,
+        channel_name: str,
+        stream_url: str,
+        logo_url: str = "",
+    ) -> LiveSourceEntry:
         with self._connect() as conn:
             next_order = conn.execute(
                 "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM live_source_entry WHERE source_id = ?",
@@ -165,10 +180,10 @@ class LiveSourceRepository:
             ).fetchone()[0]
             cursor = conn.execute(
                 """
-                INSERT INTO live_source_entry (source_id, group_name, channel_name, stream_url, sort_order)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO live_source_entry (source_id, group_name, channel_name, stream_url, logo_url, sort_order)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (source_id, group_name, channel_name, stream_url, next_order),
+                (source_id, group_name, channel_name, stream_url, logo_url, next_order),
             )
         return self.get_manual_entry(int(cursor.lastrowid))
 
@@ -176,7 +191,7 @@ class LiveSourceRepository:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT id, source_id, group_name, channel_name, stream_url, sort_order
+                SELECT id, source_id, group_name, channel_name, stream_url, logo_url, sort_order
                 FROM live_source_entry
                 WHERE id = ?
                 """,
@@ -189,7 +204,7 @@ class LiveSourceRepository:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, source_id, group_name, channel_name, stream_url, sort_order
+                SELECT id, source_id, group_name, channel_name, stream_url, logo_url, sort_order
                 FROM live_source_entry
                 WHERE source_id = ?
                 ORDER BY sort_order ASC, id ASC
@@ -205,15 +220,16 @@ class LiveSourceRepository:
         group_name: str,
         channel_name: str,
         stream_url: str,
+        logo_url: str = "",
     ) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
                 UPDATE live_source_entry
-                SET group_name = ?, channel_name = ?, stream_url = ?
+                SET group_name = ?, channel_name = ?, stream_url = ?, logo_url = ?
                 WHERE id = ?
                 """,
-                (group_name, channel_name, stream_url, entry_id),
+                (group_name, channel_name, stream_url, logo_url, entry_id),
             )
 
     def delete_manual_entry(self, entry_id: int) -> None:

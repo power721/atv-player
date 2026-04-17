@@ -105,6 +105,7 @@ class LiveSourceEntry:
     group_name: str = ""
     channel_name: str = ""
     stream_url: str = ""
+    logo_url: str = ""
     sort_order: int = 0
 
 
