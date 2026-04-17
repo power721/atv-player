@@ -315,6 +315,72 @@ def test_custom_live_service_merges_duplicate_manual_entries_into_switchable_lin
     ]
 
 
+def test_custom_live_service_falls_back_to_default_poster_for_ungrouped_m3u_channels(
+    tmp_path: Path,
+) -> None:
+    repo = LiveSourceRepository(tmp_path / "app.db")
+    source = repo.add_source("remote", "https://example.com/live.m3u", "自定义远程")
+    repo.update_source(
+        source.id,
+        display_name="自定义远程",
+        enabled=True,
+        source_value="https://example.com/live.m3u",
+        cache_text="#EXTM3U\n#EXTINF:-1,CCTV1综合\nhttps://live.example/cctv1.m3u8\n",
+        last_error="",
+        last_refreshed_at=1,
+    )
+    service = CustomLiveService(repo, http_client=FakeHttpClient())
+
+    items, total = service.load_items(f"custom:{source.id}", 1)
+    request = service.build_request(f"custom-channel:{source.id}:channel-0")
+
+    assert total == 1
+    assert items[0].vod_pic == str(service._DEFAULT_POSTER_PATH)
+    assert request.vod.vod_pic == str(service._DEFAULT_POSTER_PATH)
+
+
+def test_custom_live_service_falls_back_to_default_poster_for_grouped_manual_channels(
+    tmp_path: Path,
+) -> None:
+    repo = LiveSourceRepository(tmp_path / "app.db")
+    service = CustomLiveService(repo, http_client=FakeHttpClient())
+    source = service.add_manual_source("手动源")
+    entry = service.add_manual_entry(
+        source.id,
+        group_name="央视频道",
+        channel_name="CCTV1综合",
+        stream_url="https://live.example/cctv1.m3u8",
+        logo_url="",
+    )
+
+    items, total = service.load_folder_items(f"custom-folder:{source.id}:group-0")
+    request = service.build_request(f"custom-channel:{source.id}:manual-{entry.id}")
+
+    assert total == 1
+    assert items[0].vod_pic == str(service._DEFAULT_POSTER_PATH)
+    assert request.vod.vod_pic == str(service._DEFAULT_POSTER_PATH)
+
+
+def test_custom_live_service_keeps_explicit_logo_instead_of_default_poster(tmp_path: Path) -> None:
+    repo = LiveSourceRepository(tmp_path / "app.db")
+    service = CustomLiveService(repo, http_client=FakeHttpClient())
+    source = service.add_manual_source("手动源")
+    entry = service.add_manual_entry(
+        source.id,
+        group_name="",
+        channel_name="CCTV1综合",
+        stream_url="https://live.example/cctv1.m3u8",
+        logo_url="https://img.example/cctv1.png",
+    )
+
+    items, total = service.load_items(f"custom:{source.id}", 1)
+    request = service.build_request(f"custom-channel:{source.id}:manual-{entry.id}")
+
+    assert total == 1
+    assert items[0].vod_pic == "https://img.example/cctv1.png"
+    assert request.vod.vod_pic == "https://img.example/cctv1.png"
+
+
 def test_custom_live_service_exposes_live_source_management_methods(tmp_path: Path) -> None:
     repo = LiveSourceRepository(tmp_path / "app.db")
     service = CustomLiveService(repo, http_client=FakeHttpClient())

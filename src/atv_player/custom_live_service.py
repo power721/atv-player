@@ -36,6 +36,8 @@ class _MergedChannelView:
 
 
 class CustomLiveService:
+    _DEFAULT_POSTER_PATH = Path(__file__).resolve().parent / "icons" / "live.png"
+
     def __init__(self, repository, http_client: _HttpTextClient) -> None:
         self._repository = repository
         self._http_client = http_client
@@ -141,7 +143,7 @@ class CustomLiveService:
                 vod_id=f"custom-channel:{source.id}:{channel.channel_id}",
                 vod_name=channel.channel_name,
                 vod_tag="file",
-                vod_pic=channel.logo_url,
+                vod_pic=self._resolve_channel_poster(channel),
             )
             for channel in merged_channels
         ]
@@ -158,7 +160,7 @@ class CustomLiveService:
                 vod_id=f"custom-channel:{source.id}:{channel.channel_id}",
                 vod_name=channel.channel_name,
                 vod_tag="file",
-                vod_pic=channel.logo_url,
+                vod_pic=self._resolve_channel_poster(channel),
             )
             for channel in merged_channels
         ]
@@ -203,7 +205,12 @@ class CustomLiveService:
     def _build_request_from_channel(self, view: _MergedChannelView) -> OpenPlayerRequest:
         multi_line = len(view.lines) > 1
         return OpenPlayerRequest(
-            vod=VodItem(vod_id=view.channel_id, vod_name=view.channel_name, vod_pic=view.logo_url, detail_style="live"),
+            vod=VodItem(
+                vod_id=view.channel_id,
+                vod_name=view.channel_name,
+                vod_pic=self._resolve_channel_poster(view),
+                detail_style="live",
+            ),
             playlist=[
                 PlayItem(
                     title=f"{view.channel_name} {index + 1}" if multi_line else view.channel_name,
@@ -220,6 +227,11 @@ class CustomLiveService:
             source_vod_id=view.channel_id,
             use_local_history=False,
         )
+
+    def _resolve_channel_poster(self, view: _MergedChannelView) -> str:
+        if view.logo_url:
+            return view.logo_url
+        return str(self._DEFAULT_POSTER_PATH)
 
     def _load_playlist(self, source) -> ParsedPlaylist:
         if source.source_type == "manual":
