@@ -140,3 +140,25 @@ def test_plugin_manager_dialog_actions_call_manager(qtbot, monkeypatch) -> None:
     assert manager.move_calls == [(2, -1)]
     assert manager.refresh_calls == [2]
     assert manager.delete_calls == [2]
+
+
+def test_plugin_manager_dialog_keeps_selection_on_moved_plugin(qtbot) -> None:
+    class ReorderingPluginManager(FakePluginManager):
+        def move_plugin(self, plugin_id: int, direction: int) -> None:
+            super().move_plugin(plugin_id, direction)
+            index = next(i for i, plugin in enumerate(self.plugins) if plugin.id == plugin_id)
+            target = index + direction
+            if not (0 <= target < len(self.plugins)):
+                return
+            self.plugins[index], self.plugins[target] = self.plugins[target], self.plugins[index]
+
+    manager = ReorderingPluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.plugin_table.selectRow(0)
+
+    dialog._move_selected(1)
+
+    assert dialog.plugin_table.currentRow() == 1
+    assert dialog._selected_plugin_id() == 1

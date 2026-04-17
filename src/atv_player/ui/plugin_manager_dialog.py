@@ -88,6 +88,7 @@ class PluginManagerDialog(QDialog):
         self.reload_plugins()
 
     def reload_plugins(self) -> None:
+        selected_plugin_id = self._selected_plugin_id()
         plugins = self.plugin_manager.list_plugins()
         self.plugin_table.setRowCount(len(plugins))
         for row, plugin in enumerate(plugins):
@@ -102,6 +103,7 @@ class PluginManagerDialog(QDialog):
             if plugin.last_loaded_at:
                 loaded_at = datetime.fromtimestamp(plugin.last_loaded_at).strftime("%Y-%m-%d %H:%M:%S")
             self.plugin_table.setItem(row, 5, QTableWidgetItem(loaded_at))
+        self._restore_selection(selected_plugin_id)
         self._sync_action_state()
 
     def _has_selection(self) -> bool:
@@ -119,6 +121,18 @@ class PluginManagerDialog(QDialog):
         self.refresh_button.setEnabled(has_selection)
         self.logs_button.setEnabled(has_selection)
         self.delete_button.setEnabled(has_selection)
+
+    def _restore_selection(self, plugin_id: int | None) -> None:
+        self.plugin_table.clearSelection()
+        self.plugin_table.setCurrentCell(-1, -1)
+        if plugin_id is None:
+            return
+        for row in range(self.plugin_table.rowCount()):
+            item = self.plugin_table.item(row, 0)
+            if item is None or int(item.data(256)) != plugin_id:
+                continue
+            self.plugin_table.selectRow(row)
+            return
 
     def _selected_plugin_id(self) -> int | None:
         row = self.plugin_table.currentRow()
