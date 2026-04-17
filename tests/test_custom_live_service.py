@@ -182,3 +182,38 @@ def test_custom_live_service_exposes_live_source_management_methods(tmp_path: Pa
         ("manual", "", "手动源"),
     ]
     assert service.list_manual_entries(manual.id) == []
+
+
+def test_custom_live_service_renames_source_without_changing_other_fields(tmp_path: Path) -> None:
+    repo = LiveSourceRepository(tmp_path / "app.db")
+    source = repo.add_source("remote", "https://example.com/live.m3u", "旧名称")
+    repo.update_source(
+        source.id,
+        display_name="旧名称",
+        enabled=False,
+        source_value="https://example.com/live.m3u",
+        cache_text="#EXTM3U",
+        last_error="timeout",
+        last_refreshed_at=9,
+    )
+    service = CustomLiveService(repo, http_client=FakeHttpClient())
+
+    service.rename_source(source.id, "新名称")
+
+    saved = repo.get_source(source.id)
+    assert saved.display_name == "新名称"
+    assert saved.enabled is False
+    assert saved.source_value == "https://example.com/live.m3u"
+    assert saved.cache_text == "#EXTM3U"
+    assert saved.last_error == "timeout"
+    assert saved.last_refreshed_at == 9
+
+
+def test_custom_live_service_deletes_source(tmp_path: Path) -> None:
+    repo = LiveSourceRepository(tmp_path / "app.db")
+    source = repo.add_source("manual", "", "手动源")
+    service = CustomLiveService(repo, http_client=FakeHttpClient())
+
+    service.delete_source(source.id)
+
+    assert [item.id for item in service.list_sources()] == [1]

@@ -35,6 +35,21 @@ class CustomLiveService:
     def add_manual_source(self, display_name: str):
         return self._repository.add_source("manual", "", display_name)
 
+    def rename_source(self, source_id: int, display_name: str) -> None:
+        source = self._repository.get_source(source_id)
+        self._repository.update_source(
+            source.id,
+            display_name=display_name,
+            enabled=source.enabled,
+            source_value=source.source_value,
+            cache_text=source.cache_text,
+            last_error=source.last_error,
+            last_refreshed_at=source.last_refreshed_at,
+        )
+
+    def delete_source(self, source_id: int) -> None:
+        self._repository.delete_source(source_id)
+
     def set_source_enabled(self, source_id: int, enabled: bool) -> None:
         self._repository.set_source_enabled(source_id, enabled)
 
