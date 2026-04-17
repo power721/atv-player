@@ -125,6 +125,7 @@ class EmbyController:
             vod=detail,
             playlist=playlist,
             clicked_index=0,
+            source_kind="emby",
             source_mode="detail",
             source_vod_id=detail.vod_id,
             detail_resolver=self.resolve_playlist_item,

@@ -1699,3 +1699,50 @@ def test_main_window_restore_last_player_searches_later_folder_pages(qtbot) -> N
     assert controller.load_calls == [("/TV", 1, 50), ("/TV", 2, 50)]
     assert controller.request_calls == ["page-2-target"]
     assert window.player_window.opened[0][1] is True
+
+
+def test_main_window_restore_last_player_routes_emby_detail_to_emby_controller(qtbot, monkeypatch) -> None:
+    class RestoreBrowseController:
+        def build_request_from_detail(self, vod_id: str):
+            raise AssertionError(f"browse restore should not be used for {vod_id}")
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    controller = FakeEmbyController()
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    config = AppConfig(
+        last_active_window="player",
+        last_playback_source="emby",
+        last_playback_mode="detail",
+        last_playback_vod_id="vod-1",
+        last_player_paused=True,
+    )
+    window = MainWindow(
+        browse_controller=RestoreBrowseController(),
+        emby_controller=controller,
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+
+    restored = window.restore_last_player()
+
+    assert restored is window.player_window
+    assert window.player_window.opened[0][0]["vod"].vod_name == "Emby Movie"
+    assert window.player_window.opened[0][1] is True

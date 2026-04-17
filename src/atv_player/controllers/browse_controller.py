@@ -157,6 +157,7 @@ class BrowseController:
             vod=detail,
             playlist=detail.items,
             clicked_index=0,
+            source_kind="browse",
             source_mode="detail",
             source_vod_id=vod_id,
         )
@@ -179,6 +180,7 @@ class BrowseController:
             vod=resolved_vod,
             playlist=playlist,
             clicked_index=clicked_index,
+            source_kind="browse",
             source_mode="folder",
             source_path=clicked_item.path.rsplit("/", 1)[0] or "/",
             source_vod_id=clicked_item.vod_id,

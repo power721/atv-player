@@ -10,6 +10,8 @@ class AppConfig:
     vod_token: str = ""
     last_path: str = "/"
     last_active_window: str = "main"
+    last_playback_source: str = "browse"
+    last_playback_source_key: str = ""
     last_playback_mode: str = ""
     last_playback_path: str = ""
     last_playback_vod_id: str = ""
@@ -109,6 +111,8 @@ class OpenPlayerRequest:
     vod: VodItem
     playlist: list[PlayItem]
     clicked_index: int
+    source_kind: str = "browse"
+    source_key: str = ""
     source_mode: str = ""
     source_path: str = ""
     source_vod_id: str = ""

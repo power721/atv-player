@@ -29,6 +29,8 @@ class SettingsRepository:
                     vod_token TEXT NOT NULL,
                     last_path TEXT NOT NULL,
                     last_active_window TEXT NOT NULL DEFAULT 'main',
+                    last_playback_source TEXT NOT NULL DEFAULT 'browse',
+                    last_playback_source_key TEXT NOT NULL DEFAULT '',
                     last_playback_mode TEXT NOT NULL DEFAULT '',
                     last_playback_path TEXT NOT NULL DEFAULT '',
                     last_playback_vod_id TEXT NOT NULL DEFAULT '',
@@ -54,6 +56,14 @@ class SettingsRepository:
             if "last_active_window" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN last_active_window TEXT NOT NULL DEFAULT 'main'"
+                )
+            if "last_playback_source" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN last_playback_source TEXT NOT NULL DEFAULT 'browse'"
+                )
+            if "last_playback_source_key" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN last_playback_source_key TEXT NOT NULL DEFAULT ''"
                 )
             if "last_playback_mode" not in columns:
                 conn.execute(
@@ -101,6 +111,8 @@ class SettingsRepository:
                     vod_token,
                     last_path,
                     last_active_window,
+                    last_playback_source,
+                    last_playback_source_key,
                     last_playback_mode,
                     last_playback_path,
                     last_playback_vod_id,
@@ -113,7 +125,7 @@ class SettingsRepository:
                     player_main_splitter_state,
                     browse_content_splitter_state
                 )
-                VALUES (1, 'http://127.0.0.1:4567', '', '', '', '/', 'main', '', '', '', '', 0, 100, 0, NULL, NULL, NULL, NULL)
+                VALUES (1, 'http://127.0.0.1:4567', '', '', '', '/', 'main', 'browse', '', '', '', '', '', 0, 100, 0, NULL, NULL, NULL, NULL)
                 ON CONFLICT(id) DO NOTHING
                 """
             )
@@ -129,6 +141,8 @@ class SettingsRepository:
                     vod_token,
                     last_path,
                     last_active_window,
+                    last_playback_source,
+                    last_playback_source_key,
                     last_playback_mode,
                     last_playback_path,
                     last_playback_vod_id,
@@ -146,8 +160,8 @@ class SettingsRepository:
             ).fetchone()
         assert row is not None
         values = list(row)
-        values[10] = bool(values[10])
         values[12] = bool(values[12])
+        values[14] = bool(values[14])
         return AppConfig(*values)
 
     def save_config(self, config: AppConfig) -> None:
@@ -162,6 +176,8 @@ class SettingsRepository:
                     vod_token = ?,
                     last_path = ?,
                     last_active_window = ?,
+                    last_playback_source = ?,
+                    last_playback_source_key = ?,
                     last_playback_mode = ?,
                     last_playback_path = ?,
                     last_playback_vod_id = ?,
@@ -182,6 +198,8 @@ class SettingsRepository:
                     config.vod_token,
                     config.last_path,
                     config.last_active_window,
+                    config.last_playback_source,
+                    config.last_playback_source_key,
                     config.last_playback_mode,
                     config.last_playback_path,
                     config.last_playback_vod_id,
