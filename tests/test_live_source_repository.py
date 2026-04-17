@@ -51,7 +51,7 @@ def test_live_source_repository_round_trips_source_updates_and_manual_entries(tm
 
 def test_live_source_repository_moves_sources_and_entries_in_sort_order(tmp_path: Path) -> None:
     repo = LiveSourceRepository(tmp_path / "app.db")
-    first = repo.add_source("remote", "https://example.com/a.m3u", "A")
+    repo.add_source("remote", "https://example.com/a.m3u", "A")
     second = repo.add_source("remote", "https://example.com/b.m3u", "B")
     repo.move_source(second.id, -1)
     manual = repo.add_source("manual", "", "手动")

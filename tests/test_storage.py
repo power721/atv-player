@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 
-from atv_player.models import AppConfig, SpiderPluginConfig
+from atv_player.models import AppConfig
 from atv_player.plugins.repository import SpiderPluginRepository
 from atv_player.storage import SettingsRepository
 
