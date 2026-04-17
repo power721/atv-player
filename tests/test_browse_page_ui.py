@@ -134,6 +134,37 @@ class AsyncOpenController(FakeBrowseController):
         self._events_by_key[key].pop(0).set()
 
 
+class AsyncResolveController(FakeBrowseController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.resolve_calls: list[str] = []
+        self._main_thread_id = threading.get_ident()
+        self._events_by_vod_id: dict[str, list[threading.Event]] = {}
+        self._paths_by_vod_id: dict[str, list[str]] = {}
+        self._errors_by_vod_id: dict[str, list[Exception]] = {}
+
+    def resolve_search_result(self, item: VodItem) -> str:
+        self.resolve_calls.append(item.vod_id)
+        assert threading.get_ident() != self._main_thread_id
+        event = threading.Event()
+        self._events_by_vod_id.setdefault(item.vod_id, []).append(event)
+        assert event.wait(timeout=5), f"resolve request for {item.vod_id!r} was never released"
+        errors = self._errors_by_vod_id.get(item.vod_id)
+        if errors:
+            raise errors.pop(0)
+        paths = self._paths_by_vod_id.get(item.vod_id)
+        if paths:
+            return paths.pop(0)
+        return f"/resolved/{item.vod_id}"
+
+    def finish_resolve(self, vod_id: str, *, path: str | None = None, exc: Exception | None = None) -> None:
+        if path is not None:
+            self._paths_by_vod_id.setdefault(vod_id, []).append(path)
+        if exc is not None:
+            self._errors_by_vod_id.setdefault(vod_id, []).append(exc)
+        self._events_by_vod_id[vod_id].pop(0).set()
+
+
 def _make_open_request(vod_id: str, vod_name: str) -> OpenPlayerRequest:
     return OpenPlayerRequest(
         vod=VodItem(vod_id=vod_id, vod_name=vod_name),
@@ -165,6 +196,10 @@ def _wait_for_folder_result(
 
 def _wait_for_open_call(qtbot, controller: AsyncOpenController, kind: str, vod_id: str) -> None:
     qtbot.waitUntil(lambda: (kind, vod_id) in controller.calls, timeout=1000)
+
+
+def _wait_for_resolve_call(qtbot, controller: AsyncResolveController, vod_id: str) -> None:
+    qtbot.waitUntil(lambda: vod_id in controller.resolve_calls, timeout=1000)
 
 
 def test_browse_page_uses_split_view_for_search_and_file_list(qtbot) -> None:
@@ -585,6 +620,72 @@ def test_search_page_clear_results_clears_keyword(qtbot) -> None:
     assert page.status_label.text() == ""
 
 
+def test_search_page_resolves_selected_result_outside_main_thread(qtbot) -> None:
+    controller = AsyncResolveController()
+    page = SearchPage(controller)
+    qtbot.addWidget(page)
+
+    page._results = [VodItem(vod_id="movie-1", vod_name="电影1", type_name="阿里")]
+    page._filtered_results = list(page._results)
+    page._apply_filter()
+
+    browsed: list[str] = []
+    page.browse_requested.connect(browsed.append)
+
+    page._open_selected(0, 0)
+    _wait_for_resolve_call(qtbot, controller, "movie-1")
+    controller.finish_resolve("movie-1", path="/movies/1")
+
+    qtbot.waitUntil(lambda: browsed == ["/movies/1"], timeout=1000)
+    assert page.status_label.text() != "打开失败"
+
+
+def test_search_page_uses_latest_async_resolve_result(qtbot) -> None:
+    controller = AsyncResolveController()
+    page = SearchPage(controller)
+    qtbot.addWidget(page)
+
+    page._results = [
+        VodItem(vod_id="movie-1", vod_name="电影1", type_name="阿里"),
+        VodItem(vod_id="movie-2", vod_name="电影2", type_name="阿里"),
+    ]
+    page._filtered_results = list(page._results)
+    page._apply_filter()
+
+    browsed: list[str] = []
+    page.browse_requested.connect(browsed.append)
+
+    page._open_selected(0, 0)
+    _wait_for_resolve_call(qtbot, controller, "movie-1")
+
+    page._open_selected(1, 0)
+    _wait_for_resolve_call(qtbot, controller, "movie-2")
+
+    controller.finish_resolve("movie-2", path="/movies/2")
+    qtbot.waitUntil(lambda: browsed == ["/movies/2"], timeout=1000)
+
+    controller.finish_resolve("movie-1", path="/movies/1")
+    qtbot.wait(100)
+
+    assert browsed == ["/movies/2"]
+
+
+def test_search_page_shows_latest_async_resolve_error(qtbot) -> None:
+    controller = AsyncResolveController()
+    page = SearchPage(controller)
+    qtbot.addWidget(page)
+
+    page._results = [VodItem(vod_id="broken", vod_name="坏结果", type_name="阿里")]
+    page._filtered_results = list(page._results)
+    page._apply_filter()
+
+    page._open_selected(0, 0)
+    _wait_for_resolve_call(qtbot, controller, "broken")
+    controller.finish_resolve("broken", exc=ApiError("打开失败"))
+
+    qtbot.waitUntil(lambda: page.status_label.text() == "打开失败", timeout=1000)
+
+
 def test_browse_page_allows_empty_keyword_and_displays_loading_during_async_search(qtbot) -> None:
     controller = AsyncSearchController()
     page = BrowsePage(controller)
@@ -697,6 +798,52 @@ def test_browse_page_uses_latest_async_search_result(qtbot) -> None:
 
     assert page.results_table.item(0, 1).text() == "新的"
     assert page.results_table.item(0, 1).toolTip() == "新的"
+
+
+def test_browse_page_resolves_search_result_outside_main_thread(qtbot) -> None:
+    controller = AsyncResolveController()
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+    page.show()
+
+    page._search_request_id = 1
+    page._handle_search_succeeded(1, [VodItem(vod_id="movie-1", vod_name="电影1", type_name="阿里")])
+
+    page._open_search_result(0, 0)
+    _wait_for_resolve_call(qtbot, controller, "movie-1")
+    controller.finish_resolve("movie-1", path="/movies/1")
+
+    qtbot.waitUntil(lambda: page.current_path == "/movies/1", timeout=1000)
+
+
+def test_browse_page_uses_latest_async_search_result_resolution(qtbot) -> None:
+    controller = AsyncResolveController()
+    page = BrowsePage(controller)
+    qtbot.addWidget(page)
+    page.show()
+
+    page._search_request_id = 1
+    page._handle_search_succeeded(
+        1,
+        [
+            VodItem(vod_id="movie-1", vod_name="电影1", type_name="阿里"),
+            VodItem(vod_id="movie-2", vod_name="电影2", type_name="阿里"),
+        ],
+    )
+
+    page._open_search_result(0, 0)
+    _wait_for_resolve_call(qtbot, controller, "movie-1")
+
+    page._open_search_result(1, 0)
+    _wait_for_resolve_call(qtbot, controller, "movie-2")
+
+    controller.finish_resolve("movie-2", path="/movies/2")
+    qtbot.waitUntil(lambda: page.current_path == "/movies/2", timeout=1000)
+
+    controller.finish_resolve("movie-1", path="/movies/1")
+    qtbot.wait(100)
+
+    assert page.current_path == "/movies/2"
 
 
 def test_browse_page_loads_selected_page_and_page_size(qtbot) -> None:

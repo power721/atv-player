@@ -116,6 +116,12 @@ class _OpenRequestSignals(QObject):
     unauthorized = Signal(int)
 
 
+class _ResolveSignals(QObject):
+    succeeded = Signal(int, str)
+    failed = Signal(int, str)
+    unauthorized = Signal(int)
+
+
 class BrowsePage(QWidget):
     open_requested = Signal(object)
     unauthorized = Signal()
@@ -167,6 +173,7 @@ class BrowsePage(QWidget):
         self._sort_order = Qt.SortOrder.AscendingOrder
         self._folder_request_id = 0
         self._open_request_id = 0
+        self._resolve_request_id = 0
         self._search_request_id = 0
         self._folder_signals = _FolderLoadSignals(self)
         self._folder_signals.succeeded.connect(self._handle_folder_load_succeeded)
@@ -176,6 +183,10 @@ class BrowsePage(QWidget):
         self._open_signals.succeeded.connect(self._handle_open_request_succeeded)
         self._open_signals.failed.connect(self._handle_open_request_failed)
         self._open_signals.unauthorized.connect(self._handle_open_request_unauthorized)
+        self._resolve_signals = _ResolveSignals(self)
+        self._resolve_signals.succeeded.connect(self._handle_resolve_succeeded)
+        self._resolve_signals.failed.connect(self._handle_resolve_failed)
+        self._resolve_signals.unauthorized.connect(self._handle_resolve_unauthorized)
         self._search_signals = _SearchSignals(self)
         self._search_signals.succeeded.connect(self._handle_search_succeeded)
         self._search_signals.failed.connect(self._handle_search_failed)
@@ -306,6 +317,7 @@ class BrowsePage(QWidget):
     def search(self) -> None:
         keyword = self.keyword_edit.text().strip()
         self._search_request_id += 1
+        self._resolve_request_id += 1
         request_id = self._search_request_id
         self._results = []
         self._filtered_results = []
@@ -329,6 +341,7 @@ class BrowsePage(QWidget):
 
     def clear_results(self) -> None:
         self._search_request_id += 1
+        self._resolve_request_id += 1
         self.keyword_edit.clear()
         self._results = []
         self._filtered_results = []
@@ -354,17 +367,24 @@ class BrowsePage(QWidget):
         if not (0 <= row < len(self._filtered_results)):
             return
         item = self._filtered_results[row]
-        try:
-            path = self.controller.resolve_search_result(item)
-        except UnauthorizedError:
-            self.unauthorized.emit()
-            return
-        except ApiError as exc:
-            self._show_search_results_panel()
-            self.status_label.show()
-            self.status_label.setText(str(exc))
-            return
-        self.load_path(path)
+        self._resolve_request_id += 1
+        request_id = self._resolve_request_id
+        self._show_search_results_panel()
+        self.status_label.show()
+        self.status_label.setText("打开中...")
+
+        def run() -> None:
+            try:
+                path = self.controller.resolve_search_result(item)
+            except UnauthorizedError:
+                self._resolve_signals.unauthorized.emit(request_id)
+                return
+            except ApiError as exc:
+                self._resolve_signals.failed.emit(request_id, str(exc))
+                return
+            self._resolve_signals.succeeded.emit(request_id, path)
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _show_search_results_panel(self) -> None:
         self.search_panel.show()
@@ -652,5 +672,22 @@ class BrowsePage(QWidget):
 
     def _handle_open_request_unauthorized(self, request_id: int) -> None:
         if request_id != self._open_request_id:
+            return
+        self.unauthorized.emit()
+
+    def _handle_resolve_succeeded(self, request_id: int, path: str) -> None:
+        if request_id != self._resolve_request_id:
+            return
+        self.load_path(path)
+
+    def _handle_resolve_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._resolve_request_id:
+            return
+        self._show_search_results_panel()
+        self.status_label.show()
+        self.status_label.setText(message)
+
+    def _handle_resolve_unauthorized(self, request_id: int) -> None:
+        if request_id != self._resolve_request_id:
             return
         self.unauthorized.emit()

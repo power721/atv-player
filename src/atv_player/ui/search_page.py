@@ -29,6 +29,12 @@ class _SearchSignals(QObject):
     unauthorized = Signal(int)
 
 
+class _ResolveSignals(QObject):
+    succeeded = Signal(int, str)
+    failed = Signal(int, str)
+    unauthorized = Signal(int)
+
+
 class SearchPage(QWidget):
     browse_requested = Signal(str)
     unauthorized = Signal()
@@ -52,10 +58,15 @@ class SearchPage(QWidget):
         self._results: list[VodItem] = []
         self._filtered_results: list[VodItem] = []
         self._search_request_id = 0
+        self._resolve_request_id = 0
         self._search_signals = _SearchSignals(self)
         self._search_signals.succeeded.connect(self._handle_search_succeeded)
         self._search_signals.failed.connect(self._handle_search_failed)
         self._search_signals.unauthorized.connect(self._handle_search_unauthorized)
+        self._resolve_signals = _ResolveSignals(self)
+        self._resolve_signals.succeeded.connect(self._handle_resolve_succeeded)
+        self._resolve_signals.failed.connect(self._handle_resolve_failed)
+        self._resolve_signals.unauthorized.connect(self._handle_resolve_unauthorized)
 
         for label, value in SEARCH_DRIVE_FILTER_OPTIONS:
             self.filter_combo.addItem(label, value)
@@ -91,6 +102,7 @@ class SearchPage(QWidget):
     def search(self) -> None:
         keyword = self.keyword_edit.text().strip()
         self._search_request_id += 1
+        self._resolve_request_id += 1
         request_id = self._search_request_id
         self._results = []
         self._filtered_results = []
@@ -112,6 +124,7 @@ class SearchPage(QWidget):
 
     def clear_results(self) -> None:
         self._search_request_id += 1
+        self._resolve_request_id += 1
         self.keyword_edit.clear()
         self._results = []
         self._filtered_results = []
@@ -133,15 +146,22 @@ class SearchPage(QWidget):
         if not hasattr(self, "_filtered_results") or not (0 <= row < len(self._filtered_results)):
             return
         item = self._filtered_results[row]
-        try:
-            path = self.controller.resolve_search_result(item)
-        except UnauthorizedError:
-            self.unauthorized.emit()
-            return
-        except ApiError as exc:
-            self.status_label.setText(str(exc))
-            return
-        self.browse_requested.emit(path)
+        self._resolve_request_id += 1
+        request_id = self._resolve_request_id
+        self.status_label.setText("打开中...")
+
+        def run() -> None:
+            try:
+                path = self.controller.resolve_search_result(item)
+            except UnauthorizedError:
+                self._resolve_signals.unauthorized.emit(request_id)
+                return
+            except ApiError as exc:
+                self._resolve_signals.failed.emit(request_id, str(exc))
+                return
+            self._resolve_signals.succeeded.emit(request_id, path)
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _set_search_loading(self, loading: bool) -> None:
         self.keyword_edit.setEnabled(not loading)
@@ -169,4 +189,19 @@ class SearchPage(QWidget):
         if request_id != self._search_request_id:
             return
         self._set_search_loading(False)
+        self.unauthorized.emit()
+
+    def _handle_resolve_succeeded(self, request_id: int, path: str) -> None:
+        if request_id != self._resolve_request_id:
+            return
+        self.browse_requested.emit(path)
+
+    def _handle_resolve_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._resolve_request_id:
+            return
+        self.status_label.setText(message)
+
+    def _handle_resolve_unauthorized(self, request_id: int) -> None:
+        if request_id != self._resolve_request_id:
+            return
         self.unauthorized.emit()
