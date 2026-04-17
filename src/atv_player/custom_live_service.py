@@ -135,14 +135,15 @@ class CustomLiveService:
                 for group in playlist.groups
             ]
             return items, len(items)
+        merged_channels = self._merge_channels(source.id, "", playlist.ungrouped_channels)
         items = [
             VodItem(
-                vod_id=f"custom-channel:{source.id}:{channel.key}",
-                vod_name=channel.name,
+                vod_id=f"custom-channel:{source.id}:{channel.channel_id}",
+                vod_name=channel.channel_name,
                 vod_tag="file",
                 vod_pic=channel.logo_url,
             )
-            for channel in playlist.ungrouped_channels
+            for channel in merged_channels
         ]
         return items, len(items)
 

@@ -224,6 +224,97 @@ def test_custom_live_service_keeps_single_line_channel_title_without_suffix(tmp_
     assert [item.title for item in request.playlist] == ["江苏卫视"]
 
 
+def test_custom_live_service_merges_duplicate_ungrouped_channels(tmp_path: Path) -> None:
+    repo = LiveSourceRepository(tmp_path / "app.db")
+    source = repo.add_source("remote", "https://example.com/live.m3u", "自定义远程")
+    repo.update_source(
+        source.id,
+        display_name="自定义远程",
+        enabled=True,
+        source_value="https://example.com/live.m3u",
+        cache_text=(
+            "#EXTM3U\n"
+            "#EXTINF:-1 tvg-logo=\"\",CCTV1综合\n"
+            "https://live.example/cctv1-main.m3u8\n"
+            "#EXTINF:-1 tvg-logo=\"https://img.example/cctv1.png\",CCTV1综合\n"
+            "https://live.example/cctv1-backup.m3u8\n"
+        ),
+        last_error="",
+        last_refreshed_at=1,
+    )
+    service = CustomLiveService(repo, http_client=FakeHttpClient())
+
+    items, total = service.load_items(f"custom:{source.id}", 1)
+    request = service.build_request(f"custom-channel:{source.id}:channel-0")
+
+    assert total == 1
+    assert [(item.vod_name, item.vod_pic) for item in items] == [("CCTV1综合", "https://img.example/cctv1.png")]
+    assert [item.title for item in request.playlist] == ["CCTV1综合 1", "CCTV1综合 2"]
+
+
+def test_custom_live_service_does_not_merge_same_name_across_groups(tmp_path: Path) -> None:
+    repo = LiveSourceRepository(tmp_path / "app.db")
+    source = repo.add_source("remote", "https://example.com/live.m3u", "自定义远程")
+    repo.update_source(
+        source.id,
+        display_name="自定义远程",
+        enabled=True,
+        source_value="https://example.com/live.m3u",
+        cache_text=(
+            "#EXTM3U\n"
+            "#EXTINF:-1 group-title=\"央视频道\",CCTV1综合\n"
+            "https://live.example/cctv1-main.m3u8\n"
+            "#EXTINF:-1 group-title=\"收藏\",CCTV1综合\n"
+            "https://live.example/cctv1-favorite.m3u8\n"
+        ),
+        last_error="",
+        last_refreshed_at=1,
+    )
+    service = CustomLiveService(repo, http_client=FakeHttpClient())
+
+    root_items, root_total = service.load_items(f"custom:{source.id}", 1)
+    cctv_items, cctv_total = service.load_folder_items(f"custom-folder:{source.id}:group-0")
+    favorite_items, favorite_total = service.load_folder_items(f"custom-folder:{source.id}:group-1")
+
+    assert root_total == 2
+    assert [item.vod_name for item in root_items] == ["央视频道", "收藏"]
+    assert cctv_total == 1
+    assert favorite_total == 1
+    assert [item.vod_name for item in cctv_items] == ["CCTV1综合"]
+    assert [item.vod_name for item in favorite_items] == ["CCTV1综合"]
+
+
+def test_custom_live_service_merges_duplicate_manual_entries_into_switchable_lines(tmp_path: Path) -> None:
+    repo = LiveSourceRepository(tmp_path / "app.db")
+    service = CustomLiveService(repo, http_client=FakeHttpClient())
+    source = service.add_manual_source("手动源")
+    first = service.add_manual_entry(
+        source.id,
+        group_name="",
+        channel_name="CCTV1综合",
+        stream_url="https://live.example/cctv1-main.m3u8",
+        logo_url="",
+    )
+    service.add_manual_entry(
+        source.id,
+        group_name="",
+        channel_name="CCTV1综合",
+        stream_url="https://live.example/cctv1-backup.m3u8",
+        logo_url="https://img.example/cctv1.png",
+    )
+
+    items, total = service.load_items(f"custom:{source.id}", 1)
+    request = service.build_request(f"custom-channel:{source.id}:manual-{first.id}")
+
+    assert total == 1
+    assert [(item.vod_name, item.vod_pic) for item in items] == [("CCTV1综合", "https://img.example/cctv1.png")]
+    assert [item.title for item in request.playlist] == ["CCTV1综合 1", "CCTV1综合 2"]
+    assert [item.url for item in request.playlist] == [
+        "https://live.example/cctv1-main.m3u8",
+        "https://live.example/cctv1-backup.m3u8",
+    ]
+
+
 def test_custom_live_service_exposes_live_source_management_methods(tmp_path: Path) -> None:
     repo = LiveSourceRepository(tmp_path / "app.db")
     service = CustomLiveService(repo, http_client=FakeHttpClient())
