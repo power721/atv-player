@@ -448,9 +448,11 @@ class MainWindow(QMainWindow):
             try:
                 request = builder()
             except Exception as exc:
-                self._open_request_signals.failed.emit(request_id, str(exc))
+                if self._is_window_alive():
+                    self._open_request_signals.failed.emit(request_id, str(exc))
                 return
-            self._open_request_signals.succeeded.emit(request_id, request)
+            if self._is_window_alive():
+                self._open_request_signals.succeeded.emit(request_id, request)
 
         threading.Thread(target=run, daemon=True).start()
         return request_id
@@ -481,19 +483,21 @@ class MainWindow(QMainWindow):
             try:
                 items, total = loader()
             except Exception as exc:
-                self._media_request_signals.failed.emit(request_id, str(exc))
+                if self._is_window_alive():
+                    self._media_request_signals.failed.emit(request_id, str(exc))
                 return
-            self._media_request_signals.succeeded.emit(
-                request_id,
-                _MediaLoadResult(
-                    page=page,
-                    items=list(items),
-                    total=total,
-                    empty_message=empty_message,
-                    push_breadcrumb=push_breadcrumb,
-                    trim_breadcrumbs_to=trim_breadcrumbs_to,
-                ),
-            )
+            if self._is_window_alive():
+                self._media_request_signals.succeeded.emit(
+                    request_id,
+                    _MediaLoadResult(
+                        page=page,
+                        items=list(items),
+                        total=total,
+                        empty_message=empty_message,
+                        push_breadcrumb=push_breadcrumb,
+                        trim_breadcrumbs_to=trim_breadcrumbs_to,
+                    ),
+                )
 
         threading.Thread(target=run, daemon=True).start()
         return request_id
@@ -642,9 +646,11 @@ class MainWindow(QMainWindow):
             try:
                 request = self._build_restore_request()
             except Exception:
-                self._restore_signals.failed.emit(request_id)
+                if self._is_window_alive():
+                    self._restore_signals.failed.emit(request_id)
                 return
-            self._restore_signals.succeeded.emit(request_id, request)
+            if self._is_window_alive():
+                self._restore_signals.succeeded.emit(request_id, request)
 
         threading.Thread(target=run, daemon=True).start()
         return request_id

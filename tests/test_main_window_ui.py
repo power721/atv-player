@@ -1,4 +1,7 @@
+import threading
 import time
+
+import pytest
 
 from atv_player.models import AppConfig, OpenPlayerRequest, PlayItem, VodItem
 import atv_player.ui.main_window as main_window_module
@@ -60,6 +63,60 @@ class FakePlayerController:
             "clicked_index": clicked_index,
             "restore_history": restore_history,
         }
+
+
+class AsyncOpenController(FakeStaticController):
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self._event = threading.Event()
+
+    def build_request(self, vod_id: str):
+        self.calls.append(vod_id)
+        assert self._event.wait(timeout=5), "open request was never released"
+        return OpenPlayerRequest(
+            vod=VodItem(vod_id=vod_id, vod_name="Movie"),
+            playlist=[PlayItem(title="Episode 1", url="1.m3u8")],
+            clicked_index=0,
+            source_mode="detail",
+            source_vod_id=vod_id,
+        )
+
+    def release(self) -> None:
+        self._event.set()
+
+
+class AsyncMediaController(FakeStaticController):
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self._event = threading.Event()
+
+    def load_folder_items(self, vod_id: str):
+        self.calls.append(vod_id)
+        assert self._event.wait(timeout=5), "media load was never released"
+        return [VodItem(vod_id="m1", vod_name="Movie")], 1
+
+    def release(self) -> None:
+        self._event.set()
+
+
+class AsyncRestoreController(FakeStaticController):
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self._event = threading.Event()
+
+    def build_request_from_detail(self, vod_id: str):
+        self.calls.append(vod_id)
+        assert self._event.wait(timeout=5), "restore request was never released"
+        return OpenPlayerRequest(
+            vod=VodItem(vod_id=vod_id, vod_name="Movie"),
+            playlist=[PlayItem(title="Episode 1", url="1.m3u8")],
+            clicked_index=0,
+            source_mode="detail",
+            source_vod_id=vod_id,
+        )
+
+    def release(self) -> None:
+        self._event.set()
 
 
 def test_main_window_inserts_dynamic_spider_tabs_before_browse(qtbot) -> None:
@@ -300,3 +357,83 @@ def test_main_window_async_restore_session_creation_failure_resets_last_active_w
     qtbot.waitUntil(lambda: config.last_active_window == "main")
     assert errors == ["session failed"]
     assert saved["count"] >= 1
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_main_window_ignores_async_open_request_after_window_deletion(qtbot) -> None:
+    controller = AsyncOpenController()
+    window = MainWindow(
+        telegram_controller=controller,
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    destroyed = {"count": 0}
+    window.destroyed.connect(lambda *_args: destroyed.__setitem__("count", destroyed["count"] + 1))
+
+    window._handle_telegram_open_requested("vod-1")
+    qtbot.waitUntil(lambda: controller.calls == ["vod-1"], timeout=1000)
+
+    window.deleteLater()
+    qtbot.waitUntil(lambda: destroyed["count"] == 1, timeout=1000)
+
+    controller.release()
+    qtbot.wait(100)
+
+    assert destroyed["count"] == 1
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_main_window_ignores_async_media_load_after_window_deletion(qtbot) -> None:
+    controller = AsyncMediaController()
+    window = MainWindow(
+        live_controller=controller,
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    destroyed = {"count": 0}
+    window.destroyed.connect(lambda *_args: destroyed.__setitem__("count", destroyed["count"] + 1))
+
+    item = type("Item", (), {"vod_id": "folder-1", "vod_name": "Folder", "vod_tag": "folder"})()
+    window._open_media_folder(window.live_page, controller, item)
+    qtbot.waitUntil(lambda: controller.calls == ["folder-1"], timeout=1000)
+
+    window.deleteLater()
+    qtbot.waitUntil(lambda: destroyed["count"] == 1, timeout=1000)
+
+    controller.release()
+    qtbot.wait(100)
+
+    assert destroyed["count"] == 1
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_main_window_ignores_async_restore_after_window_deletion(qtbot) -> None:
+    controller = AsyncRestoreController()
+    config = AppConfig(
+        last_active_window="player",
+        last_playback_mode="detail",
+        last_playback_vod_id="vod-1",
+    )
+    window = MainWindow(
+        browse_controller=controller,
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+    )
+    destroyed = {"count": 0}
+    window.destroyed.connect(lambda *_args: destroyed.__setitem__("count", destroyed["count"] + 1))
+
+    window._start_restore_last_player()
+    qtbot.waitUntil(lambda: controller.calls == ["vod-1"], timeout=1000)
+
+    window.deleteLater()
+    qtbot.waitUntil(lambda: destroyed["count"] == 1, timeout=1000)
+
+    controller.release()
+    qtbot.wait(100)
+
+    assert destroyed["count"] == 1
