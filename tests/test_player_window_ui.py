@@ -2606,6 +2606,25 @@ def test_player_window_ctrl_q_quits_application(qtbot, monkeypatch) -> None:
     assert config.last_active_window == "player"
 
 
+def test_player_window_quit_application_reports_progress_and_stops_current_playback(qtbot, monkeypatch) -> None:
+    called = {"count": 0}
+    controller = RecordingPlayerController()
+    window = PlayerWindow(controller, config=AppConfig(last_active_window="player"), save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session(start_index=1))
+    controller.progress_calls.clear()
+    controller.stop_calls.clear()
+
+    monkeypatch.setattr(QApplication, "quit", lambda *args, **kwargs: called.__setitem__("count", called["count"] + 1))
+
+    window._quit_application()
+
+    assert called["count"] == 1
+    assert controller.progress_calls == [(1, 30, 1.0, 0, 0)]
+    assert controller.stop_calls == [1]
+
+
 def test_player_window_quit_application_preserves_current_paused_state(qtbot, monkeypatch) -> None:
     config = AppConfig(last_active_window="player", last_player_paused=False)
     window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
@@ -2835,6 +2854,21 @@ def test_player_window_return_to_main_persists_paused_restore_state(qtbot) -> No
     window._return_to_main()
 
     assert config.last_player_paused is True
+
+
+def test_player_window_return_to_main_reports_current_progress_without_stopping_session(qtbot) -> None:
+    controller = RecordingPlayerController()
+    window = PlayerWindow(controller, config=AppConfig(last_active_window="player"), save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session(start_index=1))
+    controller.progress_calls.clear()
+    controller.stop_calls.clear()
+
+    window._return_to_main()
+
+    assert controller.progress_calls == [(1, 30, 1.0, 0, 0)]
+    assert controller.stop_calls == []
 
 
 def test_player_window_return_to_main_restores_application_title(qtbot) -> None:

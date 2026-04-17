@@ -1308,6 +1308,8 @@ class PlayerWindow(QWidget):
 
     def _quit_application(self) -> None:
         self._quit_requested = True
+        self.report_progress()
+        self._stop_current_playback()
         if self.config is not None:
             self.config.last_active_window = "player"
         self._set_last_player_paused(not self.is_playing)
@@ -1337,6 +1339,7 @@ class PlayerWindow(QWidget):
             self.video.pause()
         except Exception:
             pass
+        self.report_progress()
         self.is_playing = False
         self._refresh_window_title()
         self._restore_video_cursor()
