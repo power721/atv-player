@@ -109,6 +109,16 @@ class LiveSourceEntry:
 
 
 @dataclass(slots=True)
+class LiveSourceChannelView:
+    source_id: int
+    channel_id: str
+    group_key: str
+    channel_name: str
+    stream_url: str
+    logo_url: str = ""
+
+
+@dataclass(slots=True)
 class SpiderPluginConfig:
     id: int = 0
     source_type: str = ""
