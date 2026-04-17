@@ -359,6 +359,28 @@ def test_main_window_async_restore_session_creation_failure_resets_last_active_w
     assert saved["count"] >= 1
 
 
+def test_main_window_drops_closed_player_window_reference_when_returning_to_main(qtbot) -> None:
+    class ClosedPlayerWindow:
+        def __init__(self) -> None:
+            self.session = None
+
+    config = AppConfig(last_active_window="player")
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    window.player_window = ClosedPlayerWindow()
+
+    window._show_main_again()
+
+    assert window.player_window is None
+    assert config.last_active_window == "main"
+
+
 @pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 def test_main_window_ignores_async_open_request_after_window_deletion(qtbot) -> None:
     controller = AsyncOpenController()

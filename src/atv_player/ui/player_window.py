@@ -2134,6 +2134,7 @@ class PlayerWindow(QWidget):
             self._video_surface_ready = False
             self.report_progress()
             self._stop_current_playback()
+            self.session = None
         finally:
             self._shutdown_controller_task_queue()
             self.report_timer.stop()

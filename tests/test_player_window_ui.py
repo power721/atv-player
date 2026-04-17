@@ -4897,3 +4897,14 @@ def test_player_window_resume_from_main_resumes_playback_and_updates_state(qtbot
     assert window.is_playing is True
     assert window.windowTitle() == "Movie - Episode 1"
     assert config.last_player_paused is False
+
+
+def test_player_window_close_clears_session_for_future_restore(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(last_active_window="player"), save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session(start_index=1))
+
+    window.close()
+
+    assert window.session is None

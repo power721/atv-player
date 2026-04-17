@@ -591,6 +591,8 @@ class MainWindow(QMainWindow):
         self.show_error(message)
 
     def _show_main_again(self) -> None:
+        if self.player_window is not None and getattr(self.player_window, "session", None) is None:
+            self.player_window = None
         self.config.last_active_window = "main"
         self._save_config()
         self.show()
