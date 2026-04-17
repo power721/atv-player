@@ -1,5 +1,6 @@
 import threading
 
+import pytest
 from PySide6.QtCore import Qt
 
 from atv_player.api import ApiError, UnauthorizedError
@@ -425,3 +426,53 @@ def test_poster_grid_page_centers_content_container(qtbot) -> None:
     page_center = page.rect().center().x()
 
     assert abs(container_center - page_center) <= 5
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_poster_grid_page_ignores_async_item_result_after_widget_deletion(qtbot) -> None:
+    controller = AsyncDoubanController()
+    page = PosterGridPage(controller)
+    destroyed = {"count": 0}
+    page.destroyed.connect(lambda *_args: destroyed.__setitem__("count", destroyed["count"] + 1))
+
+    page.ensure_loaded()
+    qtbot.waitUntil(lambda: page.category_list.count() == 2)
+    qtbot.waitUntil(lambda: controller.item_calls == [("suggestion", 1)], timeout=1000)
+
+    page.deleteLater()
+    qtbot.waitUntil(lambda: destroyed["count"] == 1, timeout=1000)
+
+    controller.release("suggestion", 1)
+    qtbot.wait(100)
+
+    assert destroyed["count"] == 1
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_poster_grid_page_ignores_async_poster_result_after_widget_deletion(qtbot, monkeypatch) -> None:
+    release_poster = threading.Event()
+    destroyed = {"count": 0}
+
+    from PySide6.QtGui import QImage
+
+    image = QImage(20, 40, QImage.Format.Format_RGB32)
+    image.fill(0x00FF00)
+
+    def fake_load_remote_poster_image(*args, **kwargs):
+        assert release_poster.wait(timeout=5), "poster load was never released"
+        return image
+
+    monkeypatch.setattr(poster_grid_page_module, "load_remote_poster_image", fake_load_remote_poster_image)
+
+    page = PosterGridPage(FakeDoubanController())
+    page.destroyed.connect(lambda *_args: destroyed.__setitem__("count", destroyed["count"] + 1))
+    page.ensure_loaded()
+    qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
+
+    page.deleteLater()
+    qtbot.waitUntil(lambda: destroyed["count"] == 1, timeout=1000)
+
+    release_poster.set()
+    qtbot.wait(100)
+
+    assert destroyed["count"] == 1

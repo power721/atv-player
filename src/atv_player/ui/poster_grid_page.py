@@ -4,6 +4,7 @@ import threading
 from threading import BoundedSemaphore
 from typing import cast
 
+import shiboken6
 from PySide6.QtCore import QObject, QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
@@ -150,6 +151,9 @@ class PosterGridPage(QWidget):
             self.clear_button.clicked.connect(self.clear_search)
             self.keyword_edit.returnPressed.connect(self.search)
 
+    def _is_widget_alive(self) -> bool:
+        return shiboken6.isValid(self)
+
     def ensure_loaded(self) -> None:
         if self._initial_load_started:
             return
@@ -165,12 +169,15 @@ class PosterGridPage(QWidget):
             try:
                 categories = self.controller.load_categories()
             except UnauthorizedError:
-                self._signals.unauthorized.emit(request_id, "categories")
+                if self._is_widget_alive():
+                    self._signals.unauthorized.emit(request_id, "categories")
                 return
             except ApiError as exc:
-                self._signals.failed.emit(str(exc), request_id, "categories")
+                if self._is_widget_alive():
+                    self._signals.failed.emit(str(exc), request_id, "categories")
                 return
-            self._signals.categories_loaded.emit(request_id, categories)
+            if self._is_widget_alive():
+                self._signals.categories_loaded.emit(request_id, categories)
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -183,12 +190,15 @@ class PosterGridPage(QWidget):
             try:
                 items, total = self.controller.load_items(category_id, page)
             except UnauthorizedError:
-                self._signals.unauthorized.emit(request_id, "items")
+                if self._is_widget_alive():
+                    self._signals.unauthorized.emit(request_id, "items")
                 return
             except ApiError as exc:
-                self._signals.failed.emit(str(exc), request_id, "items")
+                if self._is_widget_alive():
+                    self._signals.failed.emit(str(exc), request_id, "items")
                 return
-            self._signals.items_loaded.emit(request_id, items, total)
+            if self._is_widget_alive():
+                self._signals.items_loaded.emit(request_id, items, total)
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -331,12 +341,15 @@ class PosterGridPage(QWidget):
             try:
                 items, total = self.controller.search_items(keyword, page)
             except UnauthorizedError:
-                self._signals.unauthorized.emit(request_id, "items")
+                if self._is_widget_alive():
+                    self._signals.unauthorized.emit(request_id, "items")
                 return
             except ApiError as exc:
-                self._signals.failed.emit(str(exc), request_id, "items")
+                if self._is_widget_alive():
+                    self._signals.failed.emit(str(exc), request_id, "items")
                 return
-            self._signals.items_loaded.emit(request_id, items, total)
+            if self._is_widget_alive():
+                self._signals.items_loaded.emit(request_id, items, total)
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -452,7 +465,7 @@ class PosterGridPage(QWidget):
                 image = load_local_poster_image(poster_source, self._CARD_POSTER_SIZE)
                 if image is None:
                     image = load_remote_poster_image(image_url, self._CARD_POSTER_SIZE)
-                if image is not None and gen == self._poster_generation:
+                if image is not None and self._is_widget_alive() and gen == self._poster_generation:
                     self._signals.poster_loaded.emit(button, image)
             finally:
                 self._poster_semaphore.release()
