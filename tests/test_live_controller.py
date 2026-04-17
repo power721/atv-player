@@ -42,7 +42,7 @@ def test_load_categories_inserts_recommendation_first() -> None:
     ]
 
 
-def test_load_categories_prepends_enabled_custom_sources() -> None:
+def test_load_categories_appends_enabled_custom_sources() -> None:
     from atv_player.controllers.live_controller import LiveController
 
     api = FakeApiClient()
@@ -57,9 +57,9 @@ def test_load_categories_prepends_enabled_custom_sources() -> None:
     categories = controller.load_categories()
 
     assert [(item.type_id, item.type_name) for item in categories] == [
-        ("custom:7", "自定义远程"),
         ("0", "推荐"),
         ("bili", "哔哩哔哩"),
+        ("custom:7", "自定义远程"),
     ]
 
 

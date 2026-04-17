@@ -14,6 +14,14 @@ from PySide6.QtWidgets import (
 )
 
 
+def _display_source_type(source_type: str) -> str:
+    return {
+        "remote": "远程",
+        "local": "本地",
+        "manual": "手动",
+    }.get(source_type, source_type)
+
+
 class LiveSourceManagerDialog(QDialog):
     def __init__(self, manager, parent=None) -> None:
         super().__init__(parent)
@@ -60,7 +68,7 @@ class LiveSourceManagerDialog(QDialog):
         self.source_table.setRowCount(len(sources))
         for row, source in enumerate(sources):
             self.source_table.setItem(row, 0, QTableWidgetItem(source.display_name))
-            self.source_table.setItem(row, 1, QTableWidgetItem(source.source_type))
+            self.source_table.setItem(row, 1, QTableWidgetItem(_display_source_type(source.source_type)))
             self.source_table.setItem(row, 2, QTableWidgetItem(source.source_value))
             self.source_table.setItem(row, 3, QTableWidgetItem("是" if source.enabled else "否"))
             self.source_table.setItem(row, 4, QTableWidgetItem(source.last_error or "正常"))

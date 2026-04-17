@@ -72,6 +72,8 @@ def test_live_source_manager_dialog_renders_rows_and_actions(qtbot, monkeypatch)
 
     assert dialog.source_table.rowCount() == 2
     assert dialog.source_table.item(0, 0).text() == "远程源"
+    assert dialog.source_table.item(0, 1).text() == "远程"
+    assert dialog.source_table.item(1, 1).text() == "手动"
     assert manager.add_remote_calls == [("https://example.com/iptv.m3u", "我的远程源")]
     assert manager.refresh_calls == [1]
 

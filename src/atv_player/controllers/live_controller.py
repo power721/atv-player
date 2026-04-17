@@ -63,7 +63,7 @@ class LiveController:
         custom_categories: list[DoubanCategory] = []
         if self._custom_live_service is not None:
             custom_categories = list(self._custom_live_service.load_categories())
-        return [*custom_categories, DoubanCategory(type_id="0", type_name="推荐"), *categories]
+        return [DoubanCategory(type_id="0", type_name="推荐"), *categories, *custom_categories]
 
     def _map_live_items(self, payload: dict) -> list[VodItem]:
         return [_map_item(item) for item in payload.get("list", [])]
