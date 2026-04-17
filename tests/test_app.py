@@ -898,6 +898,104 @@ def test_main_window_reuses_existing_shortcut_help_dialog(qtbot) -> None:
     assert visible_shortcut_help_dialogs()[0] is first_dialog
 
 
+def test_main_window_opening_player_closes_shortcut_help_dialog(qtbot, monkeypatch) -> None:
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.opened: list[tuple[object, bool]] = []
+            self.closed_to_main = type("Signal", (), {"connect": staticmethod(lambda _callback: None)})()
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+
+    QTest.keyClick(window, Qt.Key.Key_F1)
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
+
+    request = OpenPlayerRequest(
+        vod=VodItem(vod_id="vod-1", vod_name="Movie"),
+        playlist=[PlayItem(title="Episode 1", url="1.m3u8")],
+        clicked_index=0,
+        source_mode="detail",
+        source_vod_id="vod-1",
+    )
+    window._apply_open_player(request, {"session": "ok"})
+
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 0, timeout=1000)
+    assert window.help_dialog is None
+
+
+def test_main_window_restoring_existing_player_closes_shortcut_help_dialog(qtbot) -> None:
+    class ExistingPlayerWindow:
+        def __init__(self) -> None:
+            self.session = object()
+            self.resume_calls = 0
+            self.show_calls = 0
+            self.raise_calls = 0
+            self.activate_calls = 0
+
+        def resume_from_main(self) -> None:
+            self.resume_calls += 1
+
+        def show(self) -> None:
+            self.show_calls += 1
+
+        def raise_(self) -> None:
+            self.raise_calls += 1
+
+        def activateWindow(self) -> None:
+            self.activate_calls += 1
+
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.player_window = ExistingPlayerWindow()
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+
+    QTest.keyClick(window, Qt.Key.Key_F1)
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
+
+    window.show_or_restore_player()
+
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 0, timeout=1000)
+    assert window.help_dialog is None
+
+
 def test_main_window_enables_search_controls_for_emby_page(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),

@@ -543,6 +543,7 @@ class MainWindow(QMainWindow):
             self.player_window = PlayerWindow(self.player_controller, self.config, self._save_config)
             if hasattr(self.player_window, "closed_to_main"):
                 self.player_window.closed_to_main.connect(self._show_main_again)
+        self._close_help_dialog()
         self.config.last_active_window = "player"
         self.config.last_playback_source = request.source_kind
         self.config.last_playback_source_key = request.source_key
@@ -601,6 +602,7 @@ class MainWindow(QMainWindow):
 
     def show_or_restore_player(self) -> PlayerWindow | None:
         if self.player_window is not None and getattr(self.player_window, "session", None) is not None:
+            self._close_help_dialog()
             self.config.last_active_window = "player"
             self._save_config()
             if hasattr(self.player_window, "resume_from_main"):
@@ -731,6 +733,13 @@ class MainWindow(QMainWindow):
 
     def _clear_help_dialog_reference(self, *_args) -> None:
         self.help_dialog = None
+
+    def _close_help_dialog(self) -> None:
+        dialog = self.help_dialog
+        if dialog is None:
+            return
+        self.help_dialog = None
+        dialog.close()
 
     def _quit_application(self) -> None:
         self.config.last_active_window = "main"
