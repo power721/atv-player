@@ -31,6 +31,7 @@ class FakeLiveSourceManager:
                     group_name="央视",
                     channel_name="CCTV-1",
                     stream_url="https://live.example/cctv1.m3u8",
+                    logo_url="https://img.example/cctv1.png",
                     sort_order=0,
                 )
             ]
@@ -74,11 +75,19 @@ class FakeLiveSourceManager:
     def list_manual_entries(self, source_id: int):
         return list(self.entries.get(source_id, []))
 
-    def add_manual_entry(self, source_id: int, *, group_name: str, channel_name: str, stream_url: str):
-        self.add_entry_calls.append((source_id, group_name, channel_name, stream_url))
+    def add_manual_entry(self, source_id: int, *, group_name: str, channel_name: str, stream_url: str, logo_url: str):
+        self.add_entry_calls.append((source_id, group_name, channel_name, stream_url, logo_url))
 
-    def update_manual_entry(self, entry_id: int, *, group_name: str, channel_name: str, stream_url: str):
-        self.update_entry_calls.append((entry_id, group_name, channel_name, stream_url))
+    def update_manual_entry(
+        self,
+        entry_id: int,
+        *,
+        group_name: str,
+        channel_name: str,
+        stream_url: str,
+        logo_url: str,
+    ):
+        self.update_entry_calls.append((entry_id, group_name, channel_name, stream_url, logo_url))
 
     def delete_manual_entry(self, entry_id: int):
         self.delete_entry_calls.append(entry_id)
@@ -255,6 +264,7 @@ def test_manual_live_source_dialog_renders_existing_channels(qtbot) -> None:
     assert dialog.entry_table.rowCount() == 1
     assert dialog.entry_table.item(0, 0).text() == "央视"
     assert dialog.entry_table.item(0, 1).text() == "CCTV-1"
+    assert dialog.entry_table.item(0, 3).text() == "https://img.example/cctv1.png"
 
 
 def test_manual_live_source_dialog_adds_entry(qtbot, monkeypatch) -> None:
@@ -262,11 +272,17 @@ def test_manual_live_source_dialog_adds_entry(qtbot, monkeypatch) -> None:
     dialog = ManualLiveSourceDialog(manager, source_id=2)
     qtbot.addWidget(dialog)
     dialog.show()
-    monkeypatch.setattr(dialog, "_prompt_entry", lambda **kwargs: ("卫视", "湖南卫视", "https://live.example/hunan.m3u8"))
+    monkeypatch.setattr(
+        dialog,
+        "_prompt_entry",
+        lambda **kwargs: ("卫视", "湖南卫视", "https://live.example/hunan.m3u8", "https://img.example/hunan.png"),
+    )
 
     dialog._add_entry()
 
-    assert manager.add_entry_calls == [(2, "卫视", "湖南卫视", "https://live.example/hunan.m3u8")]
+    assert manager.add_entry_calls == [
+        (2, "卫视", "湖南卫视", "https://live.example/hunan.m3u8", "https://img.example/hunan.png")
+    ]
 
 
 def test_manual_live_source_dialog_edits_selected_entry(qtbot, monkeypatch) -> None:
@@ -276,11 +292,17 @@ def test_manual_live_source_dialog_edits_selected_entry(qtbot, monkeypatch) -> N
     dialog.show()
     dialog.reload_entries()
     dialog.entry_table.selectRow(0)
-    monkeypatch.setattr(dialog, "_prompt_entry", lambda **kwargs: ("央视", "CCTV-1综合", "https://live.example/cctv1hd.m3u8"))
+    monkeypatch.setattr(
+        dialog,
+        "_prompt_entry",
+        lambda **kwargs: ("央视", "CCTV-1综合", "https://live.example/cctv1hd.m3u8", "https://img.example/cctv1hd.png"),
+    )
 
     dialog._edit_selected_entry()
 
-    assert manager.update_entry_calls == [(10, "央视", "CCTV-1综合", "https://live.example/cctv1hd.m3u8")]
+    assert manager.update_entry_calls == [
+        (10, "央视", "CCTV-1综合", "https://live.example/cctv1hd.m3u8", "https://img.example/cctv1hd.png")
+    ]
 
 
 def test_manual_live_source_dialog_deletes_selected_entry(qtbot, monkeypatch) -> None:
@@ -306,6 +328,7 @@ def test_manual_live_source_dialog_moves_selected_entry(qtbot) -> None:
             group_name="央视",
             channel_name="CCTV-2",
             stream_url="https://live.example/cctv2.m3u8",
+            logo_url="",
             sort_order=1,
         )
     )
