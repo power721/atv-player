@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from atv_player.ui.manual_live_source_dialog import ManualLiveSourceDialog
+
 
 def _display_source_type(source_type: str) -> str:
     return {
@@ -72,6 +74,7 @@ class LiveSourceManagerDialog(QDialog):
         self.rename_button.clicked.connect(self._rename_selected)
         self.delete_button.clicked.connect(self._delete_selected)
         self.toggle_button.clicked.connect(self._toggle_selected_enabled)
+        self.manage_channels_button.clicked.connect(self._manage_selected_channels)
         self.refresh_button.clicked.connect(self._refresh_selected)
         self.source_table.itemSelectionChanged.connect(self._sync_action_state)
         self.reload_sources()
@@ -218,6 +221,15 @@ class LiveSourceManagerDialog(QDialog):
         row = self.source_table.currentRow()
         enabled_text = self.source_table.item(row, 3).text()
         self.manager.set_source_enabled(source_id, enabled_text != "是")
+        self.reload_sources()
+
+    def _manage_selected_channels(self) -> None:
+        source_id = self._selected_source_id()
+        if source_id is None or self._selected_source_type() != "manual":
+            return
+        dialog = ManualLiveSourceDialog(self.manager, source_id=source_id, parent=self)
+        dialog.reload_entries()
+        dialog.exec()
         self.reload_sources()
 
     def _refresh_selected(self) -> None:

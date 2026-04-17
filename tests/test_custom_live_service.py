@@ -217,3 +217,36 @@ def test_custom_live_service_deletes_source(tmp_path: Path) -> None:
     service.delete_source(source.id)
 
     assert [item.id for item in service.list_sources()] == [1]
+
+
+def test_custom_live_service_manages_manual_entries(tmp_path: Path) -> None:
+    repo = LiveSourceRepository(tmp_path / "app.db")
+    service = CustomLiveService(repo, http_client=FakeHttpClient())
+    source = service.add_manual_source("手动源")
+    first = service.add_manual_entry(
+        source.id,
+        group_name="央视",
+        channel_name="CCTV-1",
+        stream_url="https://live.example/1.m3u8",
+    )
+    second = service.add_manual_entry(
+        source.id,
+        group_name="央视",
+        channel_name="CCTV-2",
+        stream_url="https://live.example/2.m3u8",
+    )
+
+    service.update_manual_entry(
+        first.id,
+        group_name="央视频道",
+        channel_name="CCTV-1综合",
+        stream_url="https://live.example/cctv1hd.m3u8",
+    )
+    service.move_manual_entry(second.id, -1)
+    service.delete_manual_entry(first.id)
+
+    entries = service.list_manual_entries(source.id)
+
+    assert [(item.id, item.channel_name, item.sort_order) for item in entries] == [
+        (second.id, "CCTV-2", 0)
+    ]

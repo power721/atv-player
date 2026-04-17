@@ -198,6 +198,40 @@ class LiveSourceRepository:
             ).fetchall()
         return [LiveSourceEntry(*row) for row in rows]
 
+    def update_manual_entry(
+        self,
+        entry_id: int,
+        *,
+        group_name: str,
+        channel_name: str,
+        stream_url: str,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE live_source_entry
+                SET group_name = ?, channel_name = ?, stream_url = ?
+                WHERE id = ?
+                """,
+                (group_name, channel_name, stream_url, entry_id),
+            )
+
+    def delete_manual_entry(self, entry_id: int) -> None:
+        entry = self.get_manual_entry(entry_id)
+        with self._connect() as conn:
+            conn.execute("DELETE FROM live_source_entry WHERE id = ?", (entry_id,))
+            remaining = conn.execute(
+                """
+                SELECT id
+                FROM live_source_entry
+                WHERE source_id = ?
+                ORDER BY sort_order ASC, id ASC
+                """,
+                (entry.source_id,),
+            ).fetchall()
+            for order, (remaining_id,) in enumerate(remaining):
+                conn.execute("UPDATE live_source_entry SET sort_order = ? WHERE id = ?", (order, remaining_id))
+
     def move_manual_entry(self, entry_id: int, direction: int) -> None:
         entry = self.get_manual_entry(entry_id)
         entries = self.list_manual_entries(entry.source_id)

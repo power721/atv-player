@@ -56,6 +56,28 @@ class CustomLiveService:
     def list_manual_entries(self, source_id: int):
         return self._repository.list_manual_entries(source_id)
 
+    def add_manual_entry(self, source_id: int, *, group_name: str, channel_name: str, stream_url: str):
+        return self._repository.add_manual_entry(
+            source_id,
+            group_name=group_name,
+            channel_name=channel_name,
+            stream_url=stream_url,
+        )
+
+    def update_manual_entry(self, entry_id: int, *, group_name: str, channel_name: str, stream_url: str) -> None:
+        self._repository.update_manual_entry(
+            entry_id,
+            group_name=group_name,
+            channel_name=channel_name,
+            stream_url=stream_url,
+        )
+
+    def delete_manual_entry(self, entry_id: int) -> None:
+        self._repository.delete_manual_entry(entry_id)
+
+    def move_manual_entry(self, entry_id: int, direction: int) -> None:
+        self._repository.move_manual_entry(entry_id, direction)
+
     def load_categories(self) -> list[DoubanCategory]:
         return [
             DoubanCategory(type_id=f"custom:{item.id}", type_name=item.display_name)

@@ -73,3 +73,34 @@ def test_live_source_repository_moves_sources_and_entries_in_sort_order(tmp_path
 
     assert sources == ["B", "A"]
     assert entries == ["二台", "一台"]
+
+
+def test_live_source_repository_updates_and_deletes_manual_entries(tmp_path: Path) -> None:
+    repo = LiveSourceRepository(tmp_path / "app.db")
+    manual = repo.add_source("manual", "", "手动")
+    first = repo.add_manual_entry(
+        manual.id,
+        group_name="央视",
+        channel_name="CCTV-1",
+        stream_url="https://live.example/1.m3u8",
+    )
+    second = repo.add_manual_entry(
+        manual.id,
+        group_name="卫视",
+        channel_name="湖南卫视",
+        stream_url="https://live.example/2.m3u8",
+    )
+
+    repo.update_manual_entry(
+        first.id,
+        group_name="央视频道",
+        channel_name="CCTV-1综合",
+        stream_url="https://live.example/cctv1hd.m3u8",
+    )
+    repo.delete_manual_entry(first.id)
+
+    entries = repo.list_manual_entries(manual.id)
+
+    assert [(item.id, item.group_name, item.channel_name, item.stream_url, item.sort_order) for item in entries] == [
+        (second.id, "卫视", "湖南卫视", "https://live.example/2.m3u8", 0)
+    ]

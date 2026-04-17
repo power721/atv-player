@@ -42,6 +42,10 @@ class FakeLiveSourceManager:
         self.delete_calls = []
         self.toggle_calls = []
         self.refresh_calls = []
+        self.add_entry_calls = []
+        self.update_entry_calls = []
+        self.delete_entry_calls = []
+        self.move_entry_calls = []
 
     def list_sources(self):
         return list(self.sources)
@@ -69,6 +73,18 @@ class FakeLiveSourceManager:
 
     def list_manual_entries(self, source_id: int):
         return list(self.entries.get(source_id, []))
+
+    def add_manual_entry(self, source_id: int, *, group_name: str, channel_name: str, stream_url: str):
+        self.add_entry_calls.append((source_id, group_name, channel_name, stream_url))
+
+    def update_manual_entry(self, entry_id: int, *, group_name: str, channel_name: str, stream_url: str):
+        self.update_entry_calls.append((entry_id, group_name, channel_name, stream_url))
+
+    def delete_manual_entry(self, entry_id: int):
+        self.delete_entry_calls.append(entry_id)
+
+    def move_manual_entry(self, entry_id: int, direction: int):
+        self.move_entry_calls.append((entry_id, direction))
 
 
 def test_live_source_manager_dialog_renders_rows_and_actions(qtbot, monkeypatch) -> None:
@@ -142,6 +158,26 @@ def test_live_source_manager_dialog_shows_manual_editor_button_for_manual_source
     dialog._sync_action_state()
 
     assert dialog.manage_channels_button.isEnabled() is True
+
+
+def test_live_source_manager_dialog_opens_manual_editor_for_selected_source(qtbot, monkeypatch) -> None:
+    manager = FakeLiveSourceManager()
+    dialog = LiveSourceManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.source_table.selectRow(1)
+    opened = {}
+
+    def fake_exec(self) -> int:
+        opened["source_id"] = self.source_id
+        opened["rows"] = self.entry_table.rowCount()
+        return 0
+
+    monkeypatch.setattr(ManualLiveSourceDialog, "exec", fake_exec)
+
+    dialog._manage_selected_channels()
+
+    assert opened == {"source_id": 2, "rows": 1}
 
 
 def test_live_source_manager_dialog_toggle_disables_enabled_source(qtbot) -> None:
@@ -219,3 +255,66 @@ def test_manual_live_source_dialog_renders_existing_channels(qtbot) -> None:
     assert dialog.entry_table.rowCount() == 1
     assert dialog.entry_table.item(0, 0).text() == "央视"
     assert dialog.entry_table.item(0, 1).text() == "CCTV-1"
+
+
+def test_manual_live_source_dialog_adds_entry(qtbot, monkeypatch) -> None:
+    manager = FakeLiveSourceManager()
+    dialog = ManualLiveSourceDialog(manager, source_id=2)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    monkeypatch.setattr(dialog, "_prompt_entry", lambda **kwargs: ("卫视", "湖南卫视", "https://live.example/hunan.m3u8"))
+
+    dialog._add_entry()
+
+    assert manager.add_entry_calls == [(2, "卫视", "湖南卫视", "https://live.example/hunan.m3u8")]
+
+
+def test_manual_live_source_dialog_edits_selected_entry(qtbot, monkeypatch) -> None:
+    manager = FakeLiveSourceManager()
+    dialog = ManualLiveSourceDialog(manager, source_id=2)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.reload_entries()
+    dialog.entry_table.selectRow(0)
+    monkeypatch.setattr(dialog, "_prompt_entry", lambda **kwargs: ("央视", "CCTV-1综合", "https://live.example/cctv1hd.m3u8"))
+
+    dialog._edit_selected_entry()
+
+    assert manager.update_entry_calls == [(10, "央视", "CCTV-1综合", "https://live.example/cctv1hd.m3u8")]
+
+
+def test_manual_live_source_dialog_deletes_selected_entry(qtbot, monkeypatch) -> None:
+    manager = FakeLiveSourceManager()
+    dialog = ManualLiveSourceDialog(manager, source_id=2)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.reload_entries()
+    dialog.entry_table.selectRow(0)
+    monkeypatch.setattr(dialog, "_confirm_delete_entry", lambda channel_name: True)
+
+    dialog._delete_selected_entry()
+
+    assert manager.delete_entry_calls == [10]
+
+
+def test_manual_live_source_dialog_moves_selected_entry(qtbot) -> None:
+    manager = FakeLiveSourceManager()
+    manager.entries[2].append(
+        LiveSourceEntry(
+            id=11,
+            source_id=2,
+            group_name="央视",
+            channel_name="CCTV-2",
+            stream_url="https://live.example/cctv2.m3u8",
+            sort_order=1,
+        )
+    )
+    dialog = ManualLiveSourceDialog(manager, source_id=2)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.reload_entries()
+    dialog.entry_table.selectRow(1)
+
+    dialog._move_selected_entry(-1)
+
+    assert manager.move_entry_calls == [(11, -1)]
