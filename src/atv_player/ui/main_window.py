@@ -79,6 +79,11 @@ class _AsyncRequestSignals(QObject):
     failed = Signal(int, str)
 
 
+class _RestoreSignals(QObject):
+    succeeded = Signal(int, object)
+    failed = Signal(int)
+
+
 @dataclass(slots=True)
 class _MediaLoadResult:
     page: PosterGridPage
@@ -160,12 +165,16 @@ class MainWindow(QMainWindow):
         self.config = config
         self._open_request_id = 0
         self._media_request_id = 0
+        self._restore_request_id = 0
         self._open_request_signals = _AsyncRequestSignals(self)
         self._open_request_signals.succeeded.connect(self._handle_open_request_succeeded)
         self._open_request_signals.failed.connect(self._handle_open_request_failed)
         self._media_request_signals = _AsyncRequestSignals(self)
         self._media_request_signals.succeeded.connect(self._handle_media_load_succeeded)
         self._media_request_signals.failed.connect(self._handle_media_load_failed)
+        self._restore_signals = _RestoreSignals(self)
+        self._restore_signals.succeeded.connect(self._handle_restore_succeeded)
+        self._restore_signals.failed.connect(self._handle_restore_failed)
 
         self.nav_tabs.addTab(self.douban_page, "豆瓣电影")
         self.nav_tabs.addTab(self.telegram_page, "电报影视")
@@ -547,28 +556,59 @@ class MainWindow(QMainWindow):
             self.player_window.activateWindow()
             self.hide()
             return self.player_window
-        return self.restore_last_player()
+        self._start_restore_last_player()
+        return None
 
     def restore_last_player(self) -> PlayerWindow | None:
-        mode = self.config.last_playback_mode
-        source = self.config.last_playback_source or "browse"
         try:
-            if mode == "detail" and self.config.last_playback_vod_id:
-                request = self._build_detail_restore_request(source, self.config.last_playback_vod_id)
-            elif mode == "folder" and self.config.last_playback_path and self.config.last_playback_clicked_vod_id:
-                clicked, items = self._find_restorable_folder_item(
-                    self.config.last_playback_path,
-                    self.config.last_playback_clicked_vod_id,
-                )
-                if clicked is None:
-                    return None
-                request = self.browse_controller.build_request_from_folder_item(clicked, items)
-            else:
-                return None
+            request = self._build_restore_request()
         except Exception:
+            return None
+        if request is None:
             return None
         self.open_player(request, restore_paused_state=True)
         return self.player_window
+
+    def _build_restore_request(self) -> OpenPlayerRequest | None:
+        mode = self.config.last_playback_mode
+        source = self.config.last_playback_source or "browse"
+        if mode == "detail" and self.config.last_playback_vod_id:
+            return self._build_detail_restore_request(source, self.config.last_playback_vod_id)
+        if mode == "folder" and self.config.last_playback_path and self.config.last_playback_clicked_vod_id:
+            clicked, items = self._find_restorable_folder_item(
+                self.config.last_playback_path,
+                self.config.last_playback_clicked_vod_id,
+            )
+            if clicked is None:
+                return None
+            return self.browse_controller.build_request_from_folder_item(clicked, items)
+        return None
+
+    def _start_restore_last_player(self) -> int:
+        self._restore_request_id += 1
+        request_id = self._restore_request_id
+
+        def run() -> None:
+            try:
+                request = self._build_restore_request()
+            except Exception:
+                self._restore_signals.failed.emit(request_id)
+                return
+            self._restore_signals.succeeded.emit(request_id, request)
+
+        threading.Thread(target=run, daemon=True).start()
+        return request_id
+
+    def _handle_restore_succeeded(self, request_id: int, request: OpenPlayerRequest | None) -> None:
+        if request_id != self._restore_request_id:
+            return None
+        if request is None:
+            return
+        self.open_player(request, restore_paused_state=True)
+
+    def _handle_restore_failed(self, request_id: int) -> None:
+        if request_id != self._restore_request_id:
+            return
 
     def _build_detail_restore_request(self, source: str, vod_id: str):
         if source == "telegram":

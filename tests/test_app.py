@@ -235,6 +235,53 @@ class AsyncHistoryBrowseController(FakeBrowseController):
         self._events_by_vod_id[vod_id].pop(0).set()
 
 
+class AsyncRestoreFolderBrowseController(FakeBrowseController):
+    def __init__(self) -> None:
+        self.load_calls: list[tuple[str, int, int]] = []
+        self.request_calls: list[str] = []
+        self._main_thread_id = threading.get_ident()
+        self._load_events_by_key: dict[tuple[str, int, int], list[threading.Event]] = {}
+        self._load_results_by_key: dict[tuple[str, int, int], list[tuple[list[VodItem], int]]] = {}
+
+    def load_folder(self, path: str, page: int = 1, size: int = 50):
+        self.load_calls.append((path, page, size))
+        assert threading.get_ident() != self._main_thread_id
+        key = (path, page, size)
+        event = threading.Event()
+        self._load_events_by_key.setdefault(key, []).append(event)
+        assert event.wait(timeout=5), f"restore folder load for {key!r} was never released"
+        results = self._load_results_by_key.get(key)
+        if results:
+            return results.pop(0)
+        return [], 0
+
+    def build_request_from_folder_item(self, clicked, items):
+        self.request_calls.append(clicked.vod_id)
+        assert threading.get_ident() != self._main_thread_id
+        return OpenPlayerRequest(
+            vod=VodItem(vod_id=clicked.vod_id, vod_name=clicked.vod_name),
+            playlist=[PlayItem(title=clicked.vod_name, url="", vod_id=clicked.vod_id)],
+            clicked_index=0,
+            source_mode="folder",
+            source_path="/TV",
+            source_vod_id=clicked.vod_id,
+            source_clicked_vod_id=clicked.vod_id,
+        )
+
+    def finish_load(
+        self,
+        path: str,
+        *,
+        page: int = 1,
+        size: int = 50,
+        items: list[VodItem],
+        total: int,
+    ) -> None:
+        key = (path, page, size)
+        self._load_results_by_key.setdefault(key, []).append((items, total))
+        self._load_events_by_key[key].pop(0).set()
+
+
 class AsyncPluginController(AsyncRequestController):
     def load_categories(self):
         return []
@@ -284,6 +331,16 @@ def _wait_for_folder_call(qtbot, controller: AsyncFolderController, vod_id: str)
 
 def _wait_for_history_detail_call(qtbot, controller: AsyncHistoryBrowseController, vod_id: str) -> None:
     qtbot.waitUntil(lambda: vod_id in controller.detail_calls, timeout=1000)
+
+
+def _wait_for_restore_folder_call(
+    qtbot,
+    controller: AsyncRestoreFolderBrowseController,
+    path: str,
+    page: int = 1,
+    size: int = 50,
+) -> None:
+    qtbot.waitUntil(lambda: (path, page, size) in controller.load_calls, timeout=1000)
 
 
 class RecordingDoubanController(FakeDoubanController):
@@ -1979,26 +2036,144 @@ def test_main_window_show_or_restore_player_resumes_existing_hidden_session(qtbo
 
 
 def test_main_window_ctrl_p_restores_last_player_when_missing(qtbot, monkeypatch) -> None:
-    restored = {"called": 0}
-    config = AppConfig(last_active_window="main", last_playback_mode="detail", last_playback_vod_id="vod-1")
+    class AsyncRecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    controller = AsyncHistoryBrowseController()
+    config = AppConfig(last_active_window="main", last_playback_mode="detail", last_playback_vod_id="vod-1", last_player_paused=True)
     window = MainWindow(
-        browse_controller=FakeBrowseController(),
+        browse_controller=controller,
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
         config=config,
         save_config=lambda: None,
     )
     qtbot.addWidget(window)
+    monkeypatch.setattr(main_window_module, "PlayerWindow", AsyncRecordingPlayerWindow)
 
-    def fake_restore():
-        restored["called"] += 1
-        return object()
+    restored = window.show_or_restore_player()
+    assert restored is None
+    _wait_for_history_detail_call(qtbot, controller, "vod-1")
+    controller.finish_detail("vod-1", request=_make_history_request("vod-1", vod_name="Restored Movie"))
 
-    monkeypatch.setattr(window, "restore_last_player", fake_restore)
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) == 1, timeout=1000)
+
+    assert window.player_window.opened[0][1] is True
+    assert window.player_window.opened[0][0]["vod"].vod_name == "Restored Movie"
+
+
+def test_main_window_show_or_restore_player_uses_latest_async_restore_result(qtbot, monkeypatch) -> None:
+    class AsyncRecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    controller = AsyncHistoryBrowseController()
+    config = AppConfig(last_active_window="main", last_playback_mode="detail", last_playback_vod_id="vod-1", last_player_paused=True)
+    window = MainWindow(
+        browse_controller=controller,
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    monkeypatch.setattr(main_window_module, "PlayerWindow", AsyncRecordingPlayerWindow)
 
     window.show_or_restore_player()
+    _wait_for_history_detail_call(qtbot, controller, "vod-1")
 
-    assert restored["called"] == 1
+    config.last_playback_vod_id = "vod-2"
+    window.show_or_restore_player()
+    _wait_for_history_detail_call(qtbot, controller, "vod-2")
+
+    controller.finish_detail("vod-2", request=_make_history_request("vod-2", vod_name="Second Restore"))
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) == 1, timeout=1000)
+
+    controller.finish_detail("vod-1", request=_make_history_request("vod-1", vod_name="First Restore"))
+    qtbot.wait(100)
+
+    assert len(window.player_window.opened) == 1
+    assert window.player_window.opened[0][1] is True
+    assert window.player_window.opened[0][0]["vod"].vod_name == "Second Restore"
+
+
+def test_main_window_show_or_restore_player_loads_folder_restore_off_main_thread(qtbot, monkeypatch) -> None:
+    class AsyncRecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    controller = AsyncRestoreFolderBrowseController()
+    config = AppConfig(
+        last_active_window="main",
+        last_playback_mode="folder",
+        last_playback_path="/TV",
+        last_playback_clicked_vod_id="target-vod",
+        last_player_paused=True,
+    )
+    window = MainWindow(
+        browse_controller=controller,
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    monkeypatch.setattr(main_window_module, "PlayerWindow", AsyncRecordingPlayerWindow)
+
+    restored = window.show_or_restore_player()
+    assert restored is None
+    _wait_for_restore_folder_call(qtbot, controller, "/TV", 1, 50)
+
+    controller.finish_load(
+        "/TV",
+        page=1,
+        size=50,
+        items=[VodItem(vod_id="target-vod", vod_name="Episode 1", path="/TV/Ep1.mkv", type=2)],
+        total=1,
+    )
+
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) == 1, timeout=1000)
+
+    assert controller.request_calls == ["target-vod"]
+    assert window.player_window.opened[0][1] is True
+    assert window.player_window.opened[0][0]["vod"].vod_name == "Episode 1"
 
 
 def test_main_window_restore_last_player_opens_paused_from_config(qtbot, monkeypatch) -> None:
