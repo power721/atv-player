@@ -83,6 +83,7 @@ class PluginManagerDialog(QDialog):
         self.refresh_button.clicked.connect(self._refresh_selected)
         self.logs_button.clicked.connect(self._show_logs)
         self.delete_button.clicked.connect(self._delete_selected)
+        self.plugin_table.itemSelectionChanged.connect(self._sync_action_state)
 
         self.reload_plugins()
 
@@ -101,6 +102,21 @@ class PluginManagerDialog(QDialog):
             if plugin.last_loaded_at:
                 loaded_at = datetime.fromtimestamp(plugin.last_loaded_at).strftime("%Y-%m-%d %H:%M:%S")
             self.plugin_table.setItem(row, 5, QTableWidgetItem(loaded_at))
+        self._sync_action_state()
+
+    def _has_selection(self) -> bool:
+        selection_model = self.plugin_table.selectionModel()
+        return bool(selection_model is not None and selection_model.hasSelection())
+
+    def _sync_action_state(self) -> None:
+        has_selection = self._has_selection()
+        self.rename_button.setEnabled(has_selection)
+        self.toggle_button.setEnabled(has_selection)
+        self.up_button.setEnabled(has_selection)
+        self.down_button.setEnabled(has_selection)
+        self.refresh_button.setEnabled(has_selection)
+        self.logs_button.setEnabled(has_selection)
+        self.delete_button.setEnabled(has_selection)
 
     def _selected_plugin_id(self) -> int | None:
         row = self.plugin_table.currentRow()

@@ -83,6 +83,22 @@ def test_plugin_manager_dialog_uses_read_only_row_selection_for_actionable_table
     assert dialog.plugin_table.selectionBehavior() == QAbstractItemView.SelectionBehavior.SelectRows
 
 
+def test_plugin_manager_dialog_disables_row_actions_without_selection(qtbot) -> None:
+    dialog = PluginManagerDialog(FakePluginManager())
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog.plugin_table.clearSelection()
+
+    assert dialog.rename_button.isEnabled() is False
+    assert dialog.toggle_button.isEnabled() is False
+    assert dialog.up_button.isEnabled() is False
+    assert dialog.down_button.isEnabled() is False
+    assert dialog.refresh_button.isEnabled() is False
+    assert dialog.logs_button.isEnabled() is False
+    assert dialog.delete_button.isEnabled() is False
+
+
 def test_plugin_manager_dialog_actions_call_manager(qtbot, monkeypatch) -> None:
     manager = FakePluginManager()
     dialog = PluginManagerDialog(manager)
