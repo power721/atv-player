@@ -38,6 +38,7 @@ class FakeLiveSourceManager:
         self.add_remote_calls = []
         self.add_local_calls = []
         self.add_manual_calls = []
+        self.toggle_calls = []
         self.refresh_calls = []
 
     def list_sources(self):
@@ -54,6 +55,9 @@ class FakeLiveSourceManager:
 
     def refresh_source(self, source_id: int):
         self.refresh_calls.append(source_id)
+
+    def set_source_enabled(self, source_id: int, enabled: bool):
+        self.toggle_calls.append((source_id, enabled))
 
     def list_manual_entries(self, source_id: int):
         return list(self.entries.get(source_id, []))
@@ -88,6 +92,31 @@ def test_live_source_manager_dialog_shows_manual_editor_button_for_manual_source
     dialog._sync_action_state()
 
     assert dialog.manage_channels_button.isEnabled() is True
+
+
+def test_live_source_manager_dialog_toggle_disables_enabled_source(qtbot) -> None:
+    manager = FakeLiveSourceManager()
+    dialog = LiveSourceManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.source_table.selectRow(0)
+
+    dialog._toggle_selected_enabled()
+
+    assert manager.toggle_calls == [(1, False)]
+
+
+def test_live_source_manager_dialog_toggle_enables_disabled_source(qtbot) -> None:
+    manager = FakeLiveSourceManager()
+    manager.sources[0].enabled = False
+    dialog = LiveSourceManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.source_table.selectRow(0)
+
+    dialog._toggle_selected_enabled()
+
+    assert manager.toggle_calls == [(1, True)]
 
 
 def test_manual_live_source_dialog_renders_existing_channels(qtbot) -> None:

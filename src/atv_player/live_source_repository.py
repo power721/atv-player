@@ -145,6 +145,13 @@ class LiveSourceRepository:
             for order, item in enumerate(sources):
                 conn.execute("UPDATE live_source SET sort_order = ? WHERE id = ?", (order, item.id))
 
+    def set_source_enabled(self, source_id: int, enabled: bool) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE live_source SET enabled = ? WHERE id = ?",
+                (int(enabled), source_id),
+            )
+
     def delete_source(self, source_id: int) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM live_source_entry WHERE source_id = ?", (source_id,))
