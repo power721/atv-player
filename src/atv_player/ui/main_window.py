@@ -650,6 +650,8 @@ class MainWindow(QMainWindow):
         if request_id != self._restore_request_id:
             return None
         if request is None:
+            self.config.last_active_window = "main"
+            self._save_config()
             return
         self.open_player(request, restore_paused_state=True)
 

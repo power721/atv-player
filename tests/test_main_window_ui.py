@@ -231,3 +231,21 @@ def test_main_window_async_restore_failure_resets_last_active_window(qtbot) -> N
 
     qtbot.waitUntil(lambda: config.last_active_window == "main")
     assert saved["count"] >= 1
+
+
+def test_main_window_async_restore_without_saved_request_resets_last_active_window(qtbot) -> None:
+    saved = {"count": 0}
+    config = AppConfig(last_active_window="player")
+    window = MainWindow(
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("count", saved["count"] + 1),
+    )
+    qtbot.addWidget(window)
+
+    window._start_restore_last_player()
+
+    qtbot.waitUntil(lambda: config.last_active_window == "main")
+    assert saved["count"] >= 1
