@@ -4694,6 +4694,22 @@ def test_player_window_reuses_existing_shortcut_help_dialog(qtbot) -> None:
     assert visible_shortcut_help_dialogs()[0] is first_dialog
 
 
+def test_player_window_return_to_main_closes_shortcut_help_dialog(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(last_active_window="player"), save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session())
+    window.show()
+
+    send_key(window, Qt.Key.Key_F1)
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 1)
+
+    window._return_to_main()
+
+    qtbot.waitUntil(lambda: len(visible_shortcut_help_dialogs()) == 0, timeout=1000)
+    assert window.help_dialog is None
+
+
 def test_player_window_keyboard_shortcuts_control_playback_navigation_and_view(qtbot) -> None:
     controller = RecordingPlayerController()
     video = RecordingVideo()
