@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
 from atv_player.m3u_parser import ParsedChannel, ParsedGroup, ParsedPlaylist, parse_m3u
 from atv_player.models import (
     DoubanCategory,
-    LiveSourceChannelView,
     OpenPlayerRequest,
     PlayItem,
     VodItem,
@@ -16,6 +16,23 @@ from atv_player.models import (
 class _HttpTextClient(Protocol):
     def get_text(self, url: str) -> str:
         ...
+
+
+@dataclass(slots=True)
+class _MergedChannelLine:
+    url: str
+    headers: dict[str, str] = field(default_factory=dict)
+    logo_url: str = ""
+
+
+@dataclass(slots=True)
+class _MergedChannelView:
+    source_id: int
+    channel_id: str
+    group_key: str
+    channel_name: str
+    logo_url: str = ""
+    lines: list[_MergedChannelLine] = field(default_factory=list)
 
 
 class CustomLiveService:
@@ -134,14 +151,15 @@ class CustomLiveService:
         source = self._repository.get_source(int(source_id_text))
         playlist = self._load_playlist(source)
         group = next(item for item in playlist.groups if item.key == group_key)
+        merged_channels = self._merge_channels(source.id, group.key, group.channels)
         items = [
             VodItem(
-                vod_id=f"custom-channel:{source.id}:{channel.key}",
-                vod_name=channel.name,
+                vod_id=f"custom-channel:{source.id}:{channel.channel_id}",
+                vod_name=channel.channel_name,
                 vod_tag="file",
                 vod_pic=channel.logo_url,
             )
-            for channel in group.channels
+            for channel in merged_channels
         ]
         return items, len(items)
 
@@ -149,7 +167,7 @@ class CustomLiveService:
         _prefix, source_id_text, channel_key = vod_id.split(":", 2)
         source = self._repository.get_source(int(source_id_text))
         playlist = self._load_playlist(source)
-        for view in self._iter_channel_views(source.id, playlist):
+        for view in self._iter_merged_channel_views(source.id, playlist):
             if view.channel_id == channel_key:
                 return self._build_request_from_channel(view)
         raise ValueError(f"没有可播放的项目: {vod_id}")
@@ -181,17 +199,19 @@ class CustomLiveService:
             last_refreshed_at=max(1, source.last_refreshed_at + 1),
         )
 
-    def _build_request_from_channel(self, view: LiveSourceChannelView) -> OpenPlayerRequest:
+    def _build_request_from_channel(self, view: _MergedChannelView) -> OpenPlayerRequest:
+        multi_line = len(view.lines) > 1
         return OpenPlayerRequest(
             vod=VodItem(vod_id=view.channel_id, vod_name=view.channel_name, vod_pic=view.logo_url, detail_style="live"),
             playlist=[
                 PlayItem(
-                    title=view.channel_name,
-                    url=view.stream_url,
+                    title=f"{view.channel_name} {index + 1}" if multi_line else view.channel_name,
+                    url=line.url,
                     vod_id=view.channel_id,
-                    index=0,
-                    headers=dict(view.headers),
+                    index=index,
+                    headers=dict(line.headers),
                 )
+                for index, line in enumerate(view.lines)
             ],
             clicked_index=0,
             source_kind="live",
@@ -245,25 +265,42 @@ class CustomLiveService:
                 playlist.ungrouped_channels.append(channel)
         return playlist
 
-    def _iter_channel_views(self, source_id: int, playlist: ParsedPlaylist):
-        for channel in playlist.ungrouped_channels:
-            yield LiveSourceChannelView(
-                source_id=source_id,
-                channel_id=channel.key,
-                group_key="",
-                channel_name=channel.name,
-                stream_url=channel.url,
-                logo_url=channel.logo_url,
-                headers=dict(channel.headers),
-            )
+    def _iter_merged_channel_views(self, source_id: int, playlist: ParsedPlaylist):
         for group in playlist.groups:
-            for channel in group.channels:
-                yield LiveSourceChannelView(
+            yield from self._merge_channels(source_id, group.key, group.channels)
+        yield from self._merge_channels(source_id, "", playlist.ungrouped_channels)
+
+    def _merge_channels(
+        self,
+        source_id: int,
+        group_key: str,
+        channels: list[ParsedChannel],
+    ) -> list[_MergedChannelView]:
+        merged_by_key: dict[tuple[str, str], _MergedChannelView] = {}
+        merged_channels: list[_MergedChannelView] = []
+        for channel in channels:
+            url = channel.url.strip()
+            if not url:
+                continue
+            merged_key = (group_key, channel.name)
+            view = merged_by_key.get(merged_key)
+            if view is None:
+                view = _MergedChannelView(
                     source_id=source_id,
                     channel_id=channel.key,
-                    group_key=group.key,
+                    group_key=group_key,
                     channel_name=channel.name,
-                    stream_url=channel.url,
                     logo_url=channel.logo_url,
-                    headers=dict(channel.headers),
                 )
+                merged_by_key[merged_key] = view
+                merged_channels.append(view)
+            elif not view.logo_url and channel.logo_url:
+                view.logo_url = channel.logo_url
+            view.lines.append(
+                _MergedChannelLine(
+                    url=url,
+                    headers=dict(channel.headers),
+                    logo_url=channel.logo_url,
+                )
+            )
+        return merged_channels

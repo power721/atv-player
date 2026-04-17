@@ -166,6 +166,64 @@ def test_custom_live_service_build_request_copies_channel_headers(tmp_path: Path
     }
 
 
+def test_custom_live_service_merges_duplicate_group_channels_into_one_item_and_request(
+    tmp_path: Path,
+) -> None:
+    repo = LiveSourceRepository(tmp_path / "app.db")
+    source = repo.add_source("remote", "https://example.com/live.m3u", "自定义远程")
+    repo.update_source(
+        source.id,
+        display_name="自定义远程",
+        enabled=True,
+        source_value="https://example.com/live.m3u",
+        cache_text=(
+            "#EXTM3U\n"
+            "#EXTINF:-1 group-title=\"央视频道\" "
+            "http-header=\"Referer=https://origin-a.example/\",CCTV1综合\n"
+            "https://live.example/cctv1-main.m3u8\n"
+            "#EXTINF:-1 group-title=\"央视频道\" http-user-agent=\"UA-2\",CCTV1综合\n"
+            "https://live.example/cctv1-backup.m3u8\n"
+        ),
+        last_error="",
+        last_refreshed_at=1,
+    )
+    service = CustomLiveService(repo, http_client=FakeHttpClient())
+
+    items, total = service.load_folder_items(f"custom-folder:{source.id}:group-0")
+    request = service.build_request(f"custom-channel:{source.id}:channel-0")
+
+    assert total == 1
+    assert [(item.vod_id, item.vod_name, item.vod_tag) for item in items] == [
+        (f"custom-channel:{source.id}:channel-0", "CCTV1综合", "file")
+    ]
+    assert [item.title for item in request.playlist] == ["CCTV1综合 1", "CCTV1综合 2"]
+    assert [item.url for item in request.playlist] == [
+        "https://live.example/cctv1-main.m3u8",
+        "https://live.example/cctv1-backup.m3u8",
+    ]
+    assert request.playlist[0].headers == {"Referer": "https://origin-a.example/"}
+    assert request.playlist[1].headers == {"User-Agent": "UA-2"}
+
+
+def test_custom_live_service_keeps_single_line_channel_title_without_suffix(tmp_path: Path) -> None:
+    repo = LiveSourceRepository(tmp_path / "app.db")
+    source = repo.add_source("remote", "https://example.com/live.m3u", "自定义远程")
+    repo.update_source(
+        source.id,
+        display_name="自定义远程",
+        enabled=True,
+        source_value="https://example.com/live.m3u",
+        cache_text="#EXTM3U\n#EXTINF:-1 group-title=\"卫视频道\",江苏卫视\nhttps://live.example/jsws.m3u8\n",
+        last_error="",
+        last_refreshed_at=1,
+    )
+    service = CustomLiveService(repo, http_client=FakeHttpClient())
+
+    request = service.build_request(f"custom-channel:{source.id}:channel-0")
+
+    assert [item.title for item in request.playlist] == ["江苏卫视"]
+
+
 def test_custom_live_service_exposes_live_source_management_methods(tmp_path: Path) -> None:
     repo = LiveSourceRepository(tmp_path / "app.db")
     service = CustomLiveService(repo, http_client=FakeHttpClient())
