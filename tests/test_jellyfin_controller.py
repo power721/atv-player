@@ -12,6 +12,8 @@ class FakeApiClient:
         self.search_calls: list[tuple[str, int]] = []
         self.detail_calls: list[str] = []
         self.playback_source_calls: list[str] = []
+        self.playback_progress_calls: list[tuple[str, int]] = []
+        self.playback_stop_calls: list[str] = []
 
     def list_jellyfin_categories(self) -> dict:
         return self.category_payload
@@ -31,6 +33,12 @@ class FakeApiClient:
     def get_jellyfin_playback_source(self, vod_id: str) -> dict:
         self.playback_source_calls.append(vod_id)
         return self.playback_payload
+
+    def report_jellyfin_playback_progress(self, vod_id: str, position_ms: int) -> None:
+        self.playback_progress_calls.append((vod_id, position_ms))
+
+    def stop_jellyfin_playback(self, vod_id: str) -> None:
+        self.playback_stop_calls.append(vod_id)
 
 
 def test_load_categories_inserts_recommendation_first() -> None:
@@ -112,7 +120,7 @@ def test_load_folder_items_uses_t_query_and_first_page() -> None:
     assert [item.vod_remarks for item in items] == ["2022", "2022 - 8.8"]
 
 
-def test_build_request_disables_local_history_and_only_exposes_loader() -> None:
+def test_build_request_disables_local_history_and_exposes_jellyfin_playback_hooks() -> None:
     from atv_player.controllers.jellyfin_controller import JellyfinController
 
     api = FakeApiClient()
@@ -132,15 +140,20 @@ def test_build_request_disables_local_history_and_only_exposes_loader() -> None:
     first_item = request.playlist[0]
 
     assert request.use_local_history is False
+    assert request.restore_history is True
     assert request.playback_loader is not None
-    assert request.playback_progress_reporter is None
-    assert request.playback_stopper is None
+    assert request.playback_progress_reporter is not None
+    assert request.playback_stopper is not None
 
     request.playback_loader(first_item)
+    request.playback_progress_reporter(first_item, 2000)
+    request.playback_stopper(first_item)
 
     assert first_item.url == "http://j/1.mp4"
     assert first_item.headers == {"User-Agent": "Jellyfin"}
     assert api.playback_source_calls == ["1-3458"]
+    assert api.playback_progress_calls == [("1-3458", 2000)]
+    assert api.playback_stop_calls == ["1-3458"]
 
 
 def test_build_request_single_video_uses_detail_vod_id_as_playlist_item_id() -> None:

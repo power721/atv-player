@@ -120,6 +120,7 @@ class OpenPlayerRequest:
     detail_resolver: Callable[[PlayItem], VodItem | None] | None = None
     resolved_vod_by_id: dict[str, VodItem] = field(default_factory=dict)
     use_local_history: bool = True
+    restore_history: bool = False
     playback_loader: Callable[[PlayItem], None] | None = None
     playback_progress_reporter: Callable[[PlayItem, int], None] | None = None
     playback_stopper: Callable[[PlayItem], None] | None = None

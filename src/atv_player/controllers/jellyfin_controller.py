@@ -88,6 +88,16 @@ class JellyfinController:
         item.url = play_url
         item.headers = {str(key): str(value) for key, value in headers.items()}
 
+    def report_playback_progress(self, item: PlayItem, position_ms: int) -> None:
+        if not item.vod_id:
+            return
+        self._api_client.report_jellyfin_playback_progress(item.vod_id, position_ms)
+
+    def stop_playback(self, item: PlayItem) -> None:
+        if not item.vod_id:
+            return
+        self._api_client.stop_jellyfin_playback(item.vod_id)
+
     def _build_playlist(self, detail: VodItem) -> list[PlayItem]:
         playlist = _parse_playlist(detail.vod_play_url)
         if len(playlist) == 1 and not playlist[0].vod_id:
@@ -120,5 +130,8 @@ class JellyfinController:
             source_vod_id=detail.vod_id,
             detail_resolver=self.resolve_playlist_item,
             use_local_history=False,
+            restore_history=True,
             playback_loader=self.load_playback_item,
+            playback_progress_reporter=self.report_playback_progress,
+            playback_stopper=self.stop_playback,
         )

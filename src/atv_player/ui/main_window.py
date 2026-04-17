@@ -402,6 +402,7 @@ class MainWindow(QMainWindow):
             detail_resolver=request.detail_resolver,
             resolved_vod_by_id=request.resolved_vod_by_id,
             use_local_history=request.use_local_history,
+            restore_history=request.restore_history,
             playback_loader=request.playback_loader,
             playback_progress_reporter=request.playback_progress_reporter,
             playback_stopper=request.playback_stopper,

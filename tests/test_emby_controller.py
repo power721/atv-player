@@ -161,6 +161,7 @@ def test_build_request_disables_local_history_and_exposes_emby_playback_hooks() 
     first_item = request.playlist[0]
 
     assert request.use_local_history is False
+    assert request.restore_history is True
     assert request.playback_loader is not None
     assert request.playback_progress_reporter is not None
     assert request.playback_stopper is not None

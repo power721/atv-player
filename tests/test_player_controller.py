@@ -158,6 +158,40 @@ def test_player_controller_skips_local_history_when_session_disables_it() -> Non
     assert session.speed == 1.0
 
 
+def test_player_controller_can_restore_history_without_saving_local_history() -> None:
+    api = FakeApiClient()
+    api.history = HistoryRecord(
+        id=1,
+        key="emby-1",
+        vod_name="Emby Movie",
+        vod_pic="pic",
+        vod_remarks="Episode 2",
+        episode=1,
+        episode_url="2.m3u8",
+        position=45000,
+        opening=5000,
+        ending=10000,
+        speed=1.25,
+        create_time=1,
+    )
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="emby-1", vod_name="Emby Movie")
+    playlist = [PlayItem(title="Episode 1", url="1.m3u8"), PlayItem(title="Episode 2", url="2.m3u8")]
+
+    session = controller.create_session(
+        vod,
+        playlist,
+        clicked_index=0,
+        use_local_history=False,
+        restore_history=True,
+    )
+
+    assert api.history_calls == ["emby-1"]
+    assert session.start_index == 1
+    assert session.start_position_seconds == 45
+    assert session.speed == 1.25
+
+
 def test_player_controller_reports_progress_via_session_hook_without_saving_history() -> None:
     api = FakeApiClient()
     controller = PlayerController(api)
