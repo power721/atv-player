@@ -227,6 +227,19 @@ def test_live_source_manager_dialog_disables_rename_and_delete_without_selection
     assert dialog.delete_button.isEnabled() is False
 
 
+def test_live_source_manager_dialog_disables_toggle_and_refresh_without_selection(qtbot) -> None:
+    manager = FakeLiveSourceManager()
+    dialog = LiveSourceManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    dialog.source_table.clearSelection()
+    dialog._sync_action_state()
+
+    assert dialog.toggle_button.isEnabled() is False
+    assert dialog.refresh_button.isEnabled() is False
+
+
 def test_live_source_manager_dialog_renames_selected_source(qtbot, monkeypatch) -> None:
     manager = FakeLiveSourceManager()
     dialog = LiveSourceManagerDialog(manager)

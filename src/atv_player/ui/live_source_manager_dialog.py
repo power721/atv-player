@@ -134,6 +134,8 @@ class LiveSourceManagerDialog(QDialog):
         source_type = self._selected_source_type()
         self.rename_button.setEnabled(has_selection)
         self.delete_button.setEnabled(has_selection)
+        self.toggle_button.setEnabled(has_selection)
+        self.refresh_button.setEnabled(has_selection)
         self.manage_channels_button.setEnabled(source_type == "manual")
 
     def _name_from_local_source_path(self, path: str) -> str:
