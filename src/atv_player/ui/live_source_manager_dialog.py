@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -129,19 +132,25 @@ class LiveSourceManagerDialog(QDialog):
         self.delete_button.setEnabled(has_selection)
         self.manage_channels_button.setEnabled(source_type == "manual")
 
-    def _prompt_remote_source(self) -> tuple[str, str]:
-        url, accepted = QInputDialog.getText(self, "添加远程源", "M3U URL")
-        if not accepted:
-            return "", ""
-        display_name, accepted = QInputDialog.getText(self, "添加远程源", "显示名称")
-        return url.strip(), display_name.strip() if accepted else ""
+    def _name_from_local_source_path(self, path: str) -> str:
+        return Path(path).stem
 
-    def _pick_local_source(self) -> tuple[str, str]:
+    def _name_from_remote_source_url(self, url: str) -> str:
+        parsed = urlparse(url)
+        path = unquote(parsed.path or "")
+        if not path or path.endswith("/"):
+            return "直播源"
+        segment = Path(path).name
+        name = Path(segment).stem if segment else ""
+        return name or "直播源"
+
+    def _prompt_remote_source(self) -> str:
+        url, accepted = QInputDialog.getText(self, "添加远程源", "M3U URL")
+        return url.strip() if accepted else ""
+
+    def _pick_local_source(self) -> str:
         path, _ = QFileDialog.getOpenFileName(self, "选择 M3U 文件", "", "M3U Files (*.m3u *.m3u8)")
-        if not path:
-            return "", ""
-        display_name, accepted = QInputDialog.getText(self, "添加本地源", "显示名称")
-        return path.strip(), display_name.strip() if accepted else ""
+        return path.strip()
 
     def _prompt_manual_source(self) -> str:
         display_name, accepted = QInputDialog.getText(self, "添加手动源", "显示名称")
@@ -162,17 +171,17 @@ class LiveSourceManagerDialog(QDialog):
         )
 
     def _add_remote_source(self) -> None:
-        url, display_name = self._prompt_remote_source()
-        if not url or not display_name:
+        url = self._prompt_remote_source()
+        if not url:
             return
-        self.manager.add_remote_source(url, display_name)
+        self.manager.add_remote_source(url, self._name_from_remote_source_url(url))
         self.reload_sources()
 
     def _add_local_source(self) -> None:
-        path, display_name = self._pick_local_source()
-        if not path or not display_name:
+        path = self._pick_local_source()
+        if not path:
             return
-        self.manager.add_local_source(path, display_name)
+        self.manager.add_local_source(path, self._name_from_local_source_path(path))
         self.reload_sources()
 
     def _add_manual_source(self) -> None:

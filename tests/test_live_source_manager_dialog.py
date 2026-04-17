@@ -77,7 +77,7 @@ def test_live_source_manager_dialog_renders_rows_and_actions(qtbot, monkeypatch)
     qtbot.addWidget(dialog)
     dialog.show()
     dialog.source_table.selectRow(0)
-    monkeypatch.setattr(dialog, "_prompt_remote_source", lambda: ("https://example.com/iptv.m3u", "我的远程源"))
+    monkeypatch.setattr(dialog, "_prompt_remote_source", lambda: "https://example.com/iptv.m3u")
 
     dialog._add_remote_source()
     dialog._refresh_selected()
@@ -86,8 +86,50 @@ def test_live_source_manager_dialog_renders_rows_and_actions(qtbot, monkeypatch)
     assert dialog.source_table.item(0, 0).text() == "远程源"
     assert dialog.source_table.item(0, 1).text() == "远程"
     assert dialog.source_table.item(1, 1).text() == "手动"
-    assert manager.add_remote_calls == [("https://example.com/iptv.m3u", "我的远程源")]
+    assert manager.add_remote_calls == [("https://example.com/iptv.m3u", "iptv")]
     assert manager.refresh_calls == [1]
+
+
+def test_live_source_manager_dialog_adds_remote_source_with_name_from_url_filename_ignoring_query(
+    qtbot,
+    monkeypatch,
+) -> None:
+    manager = FakeLiveSourceManager()
+    dialog = LiveSourceManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    monkeypatch.setattr(dialog, "_prompt_remote_source", lambda: "https://example.com/live/itv.m3u8?token=1")
+
+    dialog._add_remote_source()
+
+    assert manager.add_remote_calls == [("https://example.com/live/itv.m3u8?token=1", "itv")]
+
+
+def test_live_source_manager_dialog_adds_remote_source_with_fallback_name_when_url_has_no_filename(
+    qtbot,
+    monkeypatch,
+) -> None:
+    manager = FakeLiveSourceManager()
+    dialog = LiveSourceManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    monkeypatch.setattr(dialog, "_prompt_remote_source", lambda: "https://example.com/live/")
+
+    dialog._add_remote_source()
+
+    assert manager.add_remote_calls == [("https://example.com/live/", "直播源")]
+
+
+def test_live_source_manager_dialog_adds_local_source_with_name_from_path_stem(qtbot, monkeypatch) -> None:
+    manager = FakeLiveSourceManager()
+    dialog = LiveSourceManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    monkeypatch.setattr(dialog, "_pick_local_source", lambda: "/tmp/my.live.m3u8")
+
+    dialog._add_local_source()
+
+    assert manager.add_local_calls == [("/tmp/my.live.m3u8", "my.live")]
 
 
 def test_live_source_manager_dialog_shows_manual_editor_button_for_manual_source(qtbot) -> None:
