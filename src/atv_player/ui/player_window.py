@@ -154,6 +154,7 @@ class PlayerWindow(QWidget):
     _MODIFIED_SEEK_SHORTCUT_SECONDS = 60
     _VOLUME_SHORTCUT_STEP = 5
     _CURSOR_HIDE_DELAY_MS = 2000
+    _MANUAL_SUBTITLE_SWITCH_REFRESH_WINDOW_SECONDS = 1.0
     _VIDEO_CONTEXT_MENU_DUPLICATE_WINDOW_MS = 250
     _VIDEO_CONTEXT_MENU_DUPLICATE_DISTANCE = 8
     _POSTER_SIZE = QSize(180, 260)
@@ -246,6 +247,8 @@ class PlayerWindow(QWidget):
         self._secondary_subtitle_scale = 100
         self._main_subtitle_scale_supported = False
         self._secondary_subtitle_scale_supported = False
+        self._manual_subtitle_switch_refresh_until = 0.0
+        self._skip_audio_refresh_for_manual_subtitle_switch = False
         self.subtitle_combo = QComboBox()
         self.subtitle_combo.addItem("自动选择", ("auto", None))
         self.subtitle_combo.setEnabled(False)
@@ -655,6 +658,7 @@ class PlayerWindow(QWidget):
     def _load_current_item(self, start_position_seconds: int = 0, pause: bool = False) -> None:
         if self.session is None:
             return
+        self._clear_manual_subtitle_switch_refresh()
         self._prepare_current_play_item()
         current_item = self.session.playlist[self.current_index]
         self._append_log(f"当前: {current_item.title}")
@@ -981,6 +985,24 @@ class PlayerWindow(QWidget):
         self.audio_combo.setEnabled(False)
         self.audio_combo.blockSignals(False)
 
+    def _mark_manual_subtitle_switch_refresh(self) -> None:
+        self._manual_subtitle_switch_refresh_until = (
+            time.monotonic() + self._MANUAL_SUBTITLE_SWITCH_REFRESH_WINDOW_SECONDS
+        )
+        self._skip_audio_refresh_for_manual_subtitle_switch = True
+
+    def _clear_manual_subtitle_switch_refresh(self) -> None:
+        self._manual_subtitle_switch_refresh_until = 0.0
+        self._skip_audio_refresh_for_manual_subtitle_switch = False
+
+    def _manual_subtitle_switch_refresh_active(self) -> bool:
+        if self._manual_subtitle_switch_refresh_until <= 0:
+            return False
+        if time.monotonic() > self._manual_subtitle_switch_refresh_until:
+            self._clear_manual_subtitle_switch_refresh()
+            return False
+        return True
+
     def _remember_track_preference(self, track: SubtitleTrack) -> None:
         self._subtitle_preference = SubtitlePreference(
             mode="track",
@@ -1084,6 +1106,24 @@ class PlayerWindow(QWidget):
         finally:
             self.subtitle_combo.blockSignals(False)
 
+    def _sync_subtitle_combo_to_preference(self) -> None:
+        self.subtitle_combo.blockSignals(True)
+        try:
+            if self._subtitle_preference.mode == "off":
+                self.subtitle_combo.setCurrentIndex(1 if self.subtitle_combo.count() > 1 else 0)
+                return
+            if self._subtitle_preference.mode == "track":
+                matched_track = self._matching_track_for_preference()
+                if matched_track is not None:
+                    for index, track in enumerate(self._subtitle_tracks, start=2):
+                        if track.id == matched_track.id:
+                            self.subtitle_combo.setCurrentIndex(index)
+                            return
+                self._subtitle_preference = SubtitlePreference()
+            self.subtitle_combo.setCurrentIndex(0)
+        finally:
+            self.subtitle_combo.blockSignals(False)
+
     def _subtitle_track_match_score(self, track: SubtitleTrack, preference: SubtitlePreference) -> tuple[int, int, int]:
         return (
             int(bool(preference.title) and track.title == preference.title),
@@ -1145,6 +1185,7 @@ class PlayerWindow(QWidget):
             self._subtitle_preference = SubtitlePreference()
             self._reset_subtitle_combo()
             return
+        manual_switch_refresh = self._manual_subtitle_switch_refresh_active()
         remembered_main_subtitle_scale = self._main_subtitle_scale
         remembered_secondary_subtitle_scale = self._secondary_subtitle_scale
         remembered_main_subtitle_scale_supported = self._main_subtitle_scale_supported
@@ -1158,6 +1199,12 @@ class PlayerWindow(QWidget):
             self._append_log(f"字幕加载失败: {exc}")
             return
         self._populate_subtitle_combo(self._subtitle_tracks)
+        if manual_switch_refresh:
+            if not self._subtitle_tracks:
+                self._subtitle_preference = SubtitlePreference()
+                return
+            self._sync_subtitle_combo_to_preference()
+            return
         if hasattr(self.video, "subtitle_position"):
             self._main_subtitle_position = self.video.subtitle_position()
         self._secondary_subtitle_position_supported = bool(
@@ -1224,6 +1271,9 @@ class PlayerWindow(QWidget):
                 self._append_log(f"次字幕大小设置失败: {exc}")
 
     def _refresh_audio_state(self) -> None:
+        if self._skip_audio_refresh_for_manual_subtitle_switch and self._manual_subtitle_switch_refresh_active():
+            self._clear_manual_subtitle_switch_refresh()
+            return
         if not hasattr(self.video, "audio_tracks") or not hasattr(self.video, "apply_audio_mode"):
             self._audio_tracks = []
             self._audio_preference = AudioPreference()
@@ -1257,16 +1307,19 @@ class PlayerWindow(QWidget):
         mode, track_id = item_data
         if mode == "auto":
             self._subtitle_preference = SubtitlePreference()
+            self._mark_manual_subtitle_switch_refresh()
             self.video.apply_subtitle_mode("auto")
             return
         if mode == "off":
             self._subtitle_preference = SubtitlePreference(mode="off")
+            self._mark_manual_subtitle_switch_refresh()
             self.video.apply_subtitle_mode("off")
             return
         track = next((track for track in self._subtitle_tracks if track.id == track_id), None)
         if track is None:
             return
         self._remember_track_preference(track)
+        self._mark_manual_subtitle_switch_refresh()
         self.video.apply_subtitle_mode("track", track_id=track_id)
 
     def _change_audio_selection(self, index: int) -> None:
