@@ -4,7 +4,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from atv_player.models import SpiderPluginConfig, SpiderPluginLogEntry
+from atv_player.models import HistoryRecord, SpiderPluginConfig, SpiderPluginLogEntry
 
 
 def _require_lastrowid(cursor: sqlite3.Cursor) -> int:
@@ -48,6 +48,25 @@ class SpiderPluginRepository:
                     level TEXT NOT NULL,
                     message TEXT NOT NULL,
                     created_at INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS spider_plugin_playback_history (
+                    plugin_id INTEGER NOT NULL,
+                    vod_id TEXT NOT NULL,
+                    vod_name TEXT NOT NULL DEFAULT '',
+                    vod_pic TEXT NOT NULL DEFAULT '',
+                    vod_remarks TEXT NOT NULL DEFAULT '',
+                    episode INTEGER NOT NULL DEFAULT 0,
+                    episode_url TEXT NOT NULL DEFAULT '',
+                    position INTEGER NOT NULL DEFAULT 0,
+                    opening INTEGER NOT NULL DEFAULT 0,
+                    ending INTEGER NOT NULL DEFAULT 0,
+                    speed REAL NOT NULL DEFAULT 1.0,
+                    updated_at INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (plugin_id, vod_id)
                 )
                 """
             )
@@ -139,8 +158,74 @@ class SpiderPluginRepository:
 
     def delete_plugin(self, plugin_id: int) -> None:
         with self._connect() as conn:
+            conn.execute("DELETE FROM spider_plugin_playback_history WHERE plugin_id = ?", (plugin_id,))
             conn.execute("DELETE FROM spider_plugin_logs WHERE plugin_id = ?", (plugin_id,))
             conn.execute("DELETE FROM spider_plugins WHERE id = ?", (plugin_id,))
+
+    def get_playback_history(self, plugin_id: int, vod_id: str) -> HistoryRecord | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT vod_id, vod_name, vod_pic, vod_remarks, episode, episode_url,
+                       position, opening, ending, speed, updated_at
+                FROM spider_plugin_playback_history
+                WHERE plugin_id = ? AND vod_id = ?
+                """,
+                (plugin_id, vod_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return HistoryRecord(
+            id=0,
+            key=row[0],
+            vod_name=row[1],
+            vod_pic=row[2],
+            vod_remarks=row[3],
+            episode=int(row[4]),
+            episode_url=row[5],
+            position=int(row[6]),
+            opening=int(row[7]),
+            ending=int(row[8]),
+            speed=float(row[9]),
+            create_time=int(row[10]),
+        )
+
+    def save_playback_history(self, plugin_id: int, vod_id: str, payload: dict[str, object]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO spider_plugin_playback_history (
+                    plugin_id, vod_id, vod_name, vod_pic, vod_remarks,
+                    episode, episode_url, position, opening, ending, speed, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(plugin_id, vod_id) DO UPDATE SET
+                    vod_name = excluded.vod_name,
+                    vod_pic = excluded.vod_pic,
+                    vod_remarks = excluded.vod_remarks,
+                    episode = excluded.episode,
+                    episode_url = excluded.episode_url,
+                    position = excluded.position,
+                    opening = excluded.opening,
+                    ending = excluded.ending,
+                    speed = excluded.speed,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    plugin_id,
+                    vod_id,
+                    str(payload.get("vodName", "")),
+                    str(payload.get("vodPic", "")),
+                    str(payload.get("vodRemarks", "")),
+                    int(payload.get("episode", 0)),
+                    str(payload.get("episodeUrl", "")),
+                    int(payload.get("position", 0)),
+                    int(payload.get("opening", 0)),
+                    int(payload.get("ending", 0)),
+                    float(payload.get("speed", 1.0)),
+                    int(payload.get("createTime", 0)),
+                ),
+            )
 
     def append_log(self, plugin_id: int, level: str, message: str, created_at: int | None = None) -> None:
         timestamp = int(time.time()) if created_at is None else created_at

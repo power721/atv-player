@@ -281,6 +281,91 @@ def test_spider_plugin_repository_round_trip_and_logs(tmp_path: Path) -> None:
     assert [item.display_name for item in repo.list_plugins()] == ["红果短剧本地"]
 
 
+def test_spider_plugin_repository_round_trip_playback_history(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    repo = SpiderPluginRepository(db_path)
+    plugin = repo.add_plugin("local", "/plugins/红果短剧.py", "红果短剧")
+
+    repo.save_playback_history(
+        plugin.id,
+        "detail-1",
+        {
+            "vodName": "红果短剧",
+            "vodPic": "poster-1",
+            "vodRemarks": "第2集",
+            "episode": 1,
+            "episodeUrl": "https://media.example/2.m3u8",
+            "position": 45000,
+            "opening": 5000,
+            "ending": 10000,
+            "speed": 1.25,
+            "createTime": 1713206400000,
+        },
+    )
+
+    history = repo.get_playback_history(plugin.id, "detail-1")
+
+    assert history is not None
+    assert history.key == "detail-1"
+    assert history.vod_name == "红果短剧"
+    assert history.episode == 1
+    assert history.position == 45000
+    assert history.speed == 1.25
+
+
+def test_spider_plugin_repository_updates_existing_playback_history_and_deletes_with_plugin(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "app.db"
+    repo = SpiderPluginRepository(db_path)
+    plugin = repo.add_plugin("local", "/plugins/红果短剧.py", "红果短剧")
+
+    repo.save_playback_history(
+        plugin.id,
+        "detail-1",
+        {
+            "vodName": "旧标题",
+            "vodPic": "poster-old",
+            "vodRemarks": "第1集",
+            "episode": 0,
+            "episodeUrl": "https://media.example/1.m3u8",
+            "position": 15000,
+            "opening": 0,
+            "ending": 0,
+            "speed": 1.0,
+            "createTime": 1713206400000,
+        },
+    )
+    repo.save_playback_history(
+        plugin.id,
+        "detail-1",
+        {
+            "vodName": "新标题",
+            "vodPic": "poster-new",
+            "vodRemarks": "第3集",
+            "episode": 2,
+            "episodeUrl": "https://media.example/3.m3u8",
+            "position": 90000,
+            "opening": 8000,
+            "ending": 16000,
+            "speed": 1.5,
+            "createTime": 1713206500000,
+        },
+    )
+
+    updated = repo.get_playback_history(plugin.id, "detail-1")
+
+    assert updated is not None
+    assert updated.vod_name == "新标题"
+    assert updated.episode == 2
+    assert updated.position == 90000
+    assert updated.speed == 1.5
+
+    repo.delete_plugin(plugin.id)
+
+    assert repo.get_playback_history(plugin.id, "detail-1") is None
+
+
 def test_spider_plugin_repository_migrates_tables_into_existing_settings_db(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     with sqlite3.connect(db_path) as conn:
