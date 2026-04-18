@@ -114,6 +114,44 @@ def test_mpv_widget_updates_volume_and_mute_state(qtbot) -> None:
     assert widget._player.mute is False
 
 
+def test_mpv_widget_toggles_video_info_overlay(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.command_calls: list[tuple[object, ...]] = []
+            self.core_shutdown = False
+
+        def command(self, *args) -> None:
+            self.command_calls.append(args)
+
+    widget._player = FakePlayer()
+
+    widget.toggle_video_info()
+
+    assert widget._player.command_calls == [
+        ("script-binding", "stats/display-stats-toggle")
+    ]
+
+
+def test_mpv_widget_ignores_video_info_toggle_when_player_shuts_down(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.core_shutdown = False
+
+        def command(self, *args) -> None:
+            self.core_shutdown = True
+            raise RuntimeError("core is gone")
+
+    widget._player = FakePlayer()
+
+    widget.toggle_video_info()
+
+
 def test_mpv_widget_sets_http_header_fields_as_property_before_loading(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)

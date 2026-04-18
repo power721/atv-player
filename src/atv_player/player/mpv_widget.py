@@ -640,6 +640,16 @@ class MpvWidget(QWidget):
                 return None
             raise
 
+    def toggle_video_info(self) -> None:
+        if self._player is None:
+            return
+        try:
+            self._player.command("script-binding", "stats/display-stats-toggle")
+        except Exception:
+            if getattr(self._player, "core_shutdown", False):
+                return
+            raise
+
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         self.double_clicked.emit()
         super().mouseDoubleClickEvent(event)
