@@ -39,9 +39,10 @@ class _MergedChannelView:
 class CustomLiveService:
     _DEFAULT_POSTER_PATH = Path(__file__).resolve().parent / "icons" / "live.png"
 
-    def __init__(self, repository, http_client: _HttpTextClient) -> None:
+    def __init__(self, repository, http_client: _HttpTextClient, epg_service=None) -> None:
         self._repository = repository
         self._http_client = http_client
+        self._epg_service = epg_service
 
     def list_sources(self):
         return self._repository.list_sources()
@@ -69,6 +70,21 @@ class CustomLiveService:
 
     def delete_source(self, source_id: int) -> None:
         self._repository.delete_source(source_id)
+
+    def load_epg_config(self):
+        if self._epg_service is None:
+            raise RuntimeError("缺少 EPG 服务")
+        return self._epg_service.load_config()
+
+    def save_epg_url(self, epg_url: str) -> None:
+        if self._epg_service is None:
+            raise RuntimeError("缺少 EPG 服务")
+        self._epg_service.save_url(epg_url)
+
+    def refresh_epg(self) -> None:
+        if self._epg_service is None:
+            raise RuntimeError("缺少 EPG 服务")
+        self._epg_service.refresh()
 
     def set_source_enabled(self, source_id: int, enabled: bool) -> None:
         self._repository.set_source_enabled(source_id, enabled)
@@ -205,12 +221,21 @@ class CustomLiveService:
 
     def _build_request_from_channel(self, view: _MergedChannelView) -> OpenPlayerRequest:
         multi_line = len(view.lines) > 1
+        epg_current = ""
+        epg_next = ""
+        if self._epg_service is not None:
+            schedule = self._epg_service.get_schedule(view.channel_name)
+            if schedule is not None:
+                epg_current = schedule.current
+                epg_next = schedule.next
         return OpenPlayerRequest(
             vod=VodItem(
                 vod_id=view.channel_id,
                 vod_name=view.channel_name,
                 vod_pic=self._resolve_channel_poster(view),
                 detail_style="live",
+                epg_current=epg_current,
+                epg_next=epg_next,
             ),
             playlist=[
                 PlayItem(

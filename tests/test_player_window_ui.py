@@ -1052,6 +1052,42 @@ def test_player_window_renders_live_metadata_with_five_live_fields(qtbot) -> Non
     )
 
 
+def test_player_window_renders_epg_rows_for_live_metadata(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+    session = PlayerSession(
+        vod=VodItem(
+            vod_id="custom-live-1",
+            vod_name="CCTV-1",
+            type_name="直播",
+            vod_director="自定义直播",
+            detail_style="live",
+            epg_current="09:00-10:00 朝闻天下",
+            epg_next="10:00-11:00 新闻30分",
+        ),
+        playlist=[PlayItem(title="线路 1", url="https://live.example/cctv1.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    assert "当前节目: 09:00-10:00 朝闻天下" in window.metadata_view.toPlainText()
+    assert "下一节目: 10:00-11:00 新闻30分" in window.metadata_view.toPlainText()
+
+
 def test_player_window_appends_runtime_failures_to_log_view_without_overwriting_metadata(qtbot) -> None:
     class FailingVideo:
         def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:

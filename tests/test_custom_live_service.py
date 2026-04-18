@@ -315,6 +315,29 @@ def test_custom_live_service_merges_duplicate_manual_entries_into_switchable_lin
     ]
 
 
+def test_custom_live_service_build_request_adds_epg_summary_for_matching_channel(tmp_path: Path) -> None:
+    repo = LiveSourceRepository(tmp_path / "app.db")
+    source = repo.add_source("manual", "", "手动源")
+    entry = repo.add_manual_entry(
+        source.id,
+        group_name="",
+        channel_name="CCTV-1",
+        stream_url="https://live.example/cctv1.m3u8",
+    )
+
+    class FakeEpgService:
+        def get_schedule(self, channel_name: str):
+            assert channel_name == "CCTV-1"
+            return type("Schedule", (), {"current": "09:00-10:00 朝闻天下", "next": "10:00-11:00 新闻30分"})()
+
+    service = CustomLiveService(repo, http_client=FakeHttpClient(), epg_service=FakeEpgService())
+
+    request = service.build_request(f"custom-channel:{source.id}:manual-{entry.id}")
+
+    assert request.vod.epg_current == "09:00-10:00 朝闻天下"
+    assert request.vod.epg_next == "10:00-11:00 新闻30分"
+
+
 def test_custom_live_service_loads_local_txt_source_and_lists_groups(tmp_path: Path) -> None:
     playlist_path = tmp_path / "iptv.txt"
     playlist_path.write_text(
