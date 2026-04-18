@@ -194,6 +194,19 @@ def test_api_client_get_text_returns_text_response() -> None:
     assert seen == ["https://example.com/live.m3u"]
 
 
+def test_api_client_get_bytes_returns_raw_content() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"\x1f\x8bcompressed")
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="auth-123",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert client.get_bytes("https://example.com/e9.xml.gz") == b"\x1f\x8bcompressed"
+
+
 def test_api_client_close_closes_underlying_http_client() -> None:
     client = ApiClient(
         base_url="http://127.0.0.1:4567",

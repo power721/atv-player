@@ -265,3 +265,15 @@ class ApiClient:
         except httpx.HTTPError as exc:
             raise ApiError("网络请求失败") from exc
         return response.text
+
+    def get_bytes(self, url: str) -> bytes:
+        try:
+            response = self._client.get(url, follow_redirects=True)
+            response.raise_for_status()
+        except httpx.ReadTimeout as exc:
+            raise ApiError("请求超时") from exc
+        except httpx.TimeoutException as exc:
+            raise ApiError("请求超时") from exc
+        except httpx.HTTPError as exc:
+            raise ApiError("网络请求失败") from exc
+        return response.content
