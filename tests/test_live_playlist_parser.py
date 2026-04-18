@@ -28,3 +28,36 @@ CCTV-1,http://63.141.230.178:82/gslb/zbdq5.m3u8?id=cctv1hd
         ("CCTV-1", "http://107.150.60.122/live/cctv1hd.m3u8"),
         ("CCTV-1", "http://63.141.230.178:82/gslb/zbdq5.m3u8?id=cctv1hd"),
     ]
+
+
+def test_parse_live_playlist_keeps_txt_channels_ungrouped_before_first_group() -> None:
+    playlist = """CGTN,http://live.example/cgtn.m3u8
+🇨🇳IPV4线路,#genre#
+CCTV-1,http://live.example/cctv1.m3u8
+"""
+
+    parsed = parse_live_playlist(playlist)
+
+    assert [(item.name, item.url) for item in parsed.ungrouped_channels] == [
+        ("CGTN", "http://live.example/cgtn.m3u8")
+    ]
+    assert [group.name for group in parsed.groups] == ["🇨🇳IPV4线路"]
+
+
+def test_parse_live_playlist_ignores_blank_comments_and_malformed_txt_rows() -> None:
+    playlist = """
+# comment
+无效行
+卫视频道,#genre#
+,
+湖南卫视,
+湖南卫视,http://live.example/hunan.m3u8
+"""
+
+    parsed = parse_live_playlist(playlist)
+
+    assert parsed.ungrouped_channels == []
+    assert [group.name for group in parsed.groups] == ["卫视频道"]
+    assert [(item.name, item.url) for item in parsed.groups[0].channels] == [
+        ("湖南卫视", "http://live.example/hunan.m3u8")
+    ]
