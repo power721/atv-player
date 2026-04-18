@@ -151,11 +151,16 @@ class LiveSourceManagerDialog(QDialog):
         return name or "直播源"
 
     def _prompt_remote_source(self) -> str:
-        url, accepted = QInputDialog.getText(self, "添加远程源", "M3U URL")
+        url, accepted = QInputDialog.getText(self, "添加远程源", "直播源 URL")
         return url.strip() if accepted else ""
 
     def _pick_local_source(self) -> str:
-        path, _ = QFileDialog.getOpenFileName(self, "选择 M3U 文件", "", "M3U Files (*.m3u *.m3u8)")
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择直播源文件",
+            "",
+            "Live Source Files (*.m3u *.m3u8 *.txt)",
+        )
         return path.strip()
 
     def _prompt_manual_source(self) -> str:

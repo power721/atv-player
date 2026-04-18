@@ -157,6 +157,47 @@ def test_live_source_manager_dialog_adds_local_source_with_name_from_path_stem(q
     assert manager.add_local_calls == [("/tmp/my.live.m3u8", "my.live")]
 
 
+def test_live_source_manager_dialog_prompts_for_generic_live_source_url(qtbot, monkeypatch) -> None:
+    manager = FakeLiveSourceManager()
+    dialog = LiveSourceManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    asked = {}
+
+    def fake_get_text(parent, title, label, **kwargs):
+        del parent, kwargs
+        asked["title"] = title
+        asked["label"] = label
+        return "https://example.com/live.txt", True
+
+    monkeypatch.setattr("atv_player.ui.live_source_manager_dialog.QInputDialog.getText", fake_get_text)
+
+    assert dialog._prompt_remote_source() == "https://example.com/live.txt"
+    assert asked == {"title": "添加远程源", "label": "直播源 URL"}
+
+
+def test_live_source_manager_dialog_local_picker_accepts_txt_files(qtbot, monkeypatch) -> None:
+    manager = FakeLiveSourceManager()
+    dialog = LiveSourceManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    asked = {}
+
+    def fake_pick(parent, title, directory, file_filter):
+        del parent, directory
+        asked["title"] = title
+        asked["filter"] = file_filter
+        return "/tmp/iptv.txt", "TXT Files (*.txt)"
+
+    monkeypatch.setattr("atv_player.ui.live_source_manager_dialog.QFileDialog.getOpenFileName", fake_pick)
+
+    assert dialog._pick_local_source() == "/tmp/iptv.txt"
+    assert asked == {
+        "title": "选择直播源文件",
+        "filter": "Live Source Files (*.m3u *.m3u8 *.txt)",
+    }
+
+
 def test_live_source_manager_dialog_shows_manual_editor_button_for_manual_source(qtbot) -> None:
     manager = FakeLiveSourceManager()
     dialog = LiveSourceManagerDialog(manager)
