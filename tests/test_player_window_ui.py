@@ -2227,6 +2227,7 @@ def test_player_window_context_menu_includes_primary_and_secondary_subtitle_size
         "主字幕大小",
         "次字幕大小",
         "音轨",
+        "视频信息",
     ]
     assert [action.text() for action in _submenu_actions(menu, "主字幕大小")] == [
         "很小",
