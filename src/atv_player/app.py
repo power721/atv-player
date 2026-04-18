@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 
@@ -18,7 +19,9 @@ from atv_player.controllers.history_controller import HistoryController
 from atv_player.controllers.login_controller import LoginController
 from atv_player.controllers.player_controller import PlayerController
 from atv_player.controllers.telegram_search_controller import TelegramSearchController
-from atv_player.models import AppConfig
+from atv_player.live_epg_repository import LiveEpgRepository
+from atv_player.live_epg_service import LiveEpgService
+from atv_player.models import AppConfig, LiveEpgConfig
 from atv_player.paths import app_cache_dir, app_data_dir
 from atv_player.live_source_repository import LiveSourceRepository
 from atv_player.plugins import SpiderPluginLoader, SpiderPluginManager
@@ -40,12 +43,30 @@ class _NullLiveSourceRepository:
         return []
 
 
+class _NullLiveEpgService:
+    def load_config(self) -> LiveEpgConfig:
+        return LiveEpgConfig()
+
+    def save_url(self, epg_url: str) -> None:
+        del epg_url
+
+    def refresh(self) -> None:
+        return None
+
+    def get_schedule(self, channel_name: str):
+        del channel_name
+        return None
+
+
 class _HttpTextClient:
     def __init__(self, client: ApiClient) -> None:
         self._client = client
 
     def get_text(self, url: str) -> str:
         return self._client.get_text(url)
+
+    def get_bytes(self, url: str) -> bytes:
+        return self._client.get_bytes(url)
 
 
 def decide_start_view(config: AppConfig) -> str:
@@ -89,12 +110,14 @@ class AppCoordinator(QObject):
         self._api_client: ApiClient | None = None
         if hasattr(repo, "database_path"):
             self._live_source_repository = LiveSourceRepository(repo.database_path)
+            self._live_epg_repository = LiveEpgRepository(repo.database_path)
             self._plugin_repository = SpiderPluginRepository(repo.database_path)
             cache_dir = repo.database_path.parent / "plugins" / "cache"
             self._plugin_loader = SpiderPluginLoader(cache_dir)
             self._plugin_manager = SpiderPluginManager(self._plugin_repository, self._plugin_loader)
         else:
             self._live_source_repository = _NullLiveSourceRepository()
+            self._live_epg_repository = None
             self._plugin_repository = None
             self._plugin_loader = None
             self._plugin_manager = _NullPluginManager()
@@ -156,9 +179,16 @@ class AppCoordinator(QObject):
         config = self.repo.load_config()
         capabilities = self._load_capabilities(self._api_client)
         spider_plugins = self._plugin_manager.load_enabled_plugins()
+        live_epg_service = _NullLiveEpgService()
+        if self._live_epg_repository is not None:
+            live_epg_service = LiveEpgService(
+                self._live_epg_repository,
+                http_client=_HttpTextClient(self._api_client),
+            )
         live_source_manager = CustomLiveService(
             self._live_source_repository,
             http_client=_HttpTextClient(self._api_client),
+            epg_service=live_epg_service,
         )
         douban_controller = DoubanController(self._api_client)
         telegram_controller = TelegramSearchController(self._api_client)
@@ -168,6 +198,7 @@ class AppCoordinator(QObject):
         browse_controller = BrowseController(self._api_client)
         history_controller = HistoryController(self._api_client)
         player_controller = PlayerController(self._api_client)
+        self._start_live_background_refresh(live_source_manager, live_epg_service)
         self.main_window = MainWindow(
             browse_controller=browse_controller,
             history_controller=history_controller,
@@ -203,6 +234,26 @@ class AppCoordinator(QObject):
                 if restored is not None:
                     return restored
         return self.main_window
+
+    def _start_live_background_refresh(self, live_source_manager, live_epg_service) -> None:
+        def refresh_epg() -> None:
+            try:
+                if live_epg_service.load_config().epg_url.strip():
+                    live_epg_service.refresh()
+            except Exception:
+                return
+
+        def refresh_sources() -> None:
+            for source in live_source_manager.list_sources():
+                if source.source_type != "remote":
+                    continue
+                try:
+                    live_source_manager.refresh_source(source.id)
+                except Exception:
+                    continue
+
+        threading.Thread(target=refresh_epg, daemon=True).start()
+        threading.Thread(target=refresh_sources, daemon=True).start()
 
     def _load_capabilities(self, api_client: ApiClient) -> dict[str, bool]:
         default_capabilities = {"emby": True, "jellyfin": True}

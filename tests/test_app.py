@@ -488,6 +488,24 @@ def test_http_text_client_follows_redirects_for_live_source_text_requests() -> N
     assert api_client.calls == ["https://example.com/live.m3u"]
 
 
+def test_http_text_client_follows_redirects_for_live_source_byte_requests() -> None:
+    class FakeApiClient:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def get_bytes(self, url: str) -> bytes:
+            self.calls.append(url)
+            return b"\x1f\x8bpayload"
+
+    api_client = FakeApiClient()
+    client = app_module._HttpTextClient(api_client)
+
+    payload = client.get_bytes("https://example.com/e9.xml.gz")
+
+    assert payload == b"\x1f\x8bpayload"
+    assert api_client.calls == ["https://example.com/e9.xml.gz"]
+
+
 def test_main_window_hides_emby_and_jellyfin_tabs_when_disabled(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),
@@ -1967,6 +1985,102 @@ def test_app_coordinator_show_main_uses_capabilities_to_toggle_media_tabs(monkey
     assert isinstance(window, FakeMainWindow)
     assert window.kwargs["show_emby_tab"] is False
     assert window.kwargs["show_jellyfin_tab"] is True
+
+
+def test_app_coordinator_starts_epg_and_remote_live_refresh_in_background(monkeypatch, tmp_path) -> None:
+    class FakeRepo:
+        def __init__(self) -> None:
+            self.database_path = tmp_path / "app.db"
+            self.config = AppConfig(
+                base_url="http://127.0.0.1:4567",
+                username="alice",
+                token="auth-123",
+                vod_token="vod-123",
+            )
+
+        def load_config(self) -> AppConfig:
+            return self.config
+
+        def save_config(self, config: AppConfig) -> None:
+            self.config = config
+
+        def clear_token(self) -> None:
+            self.config.token = ""
+            self.config.vod_token = ""
+
+    class FakeApiClient:
+        def __init__(self, base_url: str, token: str = "", vod_token: str = "") -> None:
+            self.base_url = base_url
+            self.token = token
+            self.vod_token = vod_token
+
+        def set_vod_token(self, vod_token: str) -> None:
+            self.vod_token = vod_token
+
+    class FakeMainWindow:
+        logout_requested = type("SignalStub", (), {"connect": lambda self, cb: None})()
+
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    class FakeEpgService:
+        def __init__(self) -> None:
+            self.refresh_calls = 0
+            self.event = threading.Event()
+
+        def load_config(self):
+            return type("Config", (), {"epg_url": "https://example.com/epg.xml.gz"})()
+
+        def save_url(self, epg_url: str) -> None:
+            return None
+
+        def refresh(self) -> None:
+            self.refresh_calls += 1
+            self.event.set()
+
+    class FakeLiveSourceManager:
+        def __init__(self) -> None:
+            self.event = threading.Event()
+
+        def list_sources(self):
+            return [type("Source", (), {"id": 1, "source_type": "remote"})()]
+
+        def refresh_source(self, source_id: int):
+            assert source_id == 1
+            self.event.set()
+
+        def load_categories(self):
+            return []
+
+    fake_epg_service = FakeEpgService()
+    fake_live_source_manager = FakeLiveSourceManager()
+
+    monkeypatch.setattr(app_module, "LiveSourceRepository", lambda db_path: object())
+    monkeypatch.setattr(app_module, "LiveEpgRepository", lambda db_path: object())
+    monkeypatch.setattr(app_module, "SpiderPluginRepository", lambda db_path: object())
+    monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
+    monkeypatch.setattr(app_module, "SpiderPluginManager", lambda repository, loader: FakePluginManager())
+    monkeypatch.setattr(app_module, "LiveEpgService", lambda repository, http_client: fake_epg_service)
+    monkeypatch.setattr(
+        app_module,
+        "CustomLiveService",
+        lambda repository, http_client, epg_service=None: fake_live_source_manager,
+    )
+    monkeypatch.setattr(app_module, "MainWindow", FakeMainWindow)
+
+    repo = FakeRepo()
+    coordinator = AppCoordinator(repo)
+    monkeypatch.setattr(
+        coordinator,
+        "_build_api_client",
+        lambda: FakeApiClient(repo.config.base_url, repo.config.token, repo.config.vod_token),
+    )
+
+    window = coordinator._show_main()
+
+    assert isinstance(window, FakeMainWindow)
+    assert fake_epg_service.event.wait(timeout=1)
+    assert fake_live_source_manager.event.wait(timeout=1)
 
 
 def test_app_coordinator_show_main_keeps_window_open_when_initial_browse_times_out(
