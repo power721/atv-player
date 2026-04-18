@@ -634,7 +634,7 @@ class MainWindow(QMainWindow):
     def _build_restore_request(self) -> OpenPlayerRequest | None:
         mode = self.config.last_playback_mode
         source = self.config.last_playback_source or "browse"
-        if mode == "detail" and self.config.last_playback_vod_id:
+        if mode in {"detail", "custom"} and self.config.last_playback_vod_id:
             return self._build_detail_restore_request(source, self.config.last_playback_vod_id)
         if mode == "folder" and self.config.last_playback_path and self.config.last_playback_clicked_vod_id:
             clicked, items = self._find_restorable_folder_item(

@@ -86,6 +86,7 @@ def test_custom_live_service_loads_group_channels_and_builds_request(tmp_path: P
     assert request.vod.vod_name == "CCTV-1"
     assert request.playlist[0].url == "https://live.example/cctv1.m3u8"
     assert request.source_mode == "custom"
+    assert request.source_vod_id == f"custom-channel:{source.id}:channel-0"
     assert request.use_local_history is False
 
 

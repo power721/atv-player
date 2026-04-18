@@ -228,6 +228,7 @@ class CustomLiveService:
             if schedule is not None:
                 epg_current = schedule.current
                 epg_schedule = "\n".join(schedule.upcoming or [])
+        source_vod_id = f"custom-channel:{view.source_id}:{view.channel_id}"
         return OpenPlayerRequest(
             vod=VodItem(
                 vod_id=view.channel_id,
@@ -250,7 +251,7 @@ class CustomLiveService:
             clicked_index=0,
             source_kind="live",
             source_mode="custom",
-            source_vod_id=view.channel_id,
+            source_vod_id=source_vod_id,
             use_local_history=False,
         )
 
