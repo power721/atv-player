@@ -11,7 +11,7 @@ class FakeLiveSourceManager:
             "Config",
             (),
             {
-                "epg_url": "https://example.com/epg.xml",
+                "epg_url": "https://example.com/epg-1.xml\nhttps://example.com/epg-2.xml",
                 "last_error": "",
                 "last_refreshed_at": 12,
             },
@@ -138,25 +138,31 @@ def test_live_source_manager_dialog_renders_rows_and_actions(qtbot, monkeypatch)
     assert manager.refresh_calls == [1]
 
 
-def test_live_source_manager_dialog_renders_global_epg_controls(qtbot) -> None:
+def test_live_source_manager_dialog_renders_multiline_epg_editor(qtbot) -> None:
     manager = FakeLiveSourceManager()
     dialog = LiveSourceManagerDialog(manager)
     qtbot.addWidget(dialog)
 
-    assert dialog.epg_url_edit.text() == "https://example.com/epg.xml"
+    assert dialog.epg_url_edit.toPlainText() == (
+        "https://example.com/epg-1.xml\nhttps://example.com/epg-2.xml"
+    )
     assert dialog.save_epg_button.text() == "保存"
     assert dialog.refresh_epg_button.text() == "立即更新"
 
 
-def test_live_source_manager_dialog_saves_global_epg_url(qtbot) -> None:
+def test_live_source_manager_dialog_saves_normalized_multiline_epg_urls(qtbot) -> None:
     manager = FakeLiveSourceManager()
     dialog = LiveSourceManagerDialog(manager)
     qtbot.addWidget(dialog)
-    dialog.epg_url_edit.setText("https://live.example/epg.xml")
+    dialog.epg_url_edit.setPlainText(
+        "  https://live.example/epg-1.xml  \n\n https://live.example/epg-2.xml.gz \n"
+    )
 
     dialog._save_epg_url()
 
-    assert manager.save_epg_url_calls == ["https://live.example/epg.xml"]
+    assert manager.save_epg_url_calls == [
+        "https://live.example/epg-1.xml\nhttps://live.example/epg-2.xml.gz"
+    ]
 
 
 def test_live_source_manager_dialog_refreshes_epg_in_background(qtbot, monkeypatch) -> None:

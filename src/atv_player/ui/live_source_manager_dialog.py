@@ -11,8 +11,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
-    QLineEdit,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -58,7 +58,11 @@ class LiveSourceManagerDialog(QDialog):
         self._epg_refresh_worker: _EpgRefreshWorker | None = None
         self._epg_refresh_signals = _EpgRefreshSignals(self)
         self._epg_refresh_signals.completed.connect(self._load_epg_config)
-        self.epg_url_edit = QLineEdit()
+        self.epg_url_edit = QPlainTextEdit()
+        self.epg_url_edit.setPlaceholderText(
+            "https://example.com/epg.xml\nhttps://example.com/backup.xml.gz"
+        )
+        self.epg_url_edit.setFixedHeight(72)
         self.save_epg_button = QPushButton("保存")
         self.refresh_epg_button = QPushButton("立即更新")
         self.epg_status_label = QLabel("")
@@ -95,7 +99,7 @@ class LiveSourceManagerDialog(QDialog):
             actions.addWidget(button)
         layout = QVBoxLayout(self)
         epg_row = QHBoxLayout()
-        epg_row.addWidget(QLabel("EPG URL"))
+        epg_row.addWidget(QLabel("EPG URL（每行一个）"))
         epg_row.addWidget(self.epg_url_edit, 1)
         epg_row.addWidget(self.save_epg_button)
         epg_row.addWidget(self.refresh_epg_button)
@@ -119,12 +123,21 @@ class LiveSourceManagerDialog(QDialog):
 
     def _load_epg_config(self) -> None:
         config = self.manager.load_epg_config()
-        self.epg_url_edit.setText(config.epg_url)
+        self.epg_url_edit.setPlainText(config.epg_url)
         self.epg_status_label.setText(config.last_error or str(config.last_refreshed_at or ""))
 
     def _save_epg_url(self) -> None:
-        self.manager.save_epg_url(self.epg_url_edit.text().strip())
+        self.manager.save_epg_url(self._normalized_epg_url_text())
         self._load_epg_config()
+
+    def _normalized_epg_url_text(self) -> str:
+        lines: list[str] = []
+        for line in self.epg_url_edit.toPlainText().splitlines():
+            value = line.strip()
+            if not value:
+                continue
+            lines.append(value)
+        return "\n".join(lines)
 
     def reload_sources(self) -> None:
         sources = self.manager.list_sources()
