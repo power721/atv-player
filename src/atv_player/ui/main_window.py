@@ -538,6 +538,8 @@ class MainWindow(QMainWindow):
             playback_loader=request.playback_loader,
             playback_progress_reporter=request.playback_progress_reporter,
             playback_stopper=request.playback_stopper,
+            playback_history_loader=request.playback_history_loader,
+            playback_history_saver=request.playback_history_saver,
         )
 
     def _apply_open_player(self, request, session, restore_paused_state: bool = False) -> None:

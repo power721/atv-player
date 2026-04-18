@@ -56,12 +56,16 @@ class FakePlayerController:
         playback_loader=None,
         playback_progress_reporter=None,
         playback_stopper=None,
+        playback_history_loader=None,
+        playback_history_saver=None,
     ):
         return {
             "vod": vod,
             "playlist": playlist,
             "clicked_index": clicked_index,
             "restore_history": restore_history,
+            "playback_history_loader": playback_history_loader,
+            "playback_history_saver": playback_history_saver,
         }
 
 
@@ -194,6 +198,8 @@ def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monk
             playback_loader=None,
             playback_progress_reporter=None,
             playback_stopper=None,
+            playback_history_loader=None,
+            playback_history_saver=None,
         ):
             time.sleep(0.15)
             return super().create_session(
@@ -207,6 +213,8 @@ def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monk
                 playback_loader=playback_loader,
                 playback_progress_reporter=playback_progress_reporter,
                 playback_stopper=playback_stopper,
+                playback_history_loader=playback_history_loader,
+                playback_history_saver=playback_history_saver,
             )
 
     class RecordingPlayerWindow:
@@ -332,6 +340,8 @@ def test_main_window_async_restore_session_creation_failure_resets_last_active_w
             playback_loader=None,
             playback_progress_reporter=None,
             playback_stopper=None,
+            playback_history_loader=None,
+            playback_history_saver=None,
         ):
             raise RuntimeError("session failed")
 

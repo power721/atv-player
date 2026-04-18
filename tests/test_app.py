@@ -11,7 +11,7 @@ import atv_player.app as app_module
 import atv_player.ui.main_window as main_window_module
 from atv_player.api import ApiClient
 from atv_player.app import AppCoordinator, decide_start_view
-from atv_player.models import AppConfig, DoubanCategory, OpenPlayerRequest, PlayItem, VodItem
+from atv_player.models import AppConfig, DoubanCategory, HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
 from atv_player.ui.main_window import MainWindow
 
 
@@ -388,6 +388,8 @@ class FakePlayerController:
         playback_loader=None,
         playback_progress_reporter=None,
         playback_stopper=None,
+        playback_history_loader=None,
+        playback_history_saver=None,
     ):
         return {
             "vod": vod,
@@ -400,6 +402,8 @@ class FakePlayerController:
             "playback_loader": playback_loader,
             "playback_progress_reporter": playback_progress_reporter,
             "playback_stopper": playback_stopper,
+            "playback_history_loader": playback_history_loader,
+            "playback_history_saver": playback_history_saver,
         }
 
 
@@ -2645,4 +2649,90 @@ def test_main_window_restore_last_player_routes_emby_detail_to_emby_controller(q
 
     assert restored is window.player_window
     assert window.player_window.opened[0][0]["vod"].vod_name == "Emby Movie"
+    assert window.player_window.opened[0][1] is True
+
+
+def test_main_window_restore_last_player_routes_plugin_detail_to_plugin_controller_with_playback_history_loader(
+    qtbot,
+    monkeypatch,
+) -> None:
+    class RestoreBrowseController:
+        def build_request_from_detail(self, vod_id: str):
+            raise AssertionError(f"browse restore should not be used for {vod_id}")
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    class RestorePluginController:
+        def load_categories(self):
+            return []
+
+        def load_items(self, category_id: str, page: int):
+            return [], 0
+
+        def build_request(self, vod_id: str):
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="插件电影"),
+                playlist=[PlayItem(title="第2集", url="https://media.example/2.m3u8")],
+                clicked_index=0,
+                source_kind="plugin",
+                source_mode="detail",
+                source_vod_id=vod_id,
+                use_local_history=False,
+                playback_history_loader=lambda: HistoryRecord(
+                    id=0,
+                    key=vod_id,
+                    vod_name="插件电影",
+                    vod_pic="poster",
+                    vod_remarks="第2集",
+                    episode=0,
+                    episode_url="https://media.example/2.m3u8",
+                    position=45000,
+                    opening=0,
+                    ending=0,
+                    speed=1.0,
+                    create_time=1713206400000,
+                ),
+            )
+
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    config = AppConfig(
+        last_active_window="player",
+        last_playback_source="plugin",
+        last_playback_source_key="plugin-1",
+        last_playback_mode="detail",
+        last_playback_vod_id="vod-1",
+        last_player_paused=True,
+    )
+    window = MainWindow(
+        browse_controller=RestoreBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+        spider_plugins=[{"id": "plugin-1", "title": "插件一", "controller": RestorePluginController(), "search_enabled": False}],
+    )
+    qtbot.addWidget(window)
+
+    restored = window.restore_last_player()
+
+    assert restored is window.player_window
+    session = window.player_window.opened[0][0]
+    assert session["vod"].vod_name == "插件电影"
+    assert session["use_local_history"] is False
+    assert session["playback_history_loader"] is not None
+    assert session["playback_history_loader"]().position == 45000
     assert window.player_window.opened[0][1] is True
