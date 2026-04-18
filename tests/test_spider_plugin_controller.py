@@ -112,3 +112,27 @@ def test_controller_parses_json_string_headers_from_player_content() -> None:
         "User-Agent": "PluginUA",
         "Referer": "https://site.example",
     }
+
+
+def test_controller_build_request_attaches_local_playback_history_callbacks() -> None:
+    load_calls: list[str] = []
+    save_calls: list[tuple[str, dict[str, object]]] = []
+    controller = SpiderPluginController(
+        FakeSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        playback_history_loader=lambda vod_id: load_calls.append(vod_id) or None,
+        playback_history_saver=lambda vod_id, payload: save_calls.append((vod_id, payload)),
+    )
+
+    request = controller.build_request("/detail/1")
+
+    assert request.use_local_history is False
+    assert request.playback_history_loader is not None
+    assert request.playback_history_saver is not None
+
+    request.playback_history_loader()
+    request.playback_history_saver({"position": 45000})
+
+    assert load_calls == ["/detail/1"]
+    assert save_calls == [("/detail/1", {"position": 45000})]

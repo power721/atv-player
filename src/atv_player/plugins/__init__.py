@@ -126,6 +126,15 @@ class SpiderPluginManager:
                 loaded.spider,
                 plugin_name=title,
                 search_enabled=loaded.search_enabled,
+                playback_history_loader=lambda vod_id, plugin_id=plugin.id: self._repository.get_playback_history(
+                    plugin_id,
+                    vod_id,
+                ),
+                playback_history_saver=lambda vod_id, payload, plugin_id=plugin.id: self._repository.save_playback_history(
+                    plugin_id,
+                    vod_id,
+                    payload,
+                ),
             )
             definitions.append(
                 SpiderPluginDefinition(

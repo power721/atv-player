@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from collections.abc import Mapping
 
 from atv_player.api import ApiError
@@ -33,10 +34,19 @@ def _normalize_headers(raw_headers) -> dict[str, str]:
 
 
 class SpiderPluginController:
-    def __init__(self, spider, plugin_name: str, search_enabled: bool) -> None:
+    def __init__(
+        self,
+        spider,
+        plugin_name: str,
+        search_enabled: bool,
+        playback_history_loader: Callable[[str], object | None] | None = None,
+        playback_history_saver: Callable[[str, dict[str, object]], None] | None = None,
+    ) -> None:
         self._spider = spider
         self._plugin_name = plugin_name
         self.supports_search = search_enabled
+        self._playback_history_loader = playback_history_loader
+        self._playback_history_saver = playback_history_saver
         self._home_loaded = False
         self._home_categories: list[DoubanCategory] = []
         self._home_items: list[VodItem] = []
@@ -142,6 +152,15 @@ class SpiderPluginController:
         playlist = self._build_playlist(detail)
         if not playlist:
             raise ValueError(f"没有可播放的项目: {detail.vod_name}")
+        history_loader = None
+        history_saver = None
+        if self._playback_history_loader is not None:
+            history_loader = lambda source_vod_id=detail.vod_id: self._playback_history_loader(source_vod_id)
+        if self._playback_history_saver is not None:
+            history_saver = lambda payload, source_vod_id=detail.vod_id: self._playback_history_saver(
+                source_vod_id,
+                payload,
+            )
         return OpenPlayerRequest(
             vod=detail,
             playlist=playlist,
@@ -151,4 +170,6 @@ class SpiderPluginController:
             source_vod_id=detail.vod_id,
             use_local_history=False,
             playback_loader=self._resolve_play_item,
+            playback_history_loader=history_loader,
+            playback_history_saver=history_saver,
         )
