@@ -222,12 +222,12 @@ class CustomLiveService:
     def _build_request_from_channel(self, view: _MergedChannelView) -> OpenPlayerRequest:
         multi_line = len(view.lines) > 1
         epg_current = ""
-        epg_next = ""
+        epg_schedule = ""
         if self._epg_service is not None:
             schedule = self._epg_service.get_schedule(view.channel_name)
             if schedule is not None:
                 epg_current = schedule.current
-                epg_next = schedule.next
+                epg_schedule = "\n".join(schedule.upcoming or [])
         return OpenPlayerRequest(
             vod=VodItem(
                 vod_id=view.channel_id,
@@ -235,7 +235,7 @@ class CustomLiveService:
                 vod_pic=self._resolve_channel_poster(view),
                 detail_style="live",
                 epg_current=epg_current,
-                epg_next=epg_next,
+                epg_schedule=epg_schedule,
             ),
             playlist=[
                 PlayItem(

@@ -759,6 +759,11 @@ class PlayerWindow(QWidget):
 
     def _format_metadata_text(self, vod) -> str:
         if getattr(vod, "detail_style", "") == "live":
+            if getattr(vod, "epg_current", ""):
+                lines = ["当前节目:", vod.epg_current]
+                if getattr(vod, "epg_schedule", ""):
+                    lines.extend(["", "今日节目单:", vod.epg_schedule])
+                return "\n".join(lines)
             rows = [
                 ("标题", vod.vod_name),
                 ("平台", vod.vod_director),
@@ -766,10 +771,6 @@ class PlayerWindow(QWidget):
                 ("主播", vod.vod_actor),
                 ("人气", vod.vod_remarks),
             ]
-            if getattr(vod, "epg_current", ""):
-                rows.append(("当前节目", vod.epg_current))
-            if getattr(vod, "epg_next", ""):
-                rows.append(("下一节目", vod.epg_next))
             return "\n".join(f"{label}: {value}".rstrip() for label, value in rows)
         rows = [
             ("名称", vod.vod_name),

@@ -64,7 +64,7 @@ class VodItem:
     vod_director: str = ""
     vod_actor: str = ""
     epg_current: str = ""
-    epg_next: str = ""
+    epg_schedule: str = ""
     dbid: int = 0
     type: int = 0
     items: list[PlayItem] = field(default_factory=list)

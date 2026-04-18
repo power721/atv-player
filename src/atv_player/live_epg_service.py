@@ -10,10 +10,12 @@ from xml.etree import ElementTree
 @dataclass(slots=True)
 class EpgSchedule:
     current: str = ""
-    next: str = ""
+    upcoming: list[str] | None = None
 
 
 class LiveEpgService:
+    _RESOLUTION_SUFFIX_PATTERN = re.compile(r"(hd|uhd|fhd|高清|超清|标清)+$", re.IGNORECASE)
+
     def __init__(self, repository, http_client) -> None:
         self._repository = repository
         self._http_client = http_client
@@ -54,7 +56,7 @@ class LiveEpgService:
         if not channel_id:
             return None
         current = None
-        following = None
+        upcoming: list[str] = []
         for item in programmes:
             if item["channel"] != channel_id:
                 continue
@@ -62,13 +64,16 @@ class LiveEpgService:
                 current = item
                 continue
             if current is not None and item["start"] >= current["stop"]:
-                following = item
-                break
+                start = item["start"]
+                assert isinstance(start, datetime)
+                if start.date() != now.date():
+                    break
+                upcoming.append(self._format_programme(item))
         if current is None:
             return None
         return EpgSchedule(
             current=self._format_programme(current),
-            next=self._format_programme(following) if following is not None else "",
+            upcoming=upcoming,
         )
 
     def _load_xmltv_text(self, url: str) -> str:
@@ -134,6 +139,7 @@ class LiveEpgService:
             .replace("（", "(")
             .replace("）", ")")
         )
+        normalized = self._RESOLUTION_SUFFIX_PATTERN.sub("", normalized)
         return re.sub(r"(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])", "", normalized)
 
     def _format_programme(self, programme: dict[str, object]) -> str:

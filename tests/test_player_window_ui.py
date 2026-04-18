@@ -1067,11 +1067,9 @@ def test_player_window_renders_epg_rows_for_live_metadata(qtbot) -> None:
         vod=VodItem(
             vod_id="custom-live-1",
             vod_name="CCTV-1",
-            type_name="直播",
-            vod_director="自定义直播",
             detail_style="live",
             epg_current="09:00-10:00 朝闻天下",
-            epg_next="10:00-11:00 新闻30分",
+            epg_schedule="10:00-11:00 新闻30分\n11:00-12:00 今日说法",
         ),
         playlist=[PlayItem(title="线路 1", url="https://live.example/cctv1.m3u8")],
         start_index=0,
@@ -1084,8 +1082,14 @@ def test_player_window_renders_epg_rows_for_live_metadata(qtbot) -> None:
 
     window.open_session(session)
 
-    assert "当前节目: 09:00-10:00 朝闻天下" in window.metadata_view.toPlainText()
-    assert "下一节目: 10:00-11:00 新闻30分" in window.metadata_view.toPlainText()
+    assert window.metadata_view.toPlainText() == (
+        "当前节目:\n"
+        "09:00-10:00 朝闻天下\n"
+        "\n"
+        "今日节目单:\n"
+        "10:00-11:00 新闻30分\n"
+        "11:00-12:00 今日说法"
+    )
 
 
 def test_player_window_appends_runtime_failures_to_log_view_without_overwriting_metadata(qtbot) -> None:

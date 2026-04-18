@@ -328,14 +328,21 @@ def test_custom_live_service_build_request_adds_epg_summary_for_matching_channel
     class FakeEpgService:
         def get_schedule(self, channel_name: str):
             assert channel_name == "CCTV-1"
-            return type("Schedule", (), {"current": "09:00-10:00 朝闻天下", "next": "10:00-11:00 新闻30分"})()
+            return type(
+                "Schedule",
+                (),
+                {
+                    "current": "09:00-10:00 朝闻天下",
+                    "upcoming": ["10:00-11:00 新闻30分", "11:00-12:00 今日说法"],
+                },
+            )()
 
     service = CustomLiveService(repo, http_client=FakeHttpClient(), epg_service=FakeEpgService())
 
     request = service.build_request(f"custom-channel:{source.id}:manual-{entry.id}")
 
     assert request.vod.epg_current == "09:00-10:00 朝闻天下"
-    assert request.vod.epg_next == "10:00-11:00 新闻30分"
+    assert request.vod.epg_schedule == "10:00-11:00 新闻30分\n11:00-12:00 今日说法"
 
 
 def test_custom_live_service_loads_local_txt_source_and_lists_groups(tmp_path: Path) -> None:
