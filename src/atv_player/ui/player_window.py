@@ -1622,6 +1622,7 @@ class PlayerWindow(QWidget):
         menu.addMenu(self._build_subtitle_scale_menu(menu, title="主字幕大小", secondary=False))
         menu.addMenu(self._build_subtitle_scale_menu(menu, title="次字幕大小", secondary=True))
         menu.addMenu(self._build_audio_menu(menu))
+        menu.addAction("视频信息", self._toggle_video_info_from_menu)
         return menu
 
     def _build_primary_subtitle_menu(self, parent: QWidget) -> QMenu:
@@ -1841,6 +1842,12 @@ class PlayerWindow(QWidget):
     def _step_subtitle_scale(self, delta: int, secondary: bool) -> None:
         current = self._secondary_subtitle_scale if secondary else self._main_subtitle_scale
         self._set_subtitle_scale_from_menu(current + delta, secondary)
+
+    def _toggle_video_info_from_menu(self) -> None:
+        try:
+            self.video.toggle_video_info()
+        except Exception as exc:
+            self._append_log(f"视频信息显示失败: {exc}")
 
     def _change_volume(self, value: int) -> None:
         try:

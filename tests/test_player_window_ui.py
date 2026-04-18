@@ -1780,6 +1780,7 @@ def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> N
         "主字幕大小",
         "次字幕大小",
         "音轨",
+        "视频信息",
     ]
     assert [action.text() for action in _submenu_actions(menu, "主字幕")] == ["自动选择", "关闭字幕", "中文 (默认)", "English"]
     assert [action.text() for action in _submenu_actions(menu, "次字幕")] == ["关闭次字幕", "中文 (默认)", "English"]
@@ -1806,6 +1807,162 @@ def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> N
         "重置",
     ]
     assert [action.text() for action in _submenu_actions(menu, "音轨")] == ["自动选择", "国语 (默认)", "English Dub"]
+
+
+def test_player_window_context_menu_video_info_action_calls_video_layer(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.video_info_toggles = 0
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def apply_secondary_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def subtitle_position(self) -> int:
+            return 50
+
+        def set_subtitle_position(self, value: int) -> None:
+            return None
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return True
+
+        def secondary_subtitle_position(self) -> int:
+            return 50
+
+        def set_secondary_subtitle_position(self, value: int) -> None:
+            return None
+
+        def supports_subtitle_scale(self) -> bool:
+            return True
+
+        def subtitle_scale(self) -> int:
+            return 100
+
+        def set_subtitle_scale(self, value: int) -> None:
+            return None
+
+        def supports_secondary_subtitle_scale(self) -> bool:
+            return True
+
+        def secondary_subtitle_scale(self) -> int:
+            return 100
+
+        def set_secondary_subtitle_scale(self, value: int) -> None:
+            return None
+
+        def toggle_video_info(self) -> None:
+            self.video_info_toggles += 1
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(make_player_session(start_index=0))
+
+    menu = window._build_video_context_menu()
+    video_info_action = next(action for action in menu.actions() if action.text() == "视频信息")
+    video_info_action.trigger()
+
+    assert window.video.video_info_toggles == 1
+
+
+def test_player_window_context_menu_video_info_action_logs_failures(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def apply_secondary_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return None
+
+        def subtitle_position(self) -> int:
+            return 50
+
+        def set_subtitle_position(self, value: int) -> None:
+            return None
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return True
+
+        def secondary_subtitle_position(self) -> int:
+            return 50
+
+        def set_secondary_subtitle_position(self, value: int) -> None:
+            return None
+
+        def supports_subtitle_scale(self) -> bool:
+            return True
+
+        def subtitle_scale(self) -> int:
+            return 100
+
+        def set_subtitle_scale(self, value: int) -> None:
+            return None
+
+        def supports_secondary_subtitle_scale(self) -> bool:
+            return True
+
+        def secondary_subtitle_scale(self) -> int:
+            return 100
+
+        def set_secondary_subtitle_scale(self, value: int) -> None:
+            return None
+
+        def toggle_video_info(self) -> None:
+            raise RuntimeError("info boom")
+
+        def position_seconds(self) -> int:
+            return 0
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(make_player_session(start_index=0))
+
+    menu = window._build_video_context_menu()
+    next(action for action in menu.actions() if action.text() == "视频信息").trigger()
+
+    assert "视频信息显示失败: info boom" in window.log_view.toPlainText()
 
 
 def test_player_window_context_menu_primary_subtitle_action_syncs_bottom_combo(qtbot) -> None:
