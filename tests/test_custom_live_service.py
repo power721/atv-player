@@ -315,6 +315,56 @@ def test_custom_live_service_merges_duplicate_manual_entries_into_switchable_lin
     ]
 
 
+def test_custom_live_service_loads_local_txt_source_and_lists_groups(tmp_path: Path) -> None:
+    playlist_path = tmp_path / "iptv.txt"
+    playlist_path.write_text(
+        "🇨🇳IPV4线路,#genre#\n"
+        "CCTV-1,http://live.example/cctv1-main.m3u8\n"
+        "CCTV-2,http://live.example/cctv2.m3u8\n",
+        encoding="utf-8",
+    )
+    repo = LiveSourceRepository(tmp_path / "app.db")
+    source = repo.add_source("local", str(playlist_path), "本地 TXT")
+    service = CustomLiveService(repo, http_client=FakeHttpClient())
+
+    items, total = service.load_items(f"custom:{source.id}", 1)
+
+    assert total == 1
+    assert [(item.vod_id, item.vod_name, item.vod_tag) for item in items] == [
+        (f"custom-folder:{source.id}:group-0", "🇨🇳IPV4线路", "folder")
+    ]
+
+
+def test_custom_live_service_merges_duplicate_txt_channels_into_switchable_lines(tmp_path: Path) -> None:
+    repo = LiveSourceRepository(tmp_path / "app.db")
+    source = repo.add_source("remote", "https://example.com/live.txt", "远程 TXT")
+    repo.update_source(
+        source.id,
+        display_name="远程 TXT",
+        enabled=True,
+        source_value="https://example.com/live.txt",
+        cache_text=(
+            "🇨🇳IPV4线路,#genre#\n"
+            "CCTV-1,http://live.example/cctv1-main.m3u8\n"
+            "CCTV-1,http://live.example/cctv1-backup.m3u8\n"
+        ),
+        last_error="",
+        last_refreshed_at=1,
+    )
+    service = CustomLiveService(repo, http_client=FakeHttpClient())
+
+    items, total = service.load_folder_items(f"custom-folder:{source.id}:group-0")
+    request = service.build_request(f"custom-channel:{source.id}:channel-0")
+
+    assert total == 1
+    assert [item.vod_name for item in items] == ["CCTV-1"]
+    assert [item.title for item in request.playlist] == ["CCTV-1 1", "CCTV-1 2"]
+    assert [item.url for item in request.playlist] == [
+        "http://live.example/cctv1-main.m3u8",
+        "http://live.example/cctv1-backup.m3u8",
+    ]
+
+
 def test_custom_live_service_falls_back_to_default_poster_for_ungrouped_m3u_channels(
     tmp_path: Path,
 ) -> None:

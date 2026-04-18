@@ -4,7 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from atv_player.m3u_parser import ParsedChannel, ParsedGroup, ParsedPlaylist, parse_m3u
+from atv_player.live_playlist_parser import parse_live_playlist
+from atv_player.m3u_parser import ParsedChannel, ParsedGroup, ParsedPlaylist
 from atv_player.models import (
     DoubanCategory,
     OpenPlayerRequest,
@@ -237,7 +238,7 @@ class CustomLiveService:
         if source.source_type == "manual":
             return self._load_manual_playlist(source.id)
         if source.cache_text:
-            return parse_m3u(source.cache_text)
+            return parse_live_playlist(source.cache_text)
         text = self._read_source_text(source)
         self._repository.update_source(
             source.id,
@@ -248,7 +249,7 @@ class CustomLiveService:
             last_error="",
             last_refreshed_at=max(1, source.last_refreshed_at + 1),
         )
-        return parse_m3u(text)
+        return parse_live_playlist(text)
 
     def _read_source_text(self, source) -> str:
         if source.source_type == "remote":
