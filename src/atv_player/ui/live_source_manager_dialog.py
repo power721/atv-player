@@ -1,8 +1,8 @@
 from __future__ import annotations
-
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -10,6 +10,8 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QHBoxLayout,
     QInputDialog,
+    QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -28,12 +30,38 @@ def _display_source_type(source_type: str) -> str:
     }.get(source_type, source_type)
 
 
+class _EpgRefreshSignals(QObject):
+    completed = Signal()
+
+
+class _EpgRefreshWorker(QObject):
+    finished = Signal()
+
+    def __init__(self, manager) -> None:
+        super().__init__()
+        self._manager = manager
+
+    def run(self) -> None:
+        try:
+            self._manager.refresh_epg()
+        finally:
+            self.finished.emit()
+
+
 class LiveSourceManagerDialog(QDialog):
     def __init__(self, manager, parent=None) -> None:
         super().__init__(parent)
         self.manager = manager
         self.setWindowTitle("直播源管理")
         self.resize(920, 520)
+        self._epg_refresh_thread: QThread | None = None
+        self._epg_refresh_worker: _EpgRefreshWorker | None = None
+        self._epg_refresh_signals = _EpgRefreshSignals(self)
+        self._epg_refresh_signals.completed.connect(self._load_epg_config)
+        self.epg_url_edit = QLineEdit()
+        self.save_epg_button = QPushButton("保存")
+        self.refresh_epg_button = QPushButton("立即更新")
+        self.epg_status_label = QLabel("")
         self.source_table = QTableWidget(0, 6, self)
         self.source_table.setHorizontalHeaderLabels(["名称", "类型", "地址", "启用", "状态", "最近刷新"])
         self.source_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -66,8 +94,17 @@ class LiveSourceManagerDialog(QDialog):
         ):
             actions.addWidget(button)
         layout = QVBoxLayout(self)
+        epg_row = QHBoxLayout()
+        epg_row.addWidget(QLabel("EPG URL"))
+        epg_row.addWidget(self.epg_url_edit, 1)
+        epg_row.addWidget(self.save_epg_button)
+        epg_row.addWidget(self.refresh_epg_button)
+        layout.addLayout(epg_row)
+        layout.addWidget(self.epg_status_label)
         layout.addLayout(actions)
         layout.addWidget(self.source_table)
+        self.save_epg_button.clicked.connect(self._save_epg_url)
+        self.refresh_epg_button.clicked.connect(self._refresh_epg)
         self.add_remote_button.clicked.connect(self._add_remote_source)
         self.add_local_button.clicked.connect(self._add_local_source)
         self.add_manual_button.clicked.connect(self._add_manual_source)
@@ -77,7 +114,17 @@ class LiveSourceManagerDialog(QDialog):
         self.manage_channels_button.clicked.connect(self._manage_selected_channels)
         self.refresh_button.clicked.connect(self._refresh_selected)
         self.source_table.itemSelectionChanged.connect(self._sync_action_state)
+        self._load_epg_config()
         self.reload_sources()
+
+    def _load_epg_config(self) -> None:
+        config = self.manager.load_epg_config()
+        self.epg_url_edit.setText(config.epg_url)
+        self.epg_status_label.setText(config.last_error or str(config.last_refreshed_at or ""))
+
+    def _save_epg_url(self) -> None:
+        self.manager.save_epg_url(self.epg_url_edit.text().strip())
+        self._load_epg_config()
 
     def reload_sources(self) -> None:
         sources = self.manager.list_sources()
@@ -249,3 +296,22 @@ class LiveSourceManagerDialog(QDialog):
             return
         self.manager.refresh_source(source_id)
         self.reload_sources()
+
+    def _refresh_epg(self) -> None:
+        self.epg_status_label.setText("更新中...")
+        thread = QThread(self)
+        worker = _EpgRefreshWorker(self.manager)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        worker.finished.connect(self._epg_refresh_signals.completed.emit)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._clear_epg_refresh_state)
+        self._epg_refresh_thread = thread
+        self._epg_refresh_worker = worker
+        thread.start()
+
+    def _clear_epg_refresh_state(self) -> None:
+        self._epg_refresh_thread = None
+        self._epg_refresh_worker = None

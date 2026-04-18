@@ -1,3 +1,5 @@
+import threading
+
 from atv_player.models import LiveSourceConfig, LiveSourceEntry
 from atv_player.ui.live_source_manager_dialog import LiveSourceManagerDialog
 from atv_player.ui.manual_live_source_dialog import ManualLiveSourceDialog
@@ -5,6 +7,15 @@ from atv_player.ui.manual_live_source_dialog import ManualLiveSourceDialog
 
 class FakeLiveSourceManager:
     def __init__(self) -> None:
+        self.epg_config = type(
+            "Config",
+            (),
+            {
+                "epg_url": "https://example.com/epg.xml",
+                "last_error": "",
+                "last_refreshed_at": 12,
+            },
+        )()
         self.sources = [
             LiveSourceConfig(
                 id=1,
@@ -43,10 +54,22 @@ class FakeLiveSourceManager:
         self.delete_calls = []
         self.toggle_calls = []
         self.refresh_calls = []
+        self.save_epg_url_calls = []
+        self.refresh_epg_calls = []
         self.add_entry_calls = []
         self.update_entry_calls = []
         self.delete_entry_calls = []
         self.move_entry_calls = []
+
+    def load_epg_config(self):
+        return self.epg_config
+
+    def save_epg_url(self, url: str):
+        self.save_epg_url_calls.append(url)
+        self.epg_config.epg_url = url
+
+    def refresh_epg(self):
+        self.refresh_epg_calls.append(None)
 
     def list_sources(self):
         return list(self.sources)
@@ -113,6 +136,44 @@ def test_live_source_manager_dialog_renders_rows_and_actions(qtbot, monkeypatch)
     assert dialog.source_table.item(1, 1).text() == "手动"
     assert manager.add_remote_calls == [("https://example.com/iptv.m3u", "iptv")]
     assert manager.refresh_calls == [1]
+
+
+def test_live_source_manager_dialog_renders_global_epg_controls(qtbot) -> None:
+    manager = FakeLiveSourceManager()
+    dialog = LiveSourceManagerDialog(manager)
+    qtbot.addWidget(dialog)
+
+    assert dialog.epg_url_edit.text() == "https://example.com/epg.xml"
+    assert dialog.save_epg_button.text() == "保存"
+    assert dialog.refresh_epg_button.text() == "立即更新"
+
+
+def test_live_source_manager_dialog_saves_global_epg_url(qtbot) -> None:
+    manager = FakeLiveSourceManager()
+    dialog = LiveSourceManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.epg_url_edit.setText("https://live.example/epg.xml")
+
+    dialog._save_epg_url()
+
+    assert manager.save_epg_url_calls == ["https://live.example/epg.xml"]
+
+
+def test_live_source_manager_dialog_refreshes_epg_in_background(qtbot, monkeypatch) -> None:
+    manager = FakeLiveSourceManager()
+    dialog = LiveSourceManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    refreshed = threading.Event()
+
+    def fake_refresh() -> None:
+        manager.refresh_epg_calls.append(None)
+        refreshed.set()
+
+    monkeypatch.setattr(manager, "refresh_epg", fake_refresh)
+
+    dialog._refresh_epg()
+
+    qtbot.waitUntil(refreshed.is_set, timeout=1000)
 
 
 def test_live_source_manager_dialog_adds_remote_source_with_name_from_url_filename_ignoring_query(
