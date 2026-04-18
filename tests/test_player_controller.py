@@ -193,6 +193,95 @@ def test_player_controller_can_restore_history_without_saving_local_history() ->
     assert session.speed == 1.25
 
 
+def test_player_controller_prefers_plugin_local_history_loader() -> None:
+    api = FakeApiClient()
+    api.history = HistoryRecord(
+        id=1,
+        key="movie-1",
+        vod_name="API Movie",
+        vod_pic="api-pic",
+        vod_remarks="Episode 1",
+        episode=0,
+        episode_url="1.m3u8",
+        position=1000,
+        opening=0,
+        ending=0,
+        speed=1.0,
+        create_time=1,
+    )
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="movie-1", vod_name="Plugin Movie", vod_pic="plugin-pic")
+    playlist = [PlayItem(title="Episode 1", url="1.m3u8"), PlayItem(title="Episode 2", url="2.m3u8")]
+
+    session = controller.create_session(
+        vod,
+        playlist,
+        clicked_index=0,
+        use_local_history=False,
+        playback_history_loader=lambda: HistoryRecord(
+            id=0,
+            key="plugin:movie-1",
+            vod_name="Plugin Movie",
+            vod_pic="plugin-pic",
+            vod_remarks="Episode 2",
+            episode=1,
+            episode_url="2.m3u8",
+            position=45000,
+            opening=5000,
+            ending=10000,
+            speed=1.25,
+            create_time=2,
+        ),
+    )
+
+    assert api.history_calls == []
+    assert session.start_index == 1
+    assert session.start_position_seconds == 45
+    assert session.speed == 1.25
+    assert session.opening_seconds == 5
+    assert session.ending_seconds == 10
+
+
+def test_player_controller_reports_progress_to_plugin_local_saver_without_api_history() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="plugin-vod-1", vod_name="Plugin Movie", vod_pic="poster-plugin")
+    playlist = [PlayItem(title="Episode 1", url="https://media.example/1.m3u8", vod_id="ep-1")]
+    saved_payloads: list[dict[str, object]] = []
+
+    session = controller.create_session(
+        vod,
+        playlist,
+        clicked_index=0,
+        use_local_history=False,
+        playback_history_saver=lambda payload: saved_payloads.append(payload),
+    )
+
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=90,
+        speed=1.5,
+        opening_seconds=15,
+        ending_seconds=30,
+        paused=False,
+    )
+
+    assert api.saved_payloads == []
+    assert len(saved_payloads) == 1
+    assert saved_payloads[0]["key"] == "plugin-vod-1"
+    assert saved_payloads[0]["vodName"] == "Plugin Movie"
+    assert saved_payloads[0]["vodPic"] == "poster-plugin"
+    assert saved_payloads[0]["vodRemarks"] == "Episode 1"
+    assert saved_payloads[0]["episode"] == 0
+    assert saved_payloads[0]["episodeUrl"] == "https://media.example/1.m3u8"
+    assert saved_payloads[0]["position"] == 90000
+    assert saved_payloads[0]["opening"] == 15000
+    assert saved_payloads[0]["ending"] == 30000
+    assert saved_payloads[0]["speed"] == 1.5
+    assert isinstance(saved_payloads[0]["createTime"], int)
+
+
 def test_player_controller_reports_progress_via_session_hook_without_saving_history() -> None:
     api = FakeApiClient()
     controller = PlayerController(api)

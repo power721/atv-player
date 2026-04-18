@@ -2,7 +2,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from time import time
 
-from atv_player.models import PlayItem, VodItem
+from atv_player.models import HistoryRecord, PlayItem, VodItem
 from atv_player.player.resume import resolve_resume_index
 
 
@@ -21,6 +21,7 @@ class PlayerSession:
     playback_loader: Callable[[PlayItem], None] | None = None
     playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None
     playback_stopper: Callable[[PlayItem], None] | None = None
+    playback_history_saver: Callable[[dict[str, object]], None] | None = None
 
 
 class PlayerController:
@@ -39,8 +40,12 @@ class PlayerController:
         playback_loader: Callable[[PlayItem], None] | None = None,
         playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None,
         playback_stopper: Callable[[PlayItem], None] | None = None,
+        playback_history_loader: Callable[[], HistoryRecord | None] | None = None,
+        playback_history_saver: Callable[[dict[str, object]], None] | None = None,
     ) -> PlayerSession:
-        history = self._api_client.get_history(vod.vod_id) if (use_local_history or restore_history) else None
+        history = playback_history_loader() if playback_history_loader is not None else None
+        if history is None and (use_local_history or restore_history):
+            history = self._api_client.get_history(vod.vod_id)
         start_index = resolve_resume_index(history, playlist, clicked_index)
         matched_history = history is not None and start_index == history.episode
         if matched_history and history is not None:
@@ -63,6 +68,7 @@ class PlayerController:
             playback_loader=playback_loader,
             playback_progress_reporter=playback_progress_reporter,
             playback_stopper=playback_stopper,
+            playback_history_saver=playback_history_saver,
         )
 
     def resolve_play_item_detail(self, session: PlayerSession, play_item: PlayItem) -> VodItem | None:
@@ -100,24 +106,25 @@ class PlayerController:
         position_ms = position_seconds * 1000
         if session.playback_progress_reporter is not None:
             session.playback_progress_reporter(current_item, position_ms, paused)
+        payload = {
+            "cid": 0,
+            "key": session.vod.vod_id,
+            "vodName": session.vod.vod_name,
+            "vodPic": session.vod.vod_pic,
+            "vodRemarks": current_item.title,
+            "episode": current_index,
+            "episodeUrl": current_item.url,
+            "position": position_ms,
+            "opening": opening_seconds * 1000,
+            "ending": ending_seconds * 1000,
+            "speed": speed,
+            "createTime": int(time() * 1000),
+        }
+        if session.playback_history_saver is not None:
+            session.playback_history_saver(payload)
         if not session.use_local_history:
             return
-        self._api_client.save_history(
-            {
-                "cid": 0,
-                "key": session.vod.vod_id,
-                "vodName": session.vod.vod_name,
-                "vodPic": session.vod.vod_pic,
-                "vodRemarks": current_item.title,
-                "episode": current_index,
-                "episodeUrl": current_item.url,
-                "position": position_ms,
-                "opening": opening_seconds * 1000,
-                "ending": ending_seconds * 1000,
-                "speed": speed,
-                "createTime": int(time() * 1000),
-            }
-        )
+        self._api_client.save_history(payload)
 
     def stop_playback(self, session: PlayerSession, current_index: int) -> None:
         if session.playback_stopper is None:

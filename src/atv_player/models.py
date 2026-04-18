@@ -160,3 +160,5 @@ class OpenPlayerRequest:
     playback_loader: Callable[[PlayItem], None] | None = None
     playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None
     playback_stopper: Callable[[PlayItem], None] | None = None
+    playback_history_loader: Callable[[], HistoryRecord | None] | None = None
+    playback_history_saver: Callable[[dict[str, object]], None] | None = None
