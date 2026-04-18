@@ -63,6 +63,8 @@ class VodItem:
     vod_lang: str = ""
     vod_director: str = ""
     vod_actor: str = ""
+    epg_current: str = ""
+    epg_next: str = ""
     dbid: int = 0
     type: int = 0
     items: list[PlayItem] = field(default_factory=list)
@@ -107,6 +109,15 @@ class LiveSourceEntry:
     stream_url: str = ""
     logo_url: str = ""
     sort_order: int = 0
+
+
+@dataclass(slots=True)
+class LiveEpgConfig:
+    id: int = 1
+    epg_url: str = ""
+    cache_text: str = ""
+    last_refreshed_at: int = 0
+    last_error: str = ""
 
 
 @dataclass(slots=True)
