@@ -2,7 +2,7 @@
 
 ## Summary
 
-Add a single global `EPG URL` configuration for custom live sources. The app should cache XMLTV data locally, refresh that cache asynchronously on every app startup, and also asynchronously refresh all remote custom live sources on startup. When the user plays a custom live channel, the player-side metadata panel should immediately show the matched program guide summary for that channel:
+Add a single global `EPG URL` configuration for custom live sources. The app should cache XMLTV data locally, refresh that cache asynchronously on every app startup, and also asynchronously refresh all remote custom live sources on startup. The EPG refresh path must support both plain XMLTV URLs and gzip-compressed XMLTV files such as `.xml.gz`. When the user plays a custom live channel, the player-side metadata panel should immediately show the matched program guide summary for that channel:
 
 - current program
 - next program
@@ -94,7 +94,9 @@ Owns EPG refresh, parsing, lookup, and schedule extraction.
 
 Responsibilities:
 
-- fetch XMLTV text from the configured URL through the existing HTTP text client abstraction
+- fetch XMLTV payloads from the configured URL through an HTTP client abstraction that can return raw bytes
+- decode plain XMLTV text responses directly
+- detect and decompress gzip-compressed XMLTV payloads before parsing
 - parse XMLTV into in-memory channel/program structures
 - reuse cached XMLTV text when available
 - return current/next program summary for a given custom live channel name
@@ -143,6 +145,12 @@ Parse only the XMLTV fields needed for this feature:
 - programme title
 
 Ignore richer XMLTV metadata for now.
+
+Compressed payload handling:
+
+- accept plain `.xml` and gzip-compressed `.xml.gz` URLs
+- prefer content-based gzip detection from the response bytes, not filename alone
+- after decompression, decode as UTF-8 text before XML parsing
 
 Matching priority:
 
@@ -212,6 +220,7 @@ Repository:
 
 Service:
 
+- gzip-compressed XMLTV payloads are decompressed before parsing
 - XMLTV parsing extracts channels and programmes needed for lookup
 - exact-name match returns current and next programme
 - normalized-name match handles `CCTV-1` and `CCTV1` style differences
