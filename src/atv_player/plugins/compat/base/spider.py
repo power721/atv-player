@@ -8,7 +8,7 @@ from hashlib import sha256
 from pathlib import Path
 
 import requests
-
+from lxml import etree
 
 _CACHE_ROOT = Path.home() / ".local" / "share" / "atv-player" / "plugins" / "spider-cache"
 
@@ -107,6 +107,9 @@ class Spider(metaclass=ABCMeta):
 
     def removeHtmlTags(self, src):
         return re.sub(re.compile("<.*?>"), "", src)
+
+    def html(self, content):
+        return etree.HTML(content)
 
     def cleanText(self, src):
         return re.sub(
