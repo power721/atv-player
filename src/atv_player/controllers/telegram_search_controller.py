@@ -19,8 +19,11 @@ def _parse_playlist(vod_play_url: str) -> list[PlayItem]:
             continue
         title, separator, value = chunk.partition("$")
         if not separator:
-            value = title
-        clean_value = value.strip()
+            clean_value = title.strip()
+            if not _looks_like_media_url(clean_value):
+                clean_value = ""
+        else:
+            clean_value = value.strip()
         playlist.append(
             PlayItem(
                 title=title.strip(),
