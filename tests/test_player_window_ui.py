@@ -240,6 +240,65 @@ def test_player_window_falls_back_to_original_url_when_filtering_fails(qtbot) ->
     assert "广告过滤失败" in window.log_view.toPlainText()
 
 
+def test_player_window_shows_loading_dialog_while_preparing_m3u8(qtbot) -> None:
+    class BlockingM3U8AdFilter:
+        def __init__(self) -> None:
+            self.unblock = threading.Event()
+
+        def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
+            self.unblock.wait(timeout=3)
+            return "/tmp/cleaned-playlist.m3u8"
+
+    filter_service = BlockingM3U8AdFilter()
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[PlayItem(title="正片", url="https://media.example/path/index.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=filter_service)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: window._loading_dialog is not None and window._loading_dialog.isVisible())
+    filter_service.unblock.set()
+    qtbot.waitUntil(lambda: window.video.load_calls == [("/tmp/cleaned-playlist.m3u8", 0)])
+    qtbot.waitUntil(lambda: window._loading_dialog is None or not window._loading_dialog.isVisible())
+
+
+def test_player_window_closes_loading_dialog_when_m3u8_preparation_fails(qtbot) -> None:
+    class BlockingFailingM3U8AdFilter:
+        def __init__(self) -> None:
+            self.unblock = threading.Event()
+
+        def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
+            self.unblock.wait(timeout=3)
+            raise RuntimeError("network down")
+
+    filter_service = BlockingFailingM3U8AdFilter()
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[PlayItem(title="正片", url="https://media.example/path/index.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=filter_service)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: window._loading_dialog is not None and window._loading_dialog.isVisible())
+    filter_service.unblock.set()
+    qtbot.waitUntil(lambda: window.video.load_calls == [("https://media.example/path/index.m3u8", 0)])
+    assert window._loading_dialog is None or not window._loading_dialog.isVisible()
+    assert "广告过滤失败" in window.log_view.toPlainText()
+
+
 def test_player_window_filters_resolved_m3u8_after_detail_lookup(qtbot) -> None:
     class ResolvingPlayerController(FakePlayerController):
         def resolve_play_item_detail(self, session, play_item):
@@ -4295,6 +4354,116 @@ def test_player_window_play_next_resolves_target_episode_before_loading(qtbot) -
     qtbot.waitUntil(lambda: window.video.load_calls == [("http://resolved/2.m3u8", 0)])
     assert window.current_index == 1
     assert "resolved episode content" in window.metadata_view.toPlainText()
+
+
+def test_player_window_shows_loading_dialog_while_resolving_play_item(qtbot) -> None:
+    controller = RecordingPlayerController()
+    unblock = threading.Event()
+
+    resolved_vod = VodItem(
+        vod_id="ep-2",
+        vod_name="Resolved Episode 2",
+        items=[PlayItem(title="Episode 2", url="http://resolved/2.mp4", vod_id="ep-2")],
+    )
+
+    def detail_resolver(item: PlayItem) -> VodItem:
+        unblock.wait(timeout=3)
+        return resolved_vod
+
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = make_player_session(start_index=0)
+    session.playlist = [
+        PlayItem(title="Episode 1", url="http://m/1.mp4"),
+        PlayItem(title="Episode 2", url="", vod_id="ep-2"),
+    ]
+    session.detail_resolver = detail_resolver
+    window.open_session(session)
+    window.video.load_calls.clear()
+
+    window.play_next()
+
+    qtbot.waitUntil(lambda: window._loading_dialog is not None and window._loading_dialog.isVisible())
+    assert window._loading_dialog.label.text() == "正在解析播放地址，请稍候..."
+
+    unblock.set()
+
+    qtbot.waitUntil(lambda: window.video.load_calls == [("http://resolved/2.mp4", 0)])
+    qtbot.waitUntil(lambda: window._loading_dialog is None or not window._loading_dialog.isVisible())
+
+
+def test_player_window_keeps_loading_dialog_during_resolution_to_m3u8_prepare_transition(qtbot) -> None:
+    resolve_unblock = threading.Event()
+    prepare_unblock = threading.Event()
+
+    class BlockingFilter:
+        def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
+            prepare_unblock.wait(timeout=3)
+            return "/tmp/resolved-cleaned.m3u8"
+
+    class ResolvingController(FakePlayerController):
+        def resolve_play_item_detail(self, session, play_item):
+            resolve_unblock.wait(timeout=3)
+            play_item.url = "https://media.example/path/resolved.m3u8"
+            return VodItem(
+                vod_id="ep-2",
+                vod_name="Episode 2",
+                items=[PlayItem(title="Episode 2", url=play_item.url, vod_id="ep-2")],
+            )
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[PlayItem(title="正片", url="", vod_id="ep-2")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        detail_resolver=lambda item: VodItem(vod_id=item.vod_id, vod_name=item.title),
+    )
+    window = PlayerWindow(ResolvingController(), m3u8_ad_filter=BlockingFilter())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+    qtbot.waitUntil(lambda: window._loading_dialog is not None and window._loading_dialog.isVisible())
+    resolve_unblock.set()
+    qtbot.waitUntil(lambda: window._loading_dialog is not None and window._loading_dialog.isVisible())
+    prepare_unblock.set()
+    qtbot.waitUntil(lambda: window.video.load_calls == [("/tmp/resolved-cleaned.m3u8", 0)])
+    qtbot.waitUntil(lambda: window._loading_dialog is None or not window._loading_dialog.isVisible())
+
+
+def test_player_window_dismisses_loading_dialog_when_playback_request_is_invalidated(qtbot) -> None:
+    controller = RecordingPlayerController()
+    unblock = threading.Event()
+
+    def detail_resolver(item: PlayItem) -> VodItem:
+        unblock.wait(timeout=3)
+        return VodItem(
+            vod_id=item.vod_id,
+            vod_name=item.title,
+            items=[PlayItem(title=item.title, url=f"http://resolved/{item.vod_id}.mp4", vod_id=item.vod_id)],
+        )
+
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = make_player_session(start_index=0)
+    session.playlist = [
+        PlayItem(title="Episode 1", url="http://m/1.mp4"),
+        PlayItem(title="Episode 2", url="", vod_id="ep-2"),
+    ]
+    session.detail_resolver = detail_resolver
+    window.open_session(session)
+    window.video.load_calls.clear()
+
+    window.play_next()
+    qtbot.waitUntil(lambda: window._loading_dialog is not None and window._loading_dialog.isVisible())
+
+    window.play_previous()
+
+    assert window._loading_dialog is None or not window._loading_dialog.isVisible()
+    unblock.set()
 
 
 def test_player_window_reuses_cached_detail_when_returning_to_same_episode(qtbot) -> None:

@@ -562,8 +562,8 @@ class MainWindow(QMainWindow):
             self.config.last_player_paused = False
         self.config.main_window_geometry = qbytearray_to_bytes(self.saveGeometry())
         self._save_config()
-        self.player_window.open_session(session, start_paused=start_paused)
         self.player_window.show()
+        self.player_window.open_session(session, start_paused=start_paused)
         self.player_window.raise_()
         self.player_window.activateWindow()
         self.hide()
