@@ -158,6 +158,8 @@ class OpenPlayerRequest:
     vod: VodItem
     playlist: list[PlayItem]
     clicked_index: int
+    playlists: list[list[PlayItem]] = field(default_factory=list)
+    playlist_index: int = 0
     source_kind: str = "browse"
     source_key: str = ""
     source_mode: str = ""

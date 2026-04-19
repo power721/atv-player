@@ -531,6 +531,8 @@ class MainWindow(QMainWindow):
             request.vod,
             request.playlist,
             request.clicked_index,
+            playlists=request.playlists,
+            playlist_index=request.playlist_index,
             detail_resolver=request.detail_resolver,
             resolved_vod_by_id=request.resolved_vod_by_id,
             use_local_history=request.use_local_history,

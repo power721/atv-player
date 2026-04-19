@@ -78,19 +78,36 @@ def test_controller_search_and_category_mapping() -> None:
     assert category_items[0].vod_name == "tv-2"
 
 
+def test_controller_build_request_exposes_grouped_route_playlists() -> None:
+    controller = SpiderPluginController(FakeSpider(), plugin_name="红果短剧", search_enabled=True)
+
+    request = controller.build_request("/detail/1")
+
+    assert request.use_local_history is False
+    assert request.playlist_index == 0
+    assert len(request.playlists) == 2
+    assert [item.title for item in request.playlists[0]] == ["第1集", "第2集"]
+    assert [item.title for item in request.playlists[1]] == ["第3集"]
+    assert request.playlist is request.playlists[0]
+
+    first = request.playlists[0][0]
+    second = request.playlists[0][1]
+    third = request.playlists[1][0]
+
+    assert first.url == ""
+    assert first.play_source == "备用线"
+    assert first.index == 0
+    assert first.vod_id == "/play/1"
+    assert second.url == "https://media.example/2.m3u8"
+    assert third.play_source == "极速线"
+    assert third.index == 0
+
+
 def test_controller_build_request_defers_player_content_until_episode_load() -> None:
     controller = SpiderPluginController(FakeSpider(), plugin_name="红果短剧", search_enabled=True)
 
     request = controller.build_request("/detail/1")
-    first = request.playlist[0]
-    second = request.playlist[1]
-
-    assert request.use_local_history is False
-    assert first.title == "备用线 | 第1集"
-    assert first.url == ""
-    assert first.play_source == "备用线"
-    assert first.vod_id == "/play/1"
-    assert second.url == "https://media.example/2.m3u8"
+    first = request.playlists[0][0]
 
     assert request.playback_loader is not None
     request.playback_loader(first)

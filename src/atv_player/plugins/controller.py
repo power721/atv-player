@@ -98,12 +98,18 @@ class SpiderPluginController:
         total = int(payload.get("total") or len(items))
         return items, total
 
-    def _build_playlist(self, detail: VodItem) -> list[PlayItem]:
+    def _route_name(self, routes: list[str], group_index: int) -> str:
+        route = routes[group_index] if group_index < len(routes) else ""
+        route = route.strip()
+        return route or f"线路 {group_index + 1}"
+
+    def _build_playlist(self, detail: VodItem) -> list[list[PlayItem]]:
         routes = [item.strip() for item in (detail.vod_play_from or "").split("$$$")]
         groups = (detail.vod_play_url or "").split("$$$")
-        playlist: list[PlayItem] = []
+        playlists: list[list[PlayItem]] = []
         for group_index, group in enumerate(groups):
-            route = routes[group_index] if group_index < len(routes) else ""
+            route = self._route_name(routes, group_index)
+            playlist: list[PlayItem] = []
             for raw_chunk in group.split("#"):
                 chunk = raw_chunk.strip()
                 if not chunk:
@@ -112,20 +118,19 @@ class SpiderPluginController:
                 if not separator:
                     title = chunk
                     value = chunk
-                display = title.strip() or value.strip() or f"选集 {len(playlist) + 1}"
-                if route:
-                    display = f"{route} | {display}"
                 clean_value = value.strip()
                 playlist.append(
                     PlayItem(
-                        title=display,
+                        title=title.strip() or clean_value or f"选集 {len(playlist) + 1}",
                         url=clean_value if _looks_like_media_url(clean_value) else "",
                         vod_id="" if _looks_like_media_url(clean_value) else clean_value,
                         index=len(playlist),
                         play_source=route,
                     )
                 )
-        return playlist
+            if playlist:
+                playlists.append(playlist)
+        return playlists
 
     def _resolve_play_item(self, item: PlayItem) -> None:
         if item.url or not item.vod_id:
@@ -149,9 +154,10 @@ class SpiderPluginController:
             detail = _map_vod_item(payload["list"][0])
         except (KeyError, IndexError) as exc:
             raise ValueError(f"没有可播放的项目: {vod_id}") from exc
-        playlist = self._build_playlist(detail)
-        if not playlist:
+        playlists = self._build_playlist(detail)
+        if not playlists:
             raise ValueError(f"没有可播放的项目: {detail.vod_name}")
+        playlist = playlists[0]
         history_loader = None
         history_saver = None
         if self._playback_history_loader is not None:
@@ -164,6 +170,8 @@ class SpiderPluginController:
         return OpenPlayerRequest(
             vod=detail,
             playlist=playlist,
+            playlists=playlists,
+            playlist_index=0,
             clicked_index=0,
             source_kind="plugin",
             source_mode="detail",

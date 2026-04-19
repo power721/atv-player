@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.models import VodItem
+from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url
@@ -132,6 +133,11 @@ class _BackgroundTaskSignals(QObject):
     failed = Signal(str)
 
 
+class _PlaybackPrepareSignals(QObject):
+    succeeded = Signal(int, str)
+    failed = Signal(int, str)
+
+
 @dataclass(slots=True)
 class SubtitlePreference:
     mode: str = "auto"
@@ -168,6 +174,14 @@ class _PendingPlayItemLoad:
     wait_for_load: bool
 
 
+@dataclass(slots=True)
+class _PendingPlaybackPrepare:
+    index: int
+    previous_index: int
+    start_position_seconds: int
+    pause: bool
+
+
 class PlayerWindow(QWidget):
     closed_to_main = Signal()
     _SEEK_SHORTCUT_SECONDS = 15
@@ -195,11 +209,12 @@ class PlayerWindow(QWidget):
         "很大": 130,
     }
 
-    def __init__(self, controller, config=None, save_config=None) -> None:
+    def __init__(self, controller, config=None, save_config=None, m3u8_ad_filter=None) -> None:
         super().__init__()
         self.controller = controller
         self.config = config
         self._save_config = save_config or (lambda: None)
+        self._m3u8_ad_filter = m3u8_ad_filter or M3U8AdFilter()
         self.session = None
         self.current_index = 0
         self.current_speed = 1.0
@@ -213,7 +228,9 @@ class PlayerWindow(QWidget):
         self._last_cursor_activity_ms = 0
         self._poster_request_id = 0
         self._play_item_request_id = 0
+        self._playback_prepare_request_id = 0
         self._pending_play_item_load: _PendingPlayItemLoad | None = None
+        self._pending_playback_prepare: _PendingPlaybackPrepare | None = None
         self._video_context_menu: QMenu | None = None
         self._last_video_context_menu_request_ms = 0
         self._last_video_context_menu_request_global_pos: tuple[int, int] | None = None
@@ -225,6 +242,9 @@ class PlayerWindow(QWidget):
         self._play_item_resolve_signals = _PlayItemResolveSignals(self)
         self._play_item_resolve_signals.succeeded.connect(self._handle_play_item_resolve_succeeded)
         self._play_item_resolve_signals.failed.connect(self._handle_play_item_resolve_failed)
+        self._playback_prepare_signals = _PlaybackPrepareSignals(self)
+        self._playback_prepare_signals.succeeded.connect(self._handle_playback_prepare_succeeded)
+        self._playback_prepare_signals.failed.connect(self._handle_playback_prepare_failed)
         self._background_task_signals = _BackgroundTaskSignals(self)
         self._background_task_signals.failed.connect(self._append_log)
         self._controller_task_queue: queue.SimpleQueue[tuple[str, Callable[[], None]] | None] = queue.SimpleQueue()
@@ -250,6 +270,8 @@ class PlayerWindow(QWidget):
         self.video_widget.context_menu_dismiss_requested.connect(self._dismiss_video_context_menu_at_cursor)
         self.video_widget.playback_failed.connect(self._append_log)
         self.video = self.video_widget
+        self.playlist_group_combo = QComboBox()
+        self.playlist_group_combo.setHidden(True)
         self.playlist = QListWidget()
         self.play_button = self._create_icon_button("play.svg", "播放/暂停", "Space")
         self.prev_button = self._create_icon_button("previous.svg", "上一集", "PgUp")
@@ -418,6 +440,7 @@ class PlayerWindow(QWidget):
 
         sidebar_layout = QVBoxLayout()
         sidebar_layout.addWidget(self.sidebar_actions_widget)
+        sidebar_layout.addWidget(self.playlist_group_combo)
         sidebar_layout.addWidget(self.sidebar_splitter)
         self.sidebar_container = QWidget()
         self.sidebar_container.setMinimumWidth(250)
@@ -450,6 +473,7 @@ class PlayerWindow(QWidget):
         self.opening_spin.valueChanged.connect(self._change_opening_seconds)
         self.ending_spin.valueChanged.connect(self._change_ending_seconds)
         self.volume_slider.valueChanged.connect(self._change_volume)
+        self.playlist_group_combo.currentIndexChanged.connect(self._change_playlist_group)
         self.playlist.itemDoubleClicked.connect(self._play_clicked_item)
         self.toggle_playlist_button.clicked.connect(self._update_sidebar_visibility)
         self.toggle_details_button.clicked.connect(self._update_sidebar_visibility)
@@ -527,6 +551,38 @@ class PlayerWindow(QWidget):
             self.setWindowTitle(self._default_window_title())
             return
         self.setWindowTitle(self._active_playback_title())
+
+    def _session_playlists(self) -> list[list[PlayItem]]:
+        if self.session is None:
+            return []
+        if self.session.playlists:
+            return self.session.playlists
+        return [self.session.playlist]
+
+    def _playlist_group_label(self, playlist: list[PlayItem], playlist_index: int) -> str:
+        if playlist and playlist[0].play_source:
+            return playlist[0].play_source
+        return f"线路 {playlist_index + 1}"
+
+    def _render_playlist_group_combo(self) -> None:
+        playlists = self._session_playlists()
+        self.playlist_group_combo.blockSignals(True)
+        self.playlist_group_combo.clear()
+        for index, playlist in enumerate(playlists):
+            self.playlist_group_combo.addItem(self._playlist_group_label(playlist, index))
+        has_multiple_groups = len(playlists) > 1
+        self.playlist_group_combo.setHidden(not has_multiple_groups)
+        if has_multiple_groups and self.session is not None:
+            self.playlist_group_combo.setCurrentIndex(self.session.playlist_index)
+        self.playlist_group_combo.blockSignals(False)
+
+    def _render_playlist_items(self) -> None:
+        self.playlist.clear()
+        if self.session is None:
+            return
+        for item in self.session.playlist:
+            self.playlist.addItem(QListWidgetItem(item.title))
+        self.playlist.setCurrentRow(self.current_index)
 
     def _set_button_icon(self, button: QPushButton, icon_name: str) -> None:
         button.setIcon(QIcon(str(self._icons_dir / icon_name)))
@@ -631,6 +687,9 @@ class PlayerWindow(QWidget):
 
     def open_session(self, session, start_paused: bool = False) -> None:
         self._invalidate_play_item_resolution()
+        if not session.playlists:
+            session.playlists = [session.playlist]
+            session.playlist_index = 0
         self.session = session
         self._render_poster()
         self._render_metadata()
@@ -651,10 +710,8 @@ class PlayerWindow(QWidget):
         self._set_last_player_paused(start_paused)
         self._update_play_button_icon()
         self._refresh_window_title()
-        self.playlist.clear()
-        for item in session.playlist:
-            self.playlist.addItem(QListWidgetItem(item.title))
-        self.playlist.setCurrentRow(self.current_index)
+        self._render_playlist_group_combo()
+        self._render_playlist_items()
         self.progress.setValue(0)
         self._reset_subtitle_combo()
         self._reset_audio_combo()
@@ -703,6 +760,12 @@ class PlayerWindow(QWidget):
                     pause=pause,
                     wait_for_load=False,
                 )
+            if self._start_playback_prepare(
+                previous_index=previous_index,
+                start_position_seconds=start_position_seconds,
+                pause=pause,
+            ):
+                return False
             return True
         if current_item.vod_id and self.session.detail_resolver is not None:
             self._start_play_item_resolution(
@@ -944,6 +1007,8 @@ class PlayerWindow(QWidget):
     def _invalidate_play_item_resolution(self) -> None:
         self._play_item_request_id += 1
         self._pending_play_item_load = None
+        self._playback_prepare_request_id += 1
+        self._pending_playback_prepare = None
 
     def _run_controller_task_queue(self) -> None:
         while True:
@@ -998,6 +1063,45 @@ class PlayerWindow(QWidget):
 
         threading.Thread(target=run, daemon=True).start()
 
+    def _start_playback_prepare(
+        self,
+        *,
+        previous_index: int,
+        start_position_seconds: int,
+        pause: bool,
+    ) -> bool:
+        if self.session is None:
+            return False
+        current_item = self.session.playlist[self.current_index]
+        should_prepare = getattr(self._m3u8_ad_filter, "should_prepare", None)
+        if callable(should_prepare):
+            if not should_prepare(current_item.url):
+                return False
+        elif ".m3u8" not in current_item.url.lower():
+            return False
+        self._playback_prepare_request_id += 1
+        request_id = self._playback_prepare_request_id
+        self._pending_playback_prepare = _PendingPlaybackPrepare(
+            index=self.current_index,
+            previous_index=previous_index,
+            start_position_seconds=start_position_seconds,
+            pause=pause,
+        )
+
+        def prepare() -> None:
+            try:
+                prepared_url = self._m3u8_ad_filter.prepare(current_item.url, current_item.headers)
+            except Exception as exc:
+                if self._is_window_alive():
+                    self._playback_prepare_signals.failed.emit(request_id, str(exc))
+                return
+            if not self._is_window_alive():
+                return
+            self._playback_prepare_signals.succeeded.emit(request_id, prepared_url)
+
+        self._enqueue_controller_task("播放地址预处理失败", prepare)
+        return True
+
     def _restore_current_index(self, previous_index: int) -> None:
         self.current_index = previous_index
         self.playlist.setCurrentRow(previous_index)
@@ -1020,6 +1124,12 @@ class PlayerWindow(QWidget):
             self._append_log(f"播放失败: 没有可用的播放地址: {current_item.title}")
             return
         try:
+            if self._start_playback_prepare(
+                previous_index=pending_load.previous_index,
+                start_position_seconds=pending_load.start_position_seconds,
+                pause=pending_load.pause,
+            ):
+                return
             self._start_current_item_playback(
                 start_position_seconds=pending_load.start_position_seconds,
                 pause=pending_load.pause,
@@ -1038,6 +1148,45 @@ class PlayerWindow(QWidget):
             self._append_log(f"播放失败: {message}")
             return
         self._append_log(f"详情加载失败: {message}")
+
+    def _handle_playback_prepare_succeeded(self, request_id: int, prepared_url: str) -> None:
+        if request_id != self._playback_prepare_request_id:
+            return
+        pending_prepare = self._pending_playback_prepare
+        self._pending_playback_prepare = None
+        if pending_prepare is None:
+            return
+        if self.session is None or self.current_index != pending_prepare.index:
+            return
+        current_item = self.session.playlist[self.current_index]
+        current_item.url = prepared_url
+        try:
+            self._start_current_item_playback(
+                start_position_seconds=pending_prepare.start_position_seconds,
+                pause=pending_prepare.pause,
+            )
+        except Exception as exc:
+            self._restore_current_index(pending_prepare.previous_index)
+            self._append_log(f"播放失败: {exc}")
+
+    def _handle_playback_prepare_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._playback_prepare_request_id:
+            return
+        pending_prepare = self._pending_playback_prepare
+        self._pending_playback_prepare = None
+        if pending_prepare is None:
+            return
+        if self.session is None or self.current_index != pending_prepare.index:
+            return
+        self._append_log(f"广告过滤失败，继续播放原地址: {message}")
+        try:
+            self._start_current_item_playback(
+                start_position_seconds=pending_prepare.start_position_seconds,
+                pause=pending_prepare.pause,
+            )
+        except Exception as exc:
+            self._restore_current_index(pending_prepare.previous_index)
+            self._append_log(f"播放失败: {exc}")
 
     def _attempt_resume_seek(self, seconds: int, retries_remaining: int) -> None:
         if hasattr(self.video, "can_seek") and not self.video.can_seek():
@@ -1103,6 +1252,31 @@ class PlayerWindow(QWidget):
 
     def _update_sidebar_visibility(self) -> None:
         self._apply_visibility_state()
+
+    def _change_playlist_group(self, playlist_index: int) -> None:
+        if self.session is None:
+            return
+        playlists = self._session_playlists()
+        if not (0 <= playlist_index < len(playlists)):
+            return
+        if playlist_index == self.session.playlist_index:
+            return
+        target_playlist = playlists[playlist_index]
+        if not target_playlist:
+            return
+        self.report_progress()
+        self._stop_current_playback()
+        self._invalidate_play_item_resolution()
+        self.session.playlist_index = playlist_index
+        self.session.playlist = target_playlist
+        self.current_index = min(self.current_index, len(target_playlist) - 1)
+        self._render_playlist_group_combo()
+        self._render_playlist_items()
+        try:
+            self._load_current_item(previous_index=self.current_index)
+            self._refresh_window_title()
+        except Exception as exc:
+            self._append_log(f"播放失败: {exc}")
 
     def _toggle_wide_mode(self) -> None:
         if self.wide_button.isChecked():

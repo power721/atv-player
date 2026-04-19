@@ -13,6 +13,8 @@ class PlayerSession:
     start_index: int
     start_position_seconds: int
     speed: float
+    playlists: list[list[PlayItem]] = field(default_factory=list)
+    playlist_index: int = 0
     opening_seconds: int = 0
     ending_seconds: int = 0
     detail_resolver: Callable[[PlayItem], VodItem | None] | None = None
@@ -28,11 +30,25 @@ class PlayerController:
     def __init__(self, api_client) -> None:
         self._api_client = api_client
 
+    def _normalize_playlists(
+        self,
+        playlist: list[PlayItem],
+        playlists: list[list[PlayItem]] | None,
+        playlist_index: int,
+    ) -> tuple[list[list[PlayItem]], int, list[PlayItem]]:
+        normalized = [group for group in (playlists or []) if group]
+        if not normalized:
+            normalized = [playlist]
+        playlist_index = max(0, min(playlist_index, len(normalized) - 1))
+        return normalized, playlist_index, normalized[playlist_index]
+
     def create_session(
         self,
         vod: VodItem,
         playlist: list[PlayItem],
         clicked_index: int,
+        playlists: list[list[PlayItem]] | None = None,
+        playlist_index: int = 0,
         detail_resolver: Callable[[PlayItem], VodItem | None] | None = None,
         resolved_vod_by_id: dict[str, VodItem] | None = None,
         use_local_history: bool = True,
@@ -43,10 +59,15 @@ class PlayerController:
         playback_history_loader: Callable[[], HistoryRecord | None] | None = None,
         playback_history_saver: Callable[[dict[str, object]], None] | None = None,
     ) -> PlayerSession:
+        normalized_playlists, playlist_index, active_playlist = self._normalize_playlists(
+            playlist,
+            playlists,
+            playlist_index,
+        )
         history = playback_history_loader() if playback_history_loader is not None else None
         if history is None and (use_local_history or restore_history):
             history = self._api_client.get_history(vod.vod_id)
-        start_index = resolve_resume_index(history, playlist, clicked_index)
+        start_index = resolve_resume_index(history, active_playlist, clicked_index)
         matched_history = history is not None and start_index == history.episode
         if matched_history and history is not None:
             position_seconds = int(history.position / 1000)
@@ -56,10 +77,12 @@ class PlayerController:
             speed = 1.0
         return PlayerSession(
             vod=vod,
-            playlist=playlist,
+            playlist=active_playlist,
             start_index=start_index,
             start_position_seconds=position_seconds,
             speed=speed,
+            playlists=normalized_playlists,
+            playlist_index=playlist_index,
             opening_seconds=int((history.opening if history else 0) / 1000),
             ending_seconds=int((history.ending if history else 0) / 1000),
             detail_resolver=detail_resolver,

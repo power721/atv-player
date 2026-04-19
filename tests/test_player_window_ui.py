@@ -170,6 +170,107 @@ def test_player_window_uses_splitters_for_resizable_panels(qtbot) -> None:
     assert window.sidebar_splitter.orientation() == Qt.Orientation.Vertical
 
 
+def test_player_window_hides_route_selector_for_single_group(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert isinstance(window.playlist_group_combo, QComboBox)
+    assert window.playlist_group_combo.isHidden() is True
+
+
+def test_player_window_filters_remote_m3u8_before_video_load(qtbot) -> None:
+    class FakeM3U8AdFilter:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str]]] = []
+
+        def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
+            self.calls.append((url, dict(headers or {})))
+            return "/tmp/cleaned-playlist.m3u8"
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="正片",
+                url="https://media.example/path/index.m3u8",
+                headers={"Referer": "https://site.example"},
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    filter_service = FakeM3U8AdFilter()
+    video = RecordingVideo()
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=filter_service)
+    qtbot.addWidget(window)
+    window.video = video
+
+    window.open_session(session)
+    qtbot.waitUntil(lambda: video.load_calls == [("/tmp/cleaned-playlist.m3u8", 0)])
+
+    assert filter_service.calls == [
+        (
+            "https://media.example/path/index.m3u8",
+            {"Referer": "https://site.example"},
+        )
+    ]
+
+
+def test_player_window_falls_back_to_original_url_when_filtering_fails(qtbot) -> None:
+    class FailingM3U8AdFilter:
+        def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
+            raise RuntimeError("network down")
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[PlayItem(title="正片", url="https://media.example/path/index.m3u8")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    video = RecordingVideo()
+    window = PlayerWindow(FakePlayerController(), m3u8_ad_filter=FailingM3U8AdFilter())
+    qtbot.addWidget(window)
+    window.video = video
+
+    window.open_session(session)
+    qtbot.waitUntil(lambda: video.load_calls == [("https://media.example/path/index.m3u8", 0)])
+
+    assert "广告过滤失败" in window.log_view.toPlainText()
+
+
+def test_player_window_filters_resolved_m3u8_after_detail_lookup(qtbot) -> None:
+    class ResolvingPlayerController(FakePlayerController):
+        def resolve_play_item_detail(self, session, play_item):
+            play_item.url = "https://media.example/path/resolved.m3u8"
+            return VodItem(
+                vod_id="movie-1",
+                vod_name="Resolved Movie",
+                items=[PlayItem(title="正片", url=play_item.url)],
+            )
+
+    class FakeM3U8AdFilter:
+        def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
+            return "/tmp/resolved-cleaned.m3u8"
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[PlayItem(title="正片", url="", vod_id="detail-1")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        detail_resolver=lambda item: VodItem(vod_id=item.vod_id, vod_name="Resolved Movie"),
+    )
+    video = RecordingVideo()
+    window = PlayerWindow(ResolvingPlayerController(), m3u8_ad_filter=FakeM3U8AdFilter())
+    qtbot.addWidget(window)
+    window.video = video
+
+    window.open_session(session)
+    qtbot.waitUntil(lambda: video.load_calls == [("/tmp/resolved-cleaned.m3u8", 0)])
+
+
 def test_player_window_uses_detail_container_with_metadata_and_log_views(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
@@ -179,6 +280,83 @@ def test_player_window_uses_detail_container_with_metadata_and_log_views(qtbot) 
     assert window.log_view.isReadOnly() is True
     assert window.details.layout().indexOf(window.metadata_view) != -1
     assert window.details.layout().indexOf(window.log_view) != -1
+
+
+def test_player_window_renders_route_selector_and_switches_active_group(qtbot) -> None:
+    controller = FakePlayerController()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    video = RecordingVideo()
+    window.video = video
+    session = PlayerSession(
+        vod=VodItem(vod_id="plugin-1", vod_name="红果短剧"),
+        playlist=[
+            PlayItem(title="第1集", url="http://a/1.m3u8", play_source="备用线"),
+            PlayItem(title="第2集", url="http://a/2.m3u8", play_source="备用线"),
+        ],
+        playlists=[
+            [
+                PlayItem(title="第1集", url="http://a/1.m3u8", play_source="备用线"),
+                PlayItem(title="第2集", url="http://a/2.m3u8", play_source="备用线"),
+            ],
+            [
+                PlayItem(title="第1集", url="http://b/1.m3u8", play_source="极速线"),
+                PlayItem(title="第2集", url="http://b/2.m3u8", play_source="极速线"),
+            ],
+        ],
+        playlist_index=0,
+        start_index=1,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+
+    window.open_session(session)
+
+    assert window.playlist_group_combo.isHidden() is False
+    assert [window.playlist_group_combo.itemText(i) for i in range(window.playlist_group_combo.count())] == ["备用线", "极速线"]
+    assert [window.playlist.item(i).text() for i in range(window.playlist.count())] == ["第1集", "第2集"]
+    assert window.playlist.currentRow() == 1
+
+    window.playlist_group_combo.setCurrentIndex(1)
+
+    assert window.session is not None
+    assert window.session.playlist_index == 1
+    assert [item.title for item in window.session.playlist] == ["第1集", "第2集"]
+    assert window.playlist.currentRow() == 1
+    assert video.load_calls[-1][0] == "http://b/2.m3u8"
+
+
+def test_player_window_next_and_previous_stay_within_active_group(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    video = RecordingVideo()
+    window.video = video
+    session = PlayerSession(
+        vod=VodItem(vod_id="plugin-1", vod_name="红果短剧"),
+        playlist=[
+            PlayItem(title="第1集", url="http://b/1.m3u8", play_source="极速线"),
+            PlayItem(title="第2集", url="http://b/2.m3u8", play_source="极速线"),
+        ],
+        playlists=[
+            [PlayItem(title="第1集", url="http://a/1.m3u8", play_source="备用线")],
+            [
+                PlayItem(title="第1集", url="http://b/1.m3u8", play_source="极速线"),
+                PlayItem(title="第2集", url="http://b/2.m3u8", play_source="极速线"),
+            ],
+        ],
+        playlist_index=1,
+        start_index=1,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+
+    window.open_session(session)
+    window.play_next()
+    assert window.current_index == 1
+
+    window.play_previous()
+    assert window.current_index == 0
+    assert video.load_calls[-1][0] == "http://b/1.m3u8"
 
 
 def test_player_window_places_poster_widget_above_metadata_and_log_views(qtbot) -> None:

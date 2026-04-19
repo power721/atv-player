@@ -342,3 +342,41 @@ def test_player_controller_forwards_paused_state_to_progress_reporter() -> None:
     )
 
     assert progress_calls == [("1-3458", 45000, True)]
+
+
+def test_player_controller_normalizes_single_playlist_into_one_group() -> None:
+    controller = PlayerController(FakeApiClient())
+    vod = VodItem(vod_id="movie-1", vod_name="Movie")
+    playlist = [PlayItem(title="Episode 1", url="1.m3u8"), PlayItem(title="Episode 2", url="2.m3u8")]
+
+    session = controller.create_session(vod, playlist, clicked_index=1)
+
+    assert len(session.playlists) == 1
+    assert session.playlist_index == 0
+    assert [item.title for item in session.playlists[0]] == ["Episode 1", "Episode 2"]
+    assert session.playlist is session.playlists[0]
+    assert session.start_index == 1
+
+
+def test_player_controller_uses_selected_group_as_active_playlist() -> None:
+    controller = PlayerController(FakeApiClient())
+    vod = VodItem(vod_id="plugin-1", vod_name="Plugin Movie")
+    first_group = [PlayItem(title="第1集", url="http://m/1.m3u8", play_source="备用线")]
+    second_group = [
+        PlayItem(title="第1集", url="http://b/1.m3u8", play_source="极速线"),
+        PlayItem(title="第2集", url="http://b/2.m3u8", play_source="极速线"),
+    ]
+
+    session = controller.create_session(
+        vod,
+        playlist=second_group,
+        clicked_index=1,
+        playlists=[first_group, second_group],
+        playlist_index=1,
+    )
+
+    assert len(session.playlists) == 2
+    assert session.playlist_index == 1
+    assert session.playlist is second_group
+    assert [item.title for item in session.playlist] == ["第1集", "第2集"]
+    assert session.start_index == 1
