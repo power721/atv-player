@@ -9,7 +9,7 @@ from atv_player.api import ApiError
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_category, _map_item
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
-from atv_player.models import DoubanCategory, OpenPlayerRequest, PlayItem, VodItem
+from atv_player.models import DoubanCategory, OpenPlayerRequest, PlayItem, PlaybackLoadResult, VodItem
 
 
 def _looks_like_media_url(value: str) -> bool:
@@ -168,7 +168,39 @@ class SpiderPluginController:
                 playlists.append(playlist)
         return playlists
 
-    def _resolve_play_item(self, item: PlayItem) -> None:
+    def _build_drive_replacement_playlist(self, detail: VodItem, play_source: str) -> list[PlayItem]:
+        if detail.items:
+            return [
+                PlayItem(
+                    title=item.title,
+                    url=item.url,
+                    path=item.path,
+                    index=index,
+                    size=item.size,
+                    vod_id=item.vod_id,
+                    headers=dict(item.headers),
+                    play_source=play_source,
+                )
+                for index, item in enumerate(detail.items)
+                if item.url
+            ]
+        playlist = build_detail_playlist(detail)
+        return [
+            PlayItem(
+                title=item.title,
+                url=item.url,
+                path=item.path,
+                index=index,
+                size=item.size,
+                vod_id=item.vod_id,
+                headers=dict(item.headers),
+                play_source=play_source,
+            )
+            for index, item in enumerate(playlist)
+            if item.url and not _looks_like_drive_share_link(item.url)
+        ]
+
+    def _resolve_play_item(self, item: PlayItem) -> PlaybackLoadResult | None:
         if item.url or not item.vod_id:
             return
         if _looks_like_drive_share_link(item.vod_id):
@@ -179,13 +211,13 @@ class SpiderPluginController:
                 detail = _map_vod_item(payload["list"][0])
             except (KeyError, IndexError) as exc:
                 raise ValueError(f"没有可播放的项目: {item.title or item.vod_id}") from exc
-            playlist = build_detail_playlist(detail)
-            playable = next((entry for entry in playlist if entry.url and not _looks_like_drive_share_link(entry.url)), None)
-            if playable is None:
+            replacement = self._build_drive_replacement_playlist(detail, item.play_source)
+            if not replacement:
                 raise ValueError(f"没有可播放的项目: {detail.vod_name or item.title}")
-            item.url = playable.url
-            item.headers = dict(playable.headers)
-            return
+            return PlaybackLoadResult(
+                replacement_playlist=replacement,
+                replacement_start_index=0,
+            )
         try:
             payload = self._spider.playerContent(item.play_source, item.vod_id, []) or {}
         except Exception as exc:
@@ -195,6 +227,7 @@ class SpiderPluginController:
             raise ValueError("插件未返回可播放地址")
         item.url = url
         item.headers = _normalize_headers(payload.get("header"))
+        return None
 
     def build_request(self, vod_id: str) -> OpenPlayerRequest:
         try:
