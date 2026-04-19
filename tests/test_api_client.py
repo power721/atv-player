@@ -323,6 +323,29 @@ def test_api_client_gets_telegram_search_detail() -> None:
     }
 
 
+def test_api_client_gets_drive_share_detail() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"list": []})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="auth-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.get_drive_share_detail("https://pan.quark.cn/s/f518510ef92a")
+
+    assert seen == {
+        "path": "/tg-search/Harold",
+        "query": "id=https%3A%2F%2Fpan.quark.cn%2Fs%2Ff518510ef92a&ac=gui",
+    }
+
+
 def test_api_client_searches_telegram_items_by_keyword() -> None:
     seen_queries: list[str] = []
 

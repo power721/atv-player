@@ -22,6 +22,13 @@ def _parse_playlist(vod_play_url: str) -> list[PlayItem]:
     return playlist
 
 
+def build_detail_playlist(detail: VodItem) -> list[PlayItem]:
+    playlist = _parse_playlist(detail.vod_play_url)
+    if not playlist and detail.items:
+        playlist = list(detail.items)
+    return playlist
+
+
 class TelegramSearchController:
     _PAGE_SIZE = 30
 
@@ -68,9 +75,7 @@ class TelegramSearchController:
     def build_request(self, vod_id: str) -> OpenPlayerRequest:
         payload = self._api_client.get_telegram_search_detail(vod_id)
         detail = _map_vod_item(payload["list"][0])
-        playlist = _parse_playlist(detail.vod_play_url)
-        if not playlist and detail.items:
-            playlist = list(detail.items)
+        playlist = build_detail_playlist(detail)
         if not playlist:
             raise ValueError(f"没有可播放的项目: {detail.vod_name}")
         return OpenPlayerRequest(

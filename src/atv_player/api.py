@@ -120,6 +120,9 @@ class ApiClient:
     def get_telegram_search_detail(self, vod_id: str) -> dict[str, Any]:
         return self._request("GET", f"/tg-search/{self._vod_token}", params={"id": vod_id, "ac": "gui"})
 
+    def get_drive_share_detail(self, link: str) -> dict[str, Any]:
+        return self._request("GET", f"/tg-search/{self._vod_token}", params={"id": link, "ac": "gui"})
+
     def search_telegram_items(self, keyword: str, page: int) -> dict[str, Any]:
         params: dict[str, Any] = {"web": True, "wd": keyword}
         if page > 1:
