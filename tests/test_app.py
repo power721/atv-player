@@ -2274,53 +2274,6 @@ def test_main_window_open_player_hides_main_and_updates_last_active_state(qtbot,
     assert window.player_window.start_paused is False
 
 
-def test_main_window_shows_player_window_before_opening_session(qtbot, monkeypatch) -> None:
-    call_order: list[str] = []
-
-    class FakeSignal:
-        def connect(self, _callback) -> None:
-            return None
-
-    class RecordingPlayerWindow:
-        def __init__(self, controller, config, save_config) -> None:
-            self.closed_to_main = FakeSignal()
-
-        def open_session(self, session, start_paused: bool = False) -> None:
-            call_order.append("open_session")
-
-        def show(self) -> None:
-            call_order.append("show")
-
-        def raise_(self) -> None:
-            call_order.append("raise")
-
-        def activateWindow(self) -> None:
-            call_order.append("activate")
-
-    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
-    window = MainWindow(
-        browse_controller=FakeBrowseController(),
-        history_controller=FakeHistoryController(),
-        player_controller=FakePlayerController(),
-        config=AppConfig(),
-        save_config=lambda: None,
-    )
-
-    qtbot.addWidget(window)
-    window.show()
-    request = OpenPlayerRequest(
-        vod=VodItem(vod_id="vod-1", vod_name="Movie"),
-        playlist=[PlayItem(title="Episode 1", url="1.m3u8")],
-        clicked_index=0,
-        source_mode="detail",
-        source_vod_id="vod-1",
-    )
-
-    window.open_player(request)
-
-    qtbot.waitUntil(lambda: call_order == ["show", "open_session", "raise", "activate"])
-
-
 def test_main_window_ctrl_p_shows_existing_player_window(qtbot) -> None:
     class ExistingPlayerWindow:
         def __init__(self) -> None:

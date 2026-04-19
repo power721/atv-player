@@ -25,7 +25,7 @@ from PySide6.QtGui import (
     QShortcut,
     QWindow,
 )
-from PySide6.QtWidgets import QApplication, QDialog, QMenu, QProgressBar, QStyle, QStyleOptionSlider, QToolTip
+from PySide6.QtWidgets import QApplication, QMenu, QStyle, QStyleOptionSlider, QToolTip
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -138,25 +138,6 @@ class _PlaybackPrepareSignals(QObject):
     failed = Signal(int, str)
 
 
-class _PlayerLoadingDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setModal(True)
-        self.setWindowTitle("请稍候")
-        self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
-        self.setFixedWidth(320)
-
-        self.label = QLabel("正在解析播放地址，请稍候...", self)
-        self.label.setWordWrap(True)
-        self.progress = QProgressBar(self)
-        self.progress.setRange(0, 0)
-        self.progress.setTextVisible(False)
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(self.label)
-        layout.addWidget(self.progress)
-
-
 @dataclass(slots=True)
 class SubtitlePreference:
     mode: str = "auto"
@@ -250,7 +231,6 @@ class PlayerWindow(QWidget):
         self._playback_prepare_request_id = 0
         self._pending_play_item_load: _PendingPlayItemLoad | None = None
         self._pending_playback_prepare: _PendingPlaybackPrepare | None = None
-        self._loading_dialog: _PlayerLoadingDialog | None = None
         self._video_context_menu: QMenu | None = None
         self._last_video_context_menu_request_ms = 0
         self._last_video_context_menu_request_global_pos: tuple[int, int] | None = None
@@ -1007,24 +987,6 @@ class PlayerWindow(QWidget):
     def _reset_log(self) -> None:
         self.log_view.clear()
 
-    def _show_loading_dialog(self, message: str = "正在解析播放地址，请稍候...") -> None:
-        dialog = self._loading_dialog
-        if dialog is None:
-            dialog = _PlayerLoadingDialog(self)
-            self._loading_dialog = dialog
-        dialog.label.setText(message)
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
-
-    def _dismiss_loading_dialog(self) -> None:
-        dialog = self._loading_dialog
-        if dialog is None:
-            return
-        self._loading_dialog = None
-        dialog.close()
-        dialog.deleteLater()
-
     def _append_log(self, message: str) -> None:
         if not message:
             return
@@ -1043,7 +1005,6 @@ class PlayerWindow(QWidget):
         return shiboken6.isValid(self)
 
     def _invalidate_play_item_resolution(self) -> None:
-        self._dismiss_loading_dialog()
         self._play_item_request_id += 1
         self._pending_play_item_load = None
         self._playback_prepare_request_id += 1
@@ -1077,7 +1038,6 @@ class PlayerWindow(QWidget):
     ) -> None:
         if self.session is None:
             return
-        self._show_loading_dialog()
         session = self.session
         current_item = session.playlist[self.current_index]
         self._play_item_request_id += 1
@@ -1119,7 +1079,6 @@ class PlayerWindow(QWidget):
                 return False
         elif ".m3u8" not in current_item.url.lower():
             return False
-        self._show_loading_dialog()
         self._playback_prepare_request_id += 1
         request_id = self._playback_prepare_request_id
         self._pending_playback_prepare = _PendingPlaybackPrepare(
@@ -1156,14 +1115,11 @@ class PlayerWindow(QWidget):
         if resolved_vod is not None:
             self._apply_resolved_vod(resolved_vod)
         if pending_load is None or not pending_load.wait_for_load:
-            self._dismiss_loading_dialog()
             return
         if self.session is None or self.current_index != pending_load.index:
-            self._dismiss_loading_dialog()
             return
         current_item = self.session.playlist[self.current_index]
         if not current_item.url:
-            self._dismiss_loading_dialog()
             self._restore_current_index(pending_load.previous_index)
             self._append_log(f"播放失败: 没有可用的播放地址: {current_item.title}")
             return
@@ -1174,20 +1130,17 @@ class PlayerWindow(QWidget):
                 pause=pending_load.pause,
             ):
                 return
-            self._dismiss_loading_dialog()
             self._start_current_item_playback(
                 start_position_seconds=pending_load.start_position_seconds,
                 pause=pending_load.pause,
             )
         except Exception as exc:
-            self._dismiss_loading_dialog()
             self._restore_current_index(pending_load.previous_index)
             self._append_log(f"播放失败: {exc}")
 
     def _handle_play_item_resolve_failed(self, request_id: int, message: str) -> None:
         if request_id != self._play_item_request_id:
             return
-        self._dismiss_loading_dialog()
         pending_load = self._pending_play_item_load
         self._pending_play_item_load = None
         if pending_load is not None and pending_load.wait_for_load:
@@ -1202,15 +1155,12 @@ class PlayerWindow(QWidget):
         pending_prepare = self._pending_playback_prepare
         self._pending_playback_prepare = None
         if pending_prepare is None:
-            self._dismiss_loading_dialog()
             return
         if self.session is None or self.current_index != pending_prepare.index:
-            self._dismiss_loading_dialog()
             return
         current_item = self.session.playlist[self.current_index]
         current_item.url = prepared_url
         try:
-            self._dismiss_loading_dialog()
             self._start_current_item_playback(
                 start_position_seconds=pending_prepare.start_position_seconds,
                 pause=pending_prepare.pause,
@@ -1225,12 +1175,9 @@ class PlayerWindow(QWidget):
         pending_prepare = self._pending_playback_prepare
         self._pending_playback_prepare = None
         if pending_prepare is None:
-            self._dismiss_loading_dialog()
             return
         if self.session is None or self.current_index != pending_prepare.index:
-            self._dismiss_loading_dialog()
             return
-        self._dismiss_loading_dialog()
         self._append_log(f"广告过滤失败，继续播放原地址: {message}")
         try:
             self._start_current_item_playback(
@@ -2378,7 +2325,6 @@ class PlayerWindow(QWidget):
     def closeEvent(self, event: QCloseEvent) -> None:
         try:
             self._poster_request_id += 1
-            self._dismiss_loading_dialog()
             self._invalidate_play_item_resolution()
             self._video_surface_ready = False
             self._close_help_dialog()
