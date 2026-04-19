@@ -179,9 +179,15 @@ class AppCoordinator(QObject):
         self._api_client = self._build_api_client()
         config = self.repo.load_config()
         capabilities = self._load_capabilities(self._api_client)
-        spider_plugins = self._plugin_manager.load_enabled_plugins(
-            drive_detail_loader=self._api_client.get_drive_share_detail,
-        )
+        drive_detail_loader = getattr(self._api_client, "get_drive_share_detail", None)
+        try:
+            spider_plugins = self._plugin_manager.load_enabled_plugins(
+                drive_detail_loader=drive_detail_loader,
+            )
+        except TypeError as exc:
+            if "drive_detail_loader" not in str(exc):
+                raise
+            spider_plugins = self._plugin_manager.load_enabled_plugins()
         live_epg_service = _NullLiveEpgService()
         if self._live_epg_repository is not None:
             live_epg_service = LiveEpgService(

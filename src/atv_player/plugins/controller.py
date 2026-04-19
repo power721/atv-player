@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from collections.abc import Mapping
+from urllib.parse import urlparse
 
 from atv_player.api import ApiError
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_category, _map_item
+from atv_player.controllers.telegram_search_controller import build_detail_playlist
 from atv_player.models import DoubanCategory, OpenPlayerRequest, PlayItem, VodItem
 
 
@@ -31,6 +33,36 @@ def _normalize_headers(raw_headers) -> dict[str, str]:
             return {str(key): str(value) for key, value in parsed.items()}
         return {}
     return {}
+
+
+_SUPPORTED_DRIVE_DOMAINS = (
+    "alipan.com",
+    "aliyundrive.com",
+    "mypikpak.com",
+    "xunlei.com",
+    "123pan.com",
+    "123pan.cn",
+    "123684.com",
+    "123865.com",
+    "123912.com",
+    "123592.com",
+    "quark.cn",
+    "139.com",
+    "uc.cn",
+    "115.com",
+    "115cdn.com",
+    "anxia.com",
+    "189.cn",
+    "baidu.com",
+)
+
+
+def _looks_like_drive_share_link(value: str) -> bool:
+    candidate = value.strip()
+    if not candidate.lower().startswith(("http://", "https://")):
+        return False
+    hostname = (urlparse(candidate).hostname or "").lower()
+    return any(hostname == domain or hostname.endswith(f".{domain}") for domain in _SUPPORTED_DRIVE_DOMAINS)
 
 
 class SpiderPluginController:
@@ -121,11 +153,13 @@ class SpiderPluginController:
                     title = chunk
                     value = chunk
                 clean_value = value.strip()
+                is_drive_link = _looks_like_drive_share_link(clean_value)
+                is_media_url = _looks_like_media_url(clean_value) and not is_drive_link
                 playlist.append(
                     PlayItem(
                         title=title.strip() or clean_value or f"选集 {len(playlist) + 1}",
-                        url=clean_value if _looks_like_media_url(clean_value) else "",
-                        vod_id="" if _looks_like_media_url(clean_value) else clean_value,
+                        url=clean_value if is_media_url else "",
+                        vod_id="" if is_media_url else clean_value,
                         index=len(playlist),
                         play_source=route,
                     )
@@ -136,6 +170,21 @@ class SpiderPluginController:
 
     def _resolve_play_item(self, item: PlayItem) -> None:
         if item.url or not item.vod_id:
+            return
+        if _looks_like_drive_share_link(item.vod_id):
+            if self._drive_detail_loader is None:
+                raise ValueError("当前插件未配置网盘解析")
+            try:
+                payload = self._drive_detail_loader(item.vod_id)
+                detail = _map_vod_item(payload["list"][0])
+            except (KeyError, IndexError) as exc:
+                raise ValueError(f"没有可播放的项目: {item.title or item.vod_id}") from exc
+            playlist = build_detail_playlist(detail)
+            playable = next((entry for entry in playlist if entry.url and not _looks_like_drive_share_link(entry.url)), None)
+            if playable is None:
+                raise ValueError(f"没有可播放的项目: {detail.vod_name or item.title}")
+            item.url = playable.url
+            item.headers = dict(playable.headers)
             return
         try:
             payload = self._spider.playerContent(item.play_source, item.vod_id, []) or {}

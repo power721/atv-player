@@ -5,18 +5,28 @@ from atv_player.controllers.douban_controller import _map_category, _map_item
 from atv_player.models import DoubanCategory, OpenPlayerRequest, PlayItem, VodItem
 
 
+def _looks_like_media_url(value: str) -> bool:
+    candidate = value.strip().lower()
+    return candidate.startswith(("http://", "https://", "rtmp://", "rtsp://")) or any(
+        ext in candidate for ext in (".m3u8", ".mp4", ".flv")
+    )
+
+
 def _parse_playlist(vod_play_url: str) -> list[PlayItem]:
     playlist: list[PlayItem] = []
     for index, chunk in enumerate((vod_play_url or "").split("#")):
         if not chunk:
             continue
-        title, _separator, vod_id = chunk.partition("$")
+        title, separator, value = chunk.partition("$")
+        if not separator:
+            value = title
+        clean_value = value.strip()
         playlist.append(
             PlayItem(
                 title=title.strip(),
-                url="",
+                url=clean_value if _looks_like_media_url(clean_value) else "",
                 index=index,
-                vod_id=vod_id.strip(),
+                vod_id="" if _looks_like_media_url(clean_value) else clean_value,
             )
         )
     return playlist

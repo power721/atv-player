@@ -55,6 +55,31 @@ class JsonHeaderSpider(FakeSpider):
         }
 
 
+class DriveLinkSpider(FakeSpider):
+    def __init__(self) -> None:
+        self.player_calls: list[tuple[str, str]] = []
+
+    def detailContent(self, ids):
+        return {
+            "list": [
+                {
+                    "vod_id": ids[0],
+                    "vod_name": "网盘剧集",
+                    "vod_pic": "poster-detail",
+                    "vod_play_from": "网盘线$$$直链线",
+                    "vod_play_url": (
+                        "第1集$https://pan.quark.cn/s/f518510ef92a$$$"
+                        "第2集$https://media.example/2.m3u8"
+                    ),
+                }
+            ]
+        }
+
+    def playerContent(self, flag, id, vipFlags):
+        self.player_calls.append((flag, id))
+        return super().playerContent(flag, id, vipFlags)
+
+
 def test_controller_load_categories_prepends_home_when_home_list_exists() -> None:
     controller = SpiderPluginController(FakeSpider(), plugin_name="红果短剧", search_enabled=True)
 
@@ -129,6 +154,61 @@ def test_controller_parses_json_string_headers_from_player_content() -> None:
         "User-Agent": "PluginUA",
         "Referer": "https://site.example",
     }
+
+
+def test_controller_resolves_supported_drive_links_via_backend_detail_loader() -> None:
+    spider = DriveLinkSpider()
+    drive_calls: list[str] = []
+
+    def load_drive_detail(link: str) -> dict:
+        drive_calls.append(link)
+        return {
+            "list": [
+                {
+                    "vod_id": link,
+                    "vod_name": "夸克资源",
+                    "vod_play_url": "正片$https://media.example/quark-1.m3u8",
+                }
+            ]
+        }
+
+    controller = SpiderPluginController(
+        spider,
+        plugin_name="红果短剧",
+        search_enabled=True,
+        drive_detail_loader=load_drive_detail,
+    )
+
+    request = controller.build_request("/detail/drive")
+    first = request.playlists[0][0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+
+    assert drive_calls == ["https://pan.quark.cn/s/f518510ef92a"]
+    assert spider.player_calls == []
+    assert first.url == "https://media.example/quark-1.m3u8"
+
+
+def test_controller_keeps_player_content_for_non_drive_plugin_ids() -> None:
+    spider = FakeSpider()
+    drive_calls: list[str] = []
+    controller = SpiderPluginController(
+        spider,
+        plugin_name="红果短剧",
+        search_enabled=True,
+        drive_detail_loader=lambda link: drive_calls.append(link) or {"list": []},
+    )
+
+    request = controller.build_request("/detail/1")
+    first = request.playlists[0][0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+
+    assert drive_calls == []
+    assert first.url == "https://stream.example/play/1.m3u8"
+    assert first.headers == {"Referer": "https://site.example"}
 
 
 def test_controller_build_request_attaches_local_playback_history_callbacks() -> None:
