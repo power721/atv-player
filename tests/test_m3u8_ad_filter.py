@@ -32,7 +32,7 @@ def test_rewrite_media_playlist_removes_explicit_adjumps_and_redundant_discontin
     assert "https://media.example/path/0000075.ts" in result.text
 
 
-def test_rewrite_media_playlist_removes_explicit_cue_out_blocks() -> None:
+def test_rewrite_media_playlist_keeps_cue_out_blocks_without_explicit_ad_markers() -> None:
     playlist = """#EXTM3U
 #EXTINF:5.0,
 main-0001.ts
@@ -51,16 +51,16 @@ main-0002.ts
         "https://media.example/path/index.m3u8",
     )
 
-    assert result.changed is True
-    assert "#EXT-X-CUE-OUT:30" not in result.text
-    assert "#EXT-X-CUE-IN" not in result.text
-    assert "https://media.example/path/ad-0001.ts" not in result.text
-    assert "https://media.example/path/ad-0002.ts" not in result.text
+    assert result.changed is False
+    assert "#EXT-X-CUE-OUT:30" in result.text
+    assert "#EXT-X-CUE-IN" in result.text
+    assert "https://media.example/path/ad-0001.ts" in result.text
+    assert "https://media.example/path/ad-0002.ts" in result.text
     assert "https://media.example/path/main-0001.ts" in result.text
     assert "https://media.example/path/main-0002.ts" in result.text
 
 
-def test_rewrite_media_playlist_removes_explicit_scte35_out_in_blocks() -> None:
+def test_rewrite_media_playlist_keeps_scte35_out_in_blocks_without_explicit_ad_markers() -> None:
     playlist = """#EXTM3U
 #EXTINF:6.0,
 main-0001.ts
@@ -79,16 +79,16 @@ main-0002.ts
         "https://media.example/path/index.m3u8",
     )
 
-    assert result.changed is True
-    assert "#EXT-X-SCTE35-OUT" not in result.text
-    assert "#EXT-X-SCTE35-IN" not in result.text
-    assert "https://media.example/path/ad-0001.ts" not in result.text
-    assert "https://media.example/path/ad-0002.ts" not in result.text
+    assert result.changed is False
+    assert "#EXT-X-SCTE35-OUT" in result.text
+    assert "#EXT-X-SCTE35-IN" in result.text
+    assert "https://media.example/path/ad-0001.ts" in result.text
+    assert "https://media.example/path/ad-0002.ts" in result.text
     assert "https://media.example/path/main-0001.ts" in result.text
     assert "https://media.example/path/main-0002.ts" in result.text
 
 
-def test_rewrite_media_playlist_removes_scte35_daterange_blocks_by_duration() -> None:
+def test_rewrite_media_playlist_keeps_scte35_daterange_blocks_without_explicit_ad_markers() -> None:
     playlist = """#EXTM3U
 #EXTINF:6.0,
 main-0001.ts
@@ -106,15 +106,15 @@ main-0002.ts
         "https://media.example/path/index.m3u8",
     )
 
-    assert result.changed is True
-    assert "com.apple.scte35" not in result.text
-    assert "https://media.example/path/ad-0001.ts" not in result.text
-    assert "https://media.example/path/ad-0002.ts" not in result.text
+    assert result.changed is False
+    assert "com.apple.scte35" in result.text
+    assert "https://media.example/path/ad-0001.ts" in result.text
+    assert "https://media.example/path/ad-0002.ts" in result.text
     assert "https://media.example/path/main-0001.ts" in result.text
     assert "https://media.example/path/main-0002.ts" in result.text
 
 
-def test_rewrite_media_playlist_removes_high_confidence_discontinuity_ad_block() -> None:
+def test_rewrite_media_playlist_keeps_discontinuity_block_without_explicit_ad_markers() -> None:
     playlist = """#EXTM3U
 #EXTINF:6.0,
 https://media.example/main-0001.ts
@@ -133,12 +133,37 @@ https://media.example/main-0002.ts
         "https://media.example/path/index.m3u8",
     )
 
-    assert result.changed is True
-    assert "ads.example.com" not in result.text
-    assert "/commercial/" not in result.text
-    assert result.text.count("#EXT-X-DISCONTINUITY") == 0
+    assert result.changed is False
+    assert "ads.example.com" in result.text
+    assert "/commercial/" in result.text
+    assert result.text.count("#EXT-X-DISCONTINUITY") == 2
     assert "https://media.example/main-0001.ts" in result.text
     assert "https://media.example/main-0002.ts" in result.text
+
+
+def test_rewrite_media_playlist_absolutizes_tag_uris_when_writing_local_playlist() -> None:
+    playlist = """#EXTM3U
+#EXT-X-MAP:URI="init.mp4"
+#EXT-X-KEY:METHOD=AES-128,URI="enc.key"
+#EXTINF:6.0,
+main-0001.ts
+#EXTINF:2.0,
+/video/adjump/time/ad-0001.ts
+#EXTINF:6.0,
+main-0002.ts
+"""
+
+    result = rewrite_media_playlist(
+        playlist,
+        "https://media.example/path/index.m3u8",
+    )
+
+    assert result.changed is True
+    assert '#EXT-X-MAP:URI="https://media.example/path/init.mp4"' in result.text
+    assert '#EXT-X-KEY:METHOD=AES-128,URI="https://media.example/path/enc.key"' in result.text
+    assert "https://media.example/path/main-0001.ts" in result.text
+    assert "https://media.example/path/main-0002.ts" in result.text
+    assert "/video/adjump/" not in result.text
 
 
 def test_rewrite_media_playlist_keeps_non_ad_discontinuity_blocks_without_enough_signals() -> None:
@@ -163,6 +188,24 @@ https://media.example/main-0002.ts
     assert result.changed is False
     assert "backup.example.com" in result.text
     assert result.text.count("#EXT-X-DISCONTINUITY") == 2
+
+
+def test_rewrite_media_playlist_keeps_trailing_discontinuity_when_no_explicit_ad_marker_exists() -> None:
+    playlist = """#EXTM3U
+#EXTINF:6.033,
+https://media.example/main-0001.ts
+#EXTINF:3.333,
+https://media.example/main-0002.ts
+#EXT-X-DISCONTINUITY
+"""
+
+    result = rewrite_media_playlist(
+        playlist,
+        "https://media.example/path/index.m3u8",
+    )
+
+    assert result.changed is False
+    assert result.text == playlist
 
 
 def test_m3u8_ad_filter_writes_cleaned_playlist_to_cache(tmp_path: Path) -> None:

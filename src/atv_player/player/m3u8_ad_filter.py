@@ -13,10 +13,8 @@ import httpx
 from atv_player.paths import app_cache_dir
 
 _AD_MARKERS = ("/adjump/", "/video/adjump/")
-_AD_PATH_MARKERS = ("/ads/", "/ad/", "/commercial/", "/promo/")
 _PLAYLIST_TIMEOUT_SECONDS = 10.0
-_DATERANGE_DURATION_RE = re.compile(r'DURATION=([0-9]+(?:\.[0-9]+)?)')
-_DISCONTINUITY_AD_SCORE_THRESHOLD = 80
+_URI_ATTRIBUTE_RE = re.compile(r'URI="([^"]+)"')
 _MAX_NESTED_PLAYLIST_DEPTH = 3
 
 
@@ -51,98 +49,11 @@ def _remove_redundant_discontinuities(lines: list[str]) -> tuple[list[str], bool
     return cleaned, changed
 
 
-def _parse_extinf_duration(line: str) -> float:
-    payload = line[len("#EXTINF:") :]
-    value = payload.split(",", 1)[0].strip()
-    try:
-        return float(value)
-    except ValueError:
-        return 0.0
-
-
-def _parse_scte35_daterange_duration(line: str) -> float | None:
-    lowered = line.lower()
-    if not line.startswith("#EXT-X-DATERANGE:") or "scte35" not in lowered:
-        return None
-    match = _DATERANGE_DURATION_RE.search(line)
-    if match is None:
-        return None
-    try:
-        return float(match.group(1))
-    except ValueError:
-        return None
-
-
-def _block_media_urls(block: list[str]) -> list[str]:
-    return [line for line in block if _is_media_uri(line)]
-
-
-def _block_total_duration(block: list[str]) -> float:
-    total = 0.0
-    pending_duration = 0.0
-    for line in block:
-        if line.startswith("#EXTINF:"):
-            pending_duration = _parse_extinf_duration(line)
-            continue
-        if _is_media_uri(line):
-            total += pending_duration
-            pending_duration = 0.0
-    return total
-
-
-def _block_primary_host(block: list[str]) -> str:
-    for url in _block_media_urls(block):
-        host = urlparse(url).hostname or ""
-        if host:
-            return host
-    return ""
-
-
-def _is_duration_ad_like(duration: float) -> bool:
-    return any(abs(duration - target) < 0.5 for target in (15.0, 30.0, 60.0))
-
-
-def _score_discontinuity_block(block: list[str], previous_host: str, next_host: str) -> int:
-    urls = _block_media_urls(block)
-    if not urls:
-        return 0
-    score = 0
-    block_host = _block_primary_host(block)
-    if block_host and ((previous_host and block_host != previous_host) or (next_host and block_host != next_host)):
-        score += 40
-    if any(marker in url.lower() for url in urls for marker in _AD_PATH_MARKERS):
-        score += 30
-    if _is_duration_ad_like(_block_total_duration(block)):
-        score += 20
-    return score
-
-
-def _remove_scored_discontinuity_ad_blocks(lines: list[str]) -> tuple[list[str], bool]:
-    blocks: list[list[str]] = [[]]
-    for line in lines:
-        if line == "#EXT-X-DISCONTINUITY":
-            blocks.append([])
-            continue
-        blocks[-1].append(line)
-    keep_flags = [True] * len(blocks)
-    changed = False
-    hosts = [_block_primary_host(block) for block in blocks]
-    for index, block in enumerate(blocks):
-        if index == 0 or index == len(blocks) - 1:
-            continue
-        previous_host = hosts[index - 1]
-        next_host = hosts[index + 1]
-        if _score_discontinuity_block(block, previous_host, next_host) >= _DISCONTINUITY_AD_SCORE_THRESHOLD:
-            keep_flags[index] = False
-            changed = True
-    rebuilt: list[str] = []
-    for index, block in enumerate(blocks):
-        if not keep_flags[index]:
-            continue
-        rebuilt.extend(block)
-        if index < len(blocks) - 1 and keep_flags[index + 1]:
-            rebuilt.append("#EXT-X-DISCONTINUITY")
-    return rebuilt, changed
+def _absolutize_uri_attributes(line: str, playlist_url: str) -> str:
+    return _URI_ATTRIBUTE_RE.sub(
+        lambda match: f'URI="{urljoin(playlist_url, match.group(1))}"',
+        line,
+    )
 
 
 def rewrite_media_playlist(text: str, playlist_url: str) -> PlaylistRewriteResult:
@@ -150,68 +61,26 @@ def rewrite_media_playlist(text: str, playlist_url: str) -> PlaylistRewriteResul
     if any(line.startswith("#EXT-X-STREAM-INF") for line in lines):
         return PlaylistRewriteResult(text=text, changed=False, is_master_playlist=True)
     output: list[str] = []
-    changed = False
+    removed_explicit_ad_segment = False
     pending_extinf: str | None = None
     removed_ad_segment = False
-    in_explicit_ad_block = False
-    daterange_ad_remaining_seconds: float | None = None
 
     for line in lines:
         if line.startswith("#EXTINF:"):
-            if in_explicit_ad_block:
-                changed = True
-                pending_extinf = None
-                continue
-            if daterange_ad_remaining_seconds is not None:
-                changed = True
-                pending_extinf = line
-                continue
             pending_extinf = line
             continue
         if line.startswith("#"):
-            daterange_duration = _parse_scte35_daterange_duration(line)
-            if daterange_duration is not None:
-                changed = True
-                daterange_ad_remaining_seconds = daterange_duration
-                pending_extinf = None
-                continue
-            if line.startswith(("#EXT-X-CUE-OUT", "#EXT-X-SCTE35-OUT")):
-                changed = True
-                in_explicit_ad_block = True
-                pending_extinf = None
-                continue
-            if line.startswith(("#EXT-X-CUE-IN", "#EXT-X-SCTE35-IN")):
-                changed = True
-                in_explicit_ad_block = False
-                removed_ad_segment = False
-                continue
-            if in_explicit_ad_block:
-                changed = True
-                continue
             if line == "#EXT-X-DISCONTINUITY" and removed_ad_segment:
                 changed = True
                 removed_ad_segment = False
                 continue
-            output.append(line)
+            output.append(_absolutize_uri_attributes(line, playlist_url))
             if line != "#EXT-X-DISCONTINUITY":
                 removed_ad_segment = False
             continue
         absolute_line = urljoin(playlist_url, line)
-        if in_explicit_ad_block:
-            changed = True
-            pending_extinf = None
-            removed_ad_segment = True
-            continue
-        if daterange_ad_remaining_seconds is not None:
-            changed = True
-            daterange_ad_remaining_seconds -= _parse_extinf_duration(pending_extinf or "")
-            pending_extinf = None
-            removed_ad_segment = True
-            if daterange_ad_remaining_seconds <= 0:
-                daterange_ad_remaining_seconds = None
-            continue
         if _is_ad_segment(absolute_line):
-            changed = True
+            removed_explicit_ad_segment = True
             if output and output[-1] == "#EXT-X-DISCONTINUITY":
                 output.pop()
             pending_extinf = None
@@ -223,12 +92,10 @@ def rewrite_media_playlist(text: str, playlist_url: str) -> PlaylistRewriteResul
         output.append(absolute_line)
         removed_ad_segment = False
 
-    output, removed_discontinuity = _remove_redundant_discontinuities(output)
-    changed = changed or removed_discontinuity
-    output, removed_scored_block = _remove_scored_discontinuity_ad_blocks(output)
-    changed = changed or removed_scored_block
-    output, removed_discontinuity = _remove_redundant_discontinuities(output)
-    changed = changed or removed_discontinuity
+    changed = removed_explicit_ad_segment
+    if removed_explicit_ad_segment:
+        output, removed_discontinuity = _remove_redundant_discontinuities(output)
+        changed = changed or removed_discontinuity
     return PlaylistRewriteResult(
         text="\n".join(output) + "\n",
         changed=changed,
@@ -287,6 +154,7 @@ class M3U8AdFilter:
             return url
         visited = set(visited)
         visited.add(url)
+        print(url)
         try:
             response = self._get(
                 url,
