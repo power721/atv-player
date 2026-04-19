@@ -142,7 +142,8 @@ class M3U8AdFilter:
         self._get = get
 
     def should_prepare(self, url: str) -> bool:
-        return _is_remote_m3u8_url(url)
+        return False
+        # return _is_remote_m3u8_url(url)
 
     def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
         return self._prepare(url, headers=dict(headers or {}), depth=0, visited=set())
