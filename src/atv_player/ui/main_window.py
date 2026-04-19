@@ -118,6 +118,7 @@ class MainWindow(QMainWindow):
             jellyfin_controller=None,
             spider_plugins=None,
             plugin_manager=None,
+            drive_detail_loader=None,
             show_emby_tab: bool = True,
             show_jellyfin_tab: bool = True,
     ) -> None:
@@ -125,6 +126,7 @@ class MainWindow(QMainWindow):
         self._save_config = save_config or (lambda: None)
         self._plugin_definitions = list(spider_plugins or [])
         self._plugin_manager = plugin_manager
+        self._drive_detail_loader = drive_detail_loader
         self._live_source_manager = live_source_manager
         self._plugin_pages: list[tuple[PosterGridPage, _PluginController, str]] = []
         self.nav_tabs = QTabWidget()
@@ -390,7 +392,12 @@ class MainWindow(QMainWindow):
         dialog.exec()
         load_enabled_plugins = getattr(self._plugin_manager, "load_enabled_plugins", None)
         if callable(load_enabled_plugins):
-            loaded_plugins = load_enabled_plugins()
+            try:
+                loaded_plugins = load_enabled_plugins(drive_detail_loader=self._drive_detail_loader)
+            except TypeError as exc:
+                if "drive_detail_loader" not in str(exc):
+                    raise
+                loaded_plugins = load_enabled_plugins()
             if isinstance(loaded_plugins, Iterable):
                 self._plugin_definitions = list(loaded_plugins)
             else:

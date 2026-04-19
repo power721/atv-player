@@ -751,6 +751,45 @@ def test_main_window_opening_plugin_manager_closes_shortcut_help_dialog(qtbot, m
     assert window.help_dialog is None
 
 
+def test_main_window_reloads_plugins_with_drive_detail_loader_after_plugin_manager_closes(qtbot, monkeypatch) -> None:
+    captured_loaders: list[object | None] = []
+    drive_detail_loader = object()
+
+    class DriveAwarePluginManager:
+        def load_enabled_plugins(self, drive_detail_loader=None):
+            captured_loaders.append(drive_detail_loader)
+            return []
+
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        live_source_manager=FakeLiveSourceManager(),
+        plugin_manager=DriveAwarePluginManager(),
+        drive_detail_loader=drive_detail_loader,
+    )
+    qtbot.addWidget(window)
+
+    class FakeDialog:
+        def __init__(self, manager, parent=None) -> None:
+            self.manager = manager
+
+        def exec(self) -> int:
+            return 1
+
+    monkeypatch.setattr(main_window_module, "PluginManagerDialog", FakeDialog)
+
+    window._open_plugin_manager()
+
+    assert captured_loaders == [drive_detail_loader]
+
+
 def test_main_window_passes_config_and_save_callback_to_browse_page(qtbot) -> None:
     saved = {"count": 0}
     config = AppConfig()

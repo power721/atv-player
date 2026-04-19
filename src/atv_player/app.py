@@ -222,6 +222,7 @@ class AppCoordinator(QObject):
             jellyfin_controller=jellyfin_controller,
             spider_plugins=spider_plugins,
             plugin_manager=self._plugin_manager,
+            drive_detail_loader=drive_detail_loader,
             show_emby_tab=bool(capabilities.get("emby")),
             show_jellyfin_tab=bool(capabilities.get("jellyfin")),
         )
