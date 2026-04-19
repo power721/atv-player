@@ -242,6 +242,49 @@ def test_player_controller_prefers_plugin_local_history_loader() -> None:
     assert session.ending_seconds == 10
 
 
+def test_player_controller_restores_selected_playlist_group_from_history_loader() -> None:
+    controller = PlayerController(FakeApiClient())
+    vod = VodItem(vod_id="plugin-vod-1", vod_name="Plugin Movie", vod_pic="poster-plugin")
+    first_group = [
+        PlayItem(title="第1集", url="https://backup.example/1.m3u8", play_source="备用线"),
+        PlayItem(title="第2集", url="https://backup.example/2.m3u8", play_source="备用线"),
+    ]
+    second_group = [
+        PlayItem(title="第1集", url="https://fast.example/1.m3u8", play_source="极速线"),
+        PlayItem(title="第2集", url="https://fast.example/2.m3u8", play_source="极速线"),
+    ]
+
+    session = controller.create_session(
+        vod,
+        playlist=first_group,
+        clicked_index=0,
+        playlists=[first_group, second_group],
+        playlist_index=0,
+        use_local_history=False,
+        playback_history_loader=lambda: HistoryRecord(
+            id=0,
+            key="plugin:plugin-vod-1",
+            vod_name="Plugin Movie",
+            vod_pic="poster-plugin",
+            vod_remarks="第2集",
+            episode=1,
+            episode_url="https://fast.example/2.m3u8",
+            position=45000,
+            opening=5000,
+            ending=10000,
+            speed=1.25,
+            create_time=2,
+            playlist_index=1,
+        ),
+    )
+
+    assert session.playlist_index == 1
+    assert session.playlist is second_group
+    assert session.start_index == 1
+    assert session.start_position_seconds == 45
+    assert session.speed == 1.25
+
+
 def test_player_controller_reports_progress_to_plugin_local_saver_without_api_history() -> None:
     api = FakeApiClient()
     controller = PlayerController(api)
@@ -279,7 +322,40 @@ def test_player_controller_reports_progress_to_plugin_local_saver_without_api_hi
     assert saved_payloads[0]["opening"] == 15000
     assert saved_payloads[0]["ending"] == 30000
     assert saved_payloads[0]["speed"] == 1.5
+    assert saved_payloads[0]["playlistIndex"] == 0
     assert isinstance(saved_payloads[0]["createTime"], int)
+
+
+def test_player_controller_reports_selected_playlist_index_to_plugin_local_saver() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="plugin-vod-1", vod_name="Plugin Movie", vod_pic="poster-plugin")
+    first_group = [PlayItem(title="第1集", url="https://backup.example/1.m3u8", play_source="备用线")]
+    second_group = [PlayItem(title="第1集", url="https://fast.example/1.m3u8", play_source="极速线")]
+    saved_payloads: list[dict[str, object]] = []
+
+    session = controller.create_session(
+        vod,
+        playlist=second_group,
+        clicked_index=0,
+        playlists=[first_group, second_group],
+        playlist_index=1,
+        use_local_history=False,
+        playback_history_saver=lambda payload: saved_payloads.append(payload),
+    )
+
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=30,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+        paused=False,
+    )
+
+    assert api.saved_payloads == []
+    assert saved_payloads[0]["playlistIndex"] == 1
 
 
 def test_player_controller_reports_progress_via_session_hook_without_saving_history() -> None:

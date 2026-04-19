@@ -223,6 +223,7 @@ class ApiClient:
             ending=int(data["ending"]),
             speed=float(data["speed"]),
             create_time=int(data["createTime"]),
+            playlist_index=int(data.get("playlistIndex", 0)),
         )
 
     def list_history(self, page: int, size: int) -> dict[str, Any]:

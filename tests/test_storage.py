@@ -299,6 +299,7 @@ def test_spider_plugin_repository_round_trip_playback_history(tmp_path: Path) ->
             "opening": 5000,
             "ending": 10000,
             "speed": 1.25,
+            "playlistIndex": 1,
             "createTime": 1713206400000,
         },
     )
@@ -311,6 +312,7 @@ def test_spider_plugin_repository_round_trip_playback_history(tmp_path: Path) ->
     assert history.episode == 1
     assert history.position == 45000
     assert history.speed == 1.25
+    assert history.playlist_index == 1
 
 
 def test_spider_plugin_repository_updates_existing_playback_history_and_deletes_with_plugin(
@@ -333,6 +335,7 @@ def test_spider_plugin_repository_updates_existing_playback_history_and_deletes_
             "opening": 0,
             "ending": 0,
             "speed": 1.0,
+            "playlistIndex": 0,
             "createTime": 1713206400000,
         },
     )
@@ -349,6 +352,7 @@ def test_spider_plugin_repository_updates_existing_playback_history_and_deletes_
             "opening": 8000,
             "ending": 16000,
             "speed": 1.5,
+            "playlistIndex": 1,
             "createTime": 1713206500000,
         },
     )
@@ -360,6 +364,7 @@ def test_spider_plugin_repository_updates_existing_playback_history_and_deletes_
     assert updated.episode == 2
     assert updated.position == 90000
     assert updated.speed == 1.5
+    assert updated.playlist_index == 1
 
     repo.delete_plugin(plugin.id)
 
@@ -397,3 +402,42 @@ def test_spider_plugin_repository_migrates_tables_into_existing_settings_db(tmp_
 
     assert created.id > 0
     assert repo.list_plugins()[0].source_value == "/plugins/红果短剧.py"
+
+
+def test_spider_plugin_repository_migrates_missing_playlist_index_column(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE spider_plugin_playback_history (
+                plugin_id INTEGER NOT NULL,
+                vod_id TEXT NOT NULL,
+                vod_name TEXT NOT NULL DEFAULT '',
+                vod_pic TEXT NOT NULL DEFAULT '',
+                vod_remarks TEXT NOT NULL DEFAULT '',
+                episode INTEGER NOT NULL DEFAULT 0,
+                episode_url TEXT NOT NULL DEFAULT '',
+                position INTEGER NOT NULL DEFAULT 0,
+                opening INTEGER NOT NULL DEFAULT 0,
+                ending INTEGER NOT NULL DEFAULT 0,
+                speed REAL NOT NULL DEFAULT 1.0,
+                updated_at INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (plugin_id, vod_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO spider_plugin_playback_history (
+                plugin_id, vod_id, vod_name, vod_pic, vod_remarks,
+                episode, episode_url, position, opening, ending, speed, updated_at
+            )
+            VALUES (1, 'detail-1', '红果短剧', 'poster', '第1集', 0, 'https://media.example/1.m3u8', 45000, 0, 0, 1.0, 1713206400000)
+            """
+        )
+
+    repo = SpiderPluginRepository(db_path)
+    history = repo.get_playback_history(1, "detail-1")
+
+    assert history is not None
+    assert history.playlist_index == 0

@@ -42,6 +42,16 @@ class PlayerController:
         playlist_index = max(0, min(playlist_index, len(normalized) - 1))
         return normalized, playlist_index, normalized[playlist_index]
 
+    def _restore_playlist_group(
+        self,
+        normalized_playlists: list[list[PlayItem]],
+        playlist_index: int,
+        history: HistoryRecord | None,
+    ) -> tuple[int, list[PlayItem]]:
+        if history is not None and 0 <= history.playlist_index < len(normalized_playlists):
+            playlist_index = history.playlist_index
+        return playlist_index, normalized_playlists[playlist_index]
+
     def create_session(
         self,
         vod: VodItem,
@@ -67,6 +77,11 @@ class PlayerController:
         history = playback_history_loader() if playback_history_loader is not None else None
         if history is None and (use_local_history or restore_history):
             history = self._api_client.get_history(vod.vod_id)
+        playlist_index, active_playlist = self._restore_playlist_group(
+            normalized_playlists,
+            playlist_index,
+            history,
+        )
         start_index = resolve_resume_index(history, active_playlist, clicked_index)
         matched_history = history is not None and start_index == history.episode
         if matched_history and history is not None:
@@ -141,6 +156,7 @@ class PlayerController:
             "opening": opening_seconds * 1000,
             "ending": ending_seconds * 1000,
             "speed": speed,
+            "playlistIndex": session.playlist_index,
             "createTime": int(time() * 1000),
         }
         if session.playback_history_saver is not None:

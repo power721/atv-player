@@ -102,6 +102,7 @@ def test_manager_load_enabled_plugins_wires_repository_playback_history_callback
             "opening": 0,
             "ending": 0,
             "speed": 1.0,
+            "playlistIndex": 1,
             "createTime": 1713206400000,
         },
     )
@@ -114,6 +115,7 @@ def test_manager_load_enabled_plugins_wires_repository_playback_history_callback
     loaded = request.playback_history_loader()
     assert loaded is not None
     assert loaded.position == 45000
+    assert loaded.playlist_index == 1
 
     assert request.playback_history_saver is not None
     request.playback_history_saver(
@@ -127,9 +129,11 @@ def test_manager_load_enabled_plugins_wires_repository_playback_history_callback
             "opening": 0,
             "ending": 0,
             "speed": 1.0,
+            "playlistIndex": 0,
             "createTime": 1713206500000,
         }
     )
     updated = repository.get_playback_history(plugin.id, "detail-1")
     assert updated is not None
     assert updated.position == 90000
+    assert updated.playlist_index == 0
