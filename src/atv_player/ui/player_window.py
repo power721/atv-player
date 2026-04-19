@@ -751,7 +751,18 @@ class PlayerWindow(QWidget):
         current_item = self.session.playlist[self.current_index]
         resolved_vod = self._resolve_current_play_item()
         if self.session.playback_loader is not None:
-            self.session.playback_loader(current_item)
+            load_result = self.session.playback_loader(current_item)
+            if load_result is not None and load_result.replacement_playlist:
+                replacement = list(load_result.replacement_playlist)
+                self.session.playlists[self.session.playlist_index] = replacement
+                self.session.playlist = replacement
+                self.current_index = max(
+                    0,
+                    min(load_result.replacement_start_index, len(replacement) - 1),
+                )
+                self._render_playlist_group_combo()
+                self._render_playlist_items()
+                current_item = self.session.playlist[self.current_index]
         if current_item.url:
             if resolved_vod is None and current_item.vod_id and self.session.detail_resolver is not None:
                 self._start_play_item_resolution(

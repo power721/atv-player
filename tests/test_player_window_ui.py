@@ -7,7 +7,7 @@ from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QImage, Q
 from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QMenu, QTableWidget, QWidget
 from PySide6.QtWidgets import QSplitter, QToolTip
 from atv_player.controllers.player_controller import PlayerSession
-from atv_player.models import AppConfig, PlayItem, VodItem
+from atv_player.models import AppConfig, PlayItem, PlaybackLoadResult, VodItem
 from atv_player.player.mpv_widget import AudioTrack, SubtitleTrack
 
 import atv_player.ui.poster_loader as poster_loader_module
@@ -4465,6 +4465,45 @@ def test_player_window_loads_play_item_via_session_loader_and_passes_headers(qtb
     window.open_session(session)
 
     assert window.video.load_calls == [("http://emby/1.mp4", False, 0, {"User-Agent": "Yamby"})]
+
+
+def test_player_window_replaces_active_route_playlist_when_playback_loader_returns_replacement(qtbot) -> None:
+    controller = FakePlayerController()
+    replacement = [
+        PlayItem(title="S1 - 1", url="http://m/1.mp4", play_source="quark"),
+        PlayItem(title="S1 - 2", url="http://m/2.mp4", play_source="quark"),
+    ]
+
+    def load_item(item: PlayItem):
+        assert item.title == "查看"
+        return PlaybackLoadResult(replacement_playlist=replacement, replacement_start_index=0)
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="plugin-1", vod_name="网盘剧集"),
+        playlist=[PlayItem(title="查看", url="", vod_id="https://pan.quark.cn/s/demo", play_source="quark")],
+        playlists=[
+            [PlayItem(title="第1集", url="http://line/1.m3u8", play_source="播放源 1")],
+            [PlayItem(title="查看", url="", vod_id="https://pan.quark.cn/s/demo", play_source="quark")],
+        ],
+        playlist_index=1,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        playback_loader=load_item,
+    )
+
+    window = PlayerWindow(controller, config=None, save_config=lambda: None)
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+
+    assert window.session is not None
+    assert window.session.playlist_index == 1
+    assert [item.title for item in window.session.playlist] == ["S1 - 1", "S1 - 2"]
+    assert [item.title for item in window.session.playlists[1]] == ["S1 - 1", "S1 - 2"]
+    assert window.current_index == 0
+    assert window.playlist.count() == 2
+    assert window.playlist.item(0).text() == "S1 - 1"
 
 
 def test_player_window_stops_session_when_switching_items(qtbot) -> None:

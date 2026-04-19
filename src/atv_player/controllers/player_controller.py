@@ -2,7 +2,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from time import time
 
-from atv_player.models import HistoryRecord, PlayItem, VodItem
+from atv_player.models import HistoryRecord, PlayItem, PlaybackLoadResult, VodItem
 from atv_player.player.resume import resolve_resume_index
 
 
@@ -20,7 +20,7 @@ class PlayerSession:
     detail_resolver: Callable[[PlayItem], VodItem | None] | None = None
     resolved_vod_by_id: dict[str, VodItem] = field(default_factory=dict)
     use_local_history: bool = True
-    playback_loader: Callable[[PlayItem], None] | None = None
+    playback_loader: Callable[[PlayItem], PlaybackLoadResult | None] | None = None
     playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None
     playback_stopper: Callable[[PlayItem], None] | None = None
     playback_history_saver: Callable[[dict[str, object]], None] | None = None
@@ -63,7 +63,7 @@ class PlayerController:
         resolved_vod_by_id: dict[str, VodItem] | None = None,
         use_local_history: bool = True,
         restore_history: bool = False,
-        playback_loader: Callable[[PlayItem], None] | None = None,
+        playback_loader: Callable[[PlayItem], PlaybackLoadResult | None] | None = None,
         playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None,
         playback_stopper: Callable[[PlayItem], None] | None = None,
         playback_history_loader: Callable[[], HistoryRecord | None] | None = None,
