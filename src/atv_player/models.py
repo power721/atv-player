@@ -149,6 +149,7 @@ class SpiderPluginConfig:
     cached_file_path: str = ""
     last_loaded_at: int = 0
     last_error: str = ""
+    config_text: str = ""
 
 
 @dataclass(slots=True)

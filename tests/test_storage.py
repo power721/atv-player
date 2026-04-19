@@ -255,6 +255,9 @@ def test_spider_plugin_repository_round_trip_and_logs(tmp_path: Path) -> None:
         display_name="红果短剧远程",
     )
 
+    assert local_plugin.config_text == ""
+    assert remote_plugin.config_text == ""
+
     repo.update_plugin(
         local_plugin.id,
         display_name="红果短剧本地",
@@ -262,6 +265,7 @@ def test_spider_plugin_repository_round_trip_and_logs(tmp_path: Path) -> None:
         cached_file_path="",
         last_loaded_at=1713206400,
         last_error="缺少依赖: pyquery",
+        config_text="site=https://example.com\ncookie=abc",
     )
     repo.append_log(local_plugin.id, "error", "缺少依赖: pyquery", created_at=1713206401)
     repo.move_plugin(remote_plugin.id, direction=-1)
@@ -274,6 +278,7 @@ def test_spider_plugin_repository_round_trip_and_logs(tmp_path: Path) -> None:
         ("红果短剧本地", 1, False),
     ]
     assert plugins[1].last_error == "缺少依赖: pyquery"
+    assert plugins[1].config_text == "site=https://example.com\ncookie=abc"
     assert logs[0].message == "缺少依赖: pyquery"
 
     repo.delete_plugin(remote_plugin.id)
@@ -441,3 +446,49 @@ def test_spider_plugin_repository_migrates_missing_playlist_index_column(tmp_pat
 
     assert history is not None
     assert history.playlist_index == 0
+
+
+def test_spider_plugin_repository_migrates_missing_config_text_column(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE spider_plugins (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_type TEXT NOT NULL,
+                source_value TEXT NOT NULL,
+                display_name TEXT NOT NULL DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                sort_order INTEGER NOT NULL,
+                cached_file_path TEXT NOT NULL DEFAULT '',
+                last_loaded_at INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO spider_plugins (
+                source_type, source_value, display_name, enabled, sort_order,
+                cached_file_path, last_loaded_at, last_error
+            )
+            VALUES ('local', '/plugins/红果短剧.py', '红果短剧', 1, 0, '', 0, '')
+            """
+        )
+
+    repo = SpiderPluginRepository(db_path)
+    plugin = repo.get_plugin(1)
+
+    assert plugin.display_name == "红果短剧"
+    assert plugin.config_text == ""
+    repo.update_plugin(
+        plugin.id,
+        display_name=plugin.display_name,
+        enabled=plugin.enabled,
+        cached_file_path=plugin.cached_file_path,
+        last_loaded_at=plugin.last_loaded_at,
+        last_error=plugin.last_error,
+        config_text="token=updated",
+    )
+
+    assert repo.get_plugin(1).config_text == "token=updated"

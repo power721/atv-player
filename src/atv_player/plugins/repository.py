@@ -36,10 +36,14 @@ class SpiderPluginRepository:
                     sort_order INTEGER NOT NULL,
                     cached_file_path TEXT NOT NULL DEFAULT '',
                     last_loaded_at INTEGER NOT NULL DEFAULT 0,
-                    last_error TEXT NOT NULL DEFAULT ''
+                    last_error TEXT NOT NULL DEFAULT '',
+                    config_text TEXT NOT NULL DEFAULT ''
                 )
                 """
             )
+            plugin_columns = {row[1] for row in conn.execute("PRAGMA table_info(spider_plugins)").fetchall()}
+            if "config_text" not in plugin_columns:
+                conn.execute("ALTER TABLE spider_plugins ADD COLUMN config_text TEXT NOT NULL DEFAULT ''")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS spider_plugin_logs (
@@ -89,9 +93,9 @@ class SpiderPluginRepository:
                 """
                 INSERT INTO spider_plugins (
                     source_type, source_value, display_name, enabled, sort_order,
-                    cached_file_path, last_loaded_at, last_error
+                    cached_file_path, last_loaded_at, last_error, config_text
                 )
-                VALUES (?, ?, ?, 1, ?, '', 0, '')
+                VALUES (?, ?, ?, 1, ?, '', 0, '', '')
                 """,
                 (source_type, source_value, display_name, next_order),
             )
@@ -102,7 +106,7 @@ class SpiderPluginRepository:
             row = conn.execute(
                 """
                 SELECT id, source_type, source_value, display_name, enabled, sort_order,
-                       cached_file_path, last_loaded_at, last_error
+                       cached_file_path, last_loaded_at, last_error, config_text
                 FROM spider_plugins
                 WHERE id = ?
                 """,
@@ -118,7 +122,7 @@ class SpiderPluginRepository:
             rows = conn.execute(
                 """
                 SELECT id, source_type, source_value, display_name, enabled, sort_order,
-                       cached_file_path, last_loaded_at, last_error
+                       cached_file_path, last_loaded_at, last_error, config_text
                 FROM spider_plugins
                 ORDER BY sort_order ASC, id ASC
                 """
@@ -139,16 +143,25 @@ class SpiderPluginRepository:
         cached_file_path: str,
         last_loaded_at: int,
         last_error: str,
+        config_text: str,
     ) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
                 UPDATE spider_plugins
                 SET display_name = ?, enabled = ?, cached_file_path = ?,
-                    last_loaded_at = ?, last_error = ?
+                    last_loaded_at = ?, last_error = ?, config_text = ?
                 WHERE id = ?
                 """,
-                (display_name, int(enabled), cached_file_path, last_loaded_at, last_error, plugin_id),
+                (
+                    display_name,
+                    int(enabled),
+                    cached_file_path,
+                    last_loaded_at,
+                    last_error,
+                    config_text,
+                    plugin_id,
+                ),
             )
 
     def move_plugin(self, plugin_id: int, direction: int) -> None:
