@@ -4506,6 +4506,35 @@ def test_player_window_replaces_active_route_playlist_when_playback_loader_retur
     assert window.playlist.item(0).text() == "S1 - 1"
 
 
+def test_player_window_route_replacement_keeps_other_route_groups_unchanged(qtbot) -> None:
+    controller = FakePlayerController()
+    first_group = [PlayItem(title="第1集", url="http://line/1.m3u8", play_source="播放源 1")]
+    drive_group = [PlayItem(title="查看", url="", vod_id="https://pan.quark.cn/s/demo", play_source="quark")]
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="plugin-1", vod_name="网盘剧集"),
+        playlist=drive_group,
+        playlists=[first_group, drive_group],
+        playlist_index=1,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        playback_loader=lambda item: PlaybackLoadResult(
+            replacement_playlist=[PlayItem(title="S1 - 1", url="http://m/1.mp4", play_source="quark")],
+            replacement_start_index=0,
+        ),
+    )
+
+    window = PlayerWindow(controller, config=None, save_config=lambda: None)
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+
+    assert window.session is not None
+    assert [item.title for item in window.session.playlists[0]] == ["第1集"]
+    assert [item.title for item in window.session.playlists[1]] == ["S1 - 1"]
+
+
 def test_player_window_stops_session_when_switching_items(qtbot) -> None:
     controller = RecordingPlayerController()
     window = PlayerWindow(controller)

@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from atv_player.models import VodItem
+from atv_player.models import PlaybackLoadResult, VodItem
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
@@ -752,7 +752,7 @@ class PlayerWindow(QWidget):
         resolved_vod = self._resolve_current_play_item()
         if self.session.playback_loader is not None:
             load_result = self.session.playback_loader(current_item)
-            if load_result is not None and load_result.replacement_playlist:
+            if isinstance(load_result, PlaybackLoadResult) and load_result.replacement_playlist:
                 replacement = list(load_result.replacement_playlist)
                 self.session.playlists[self.session.playlist_index] = replacement
                 self.session.playlist = replacement
