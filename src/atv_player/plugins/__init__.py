@@ -101,7 +101,7 @@ class SpiderPluginManager:
     def list_logs(self, plugin_id: int):
         return self._repository.list_logs(plugin_id)
 
-    def load_enabled_plugins(self) -> list[SpiderPluginDefinition]:
+    def load_enabled_plugins(self, drive_detail_loader=None) -> list[SpiderPluginDefinition]:
         definitions: list[SpiderPluginDefinition] = []
         for plugin in self._repository.list_plugins():
             if not plugin.enabled:
@@ -126,6 +126,7 @@ class SpiderPluginManager:
                 loaded.spider,
                 plugin_name=title,
                 search_enabled=loaded.search_enabled,
+                drive_detail_loader=drive_detail_loader,
                 playback_history_loader=lambda vod_id, plugin_id=plugin.id: self._repository.get_playback_history(
                     plugin_id,
                     vod_id,

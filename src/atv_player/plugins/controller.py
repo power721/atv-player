@@ -39,12 +39,14 @@ class SpiderPluginController:
         spider,
         plugin_name: str,
         search_enabled: bool,
+        drive_detail_loader: Callable[[str], dict] | None = None,
         playback_history_loader: Callable[[str], object | None] | None = None,
         playback_history_saver: Callable[[str, dict[str, object]], None] | None = None,
     ) -> None:
         self._spider = spider
         self._plugin_name = plugin_name
         self.supports_search = search_enabled
+        self._drive_detail_loader = drive_detail_loader
         self._playback_history_loader = playback_history_loader
         self._playback_history_saver = playback_history_saver
         self._home_loaded = False

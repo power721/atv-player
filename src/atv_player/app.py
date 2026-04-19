@@ -34,7 +34,8 @@ POSTER_CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 
 
 class _NullPluginManager:
-    def load_enabled_plugins(self) -> list:
+    def load_enabled_plugins(self, drive_detail_loader=None) -> list:
+        del drive_detail_loader
         return []
 
 
@@ -178,7 +179,9 @@ class AppCoordinator(QObject):
         self._api_client = self._build_api_client()
         config = self.repo.load_config()
         capabilities = self._load_capabilities(self._api_client)
-        spider_plugins = self._plugin_manager.load_enabled_plugins()
+        spider_plugins = self._plugin_manager.load_enabled_plugins(
+            drive_detail_loader=self._api_client.get_drive_share_detail,
+        )
         live_epg_service = _NullLiveEpgService()
         if self._live_epg_repository is not None:
             live_epg_service = LiveEpgService(

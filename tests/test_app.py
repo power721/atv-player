@@ -438,7 +438,7 @@ def test_main_window_starts_on_douban_tab(qtbot) -> None:
     assert window.nav_tabs.tabText(6) == "播放记录"
 
 
-def test_app_coordinator_passes_loaded_spider_plugins_into_main_window(monkeypatch, tmp_path) -> None:
+def test_app_coordinator_passes_loaded_spider_plugins_into_main_window(qtbot, monkeypatch, tmp_path) -> None:
     repo = app_module.SettingsRepository(tmp_path / "app.db")
     repo.save_config(
         AppConfig(
@@ -452,9 +452,11 @@ def test_app_coordinator_passes_loaded_spider_plugins_into_main_window(monkeypat
     loaded_plugins = [
         {"title": "红果短剧", "controller": object(), "search_enabled": True},
     ]
+    captured_loader = {"value": None}
 
     class FakePluginManager:
-        def load_enabled_plugins(self):
+        def load_enabled_plugins(self, drive_detail_loader=None):
+            captured_loader["value"] = drive_detail_loader
             return loaded_plugins
 
     def api_factory(*args, **kwargs):
@@ -470,8 +472,10 @@ def test_app_coordinator_passes_loaded_spider_plugins_into_main_window(monkeypat
 
     coordinator = AppCoordinator(repo)
     widget = coordinator._show_main()
+    qtbot.addWidget(widget)
 
     assert widget.nav_tabs.tabText(5) == "红果短剧"
+    assert callable(captured_loader["value"])
 
 
 def test_http_text_client_follows_redirects_for_live_source_text_requests() -> None:
