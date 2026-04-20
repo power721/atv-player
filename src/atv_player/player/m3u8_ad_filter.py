@@ -11,6 +11,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 
 from atv_player.paths import app_cache_dir
+from atv_player.proxy.server import LocalHlsProxyServer
 
 _AD_MARKERS = ("/adjump/", "/video/adjump/")
 _PLAYLIST_TIMEOUT_SECONDS = 10.0
@@ -134,19 +135,26 @@ def _resolve_first_variant_url(text: str, playlist_url: str) -> str:
 class M3U8AdFilter:
     def __init__(
         self,
+        proxy_server: LocalHlsProxyServer | None = None,
         cache_dir: Path | None = None,
         get: Callable[..., object] = httpx.get,
     ) -> None:
         self._cache_dir = cache_dir or (app_cache_dir() / "playlists")
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._get = get
+        self._proxy_server = proxy_server or LocalHlsProxyServer(get=get)
 
     def should_prepare(self, url: str) -> bool:
-        return False
-        # return _is_remote_m3u8_url(url)
+        return _is_remote_m3u8_url(url)
 
     def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
-        return self._prepare(url, headers=dict(headers or {}), depth=0, visited=set())
+        if not self.should_prepare(url):
+            return url
+        self._proxy_server.start()
+        return self._proxy_server.create_playlist_url(url, headers=dict(headers or {}))
+
+    def close(self) -> None:
+        self._proxy_server.close()
 
     def _prepare(self, url: str, headers: dict[str, str], depth: int, visited: set[str]) -> str:
         if not self.should_prepare(url):
