@@ -284,7 +284,7 @@ def test_live_epg_service_refresh_keeps_cache_when_all_urls_fail(tmp_path: Path)
     )
 
 
-def test_live_epg_service_refresh_records_partial_failure_without_raising(tmp_path: Path) -> None:
+def test_live_epg_service_refresh_records_partial_failure_without_raising(tmp_path: Path, monkeypatch) -> None:
     repo = LiveEpgRepository(tmp_path / "app.db")
     repo.save_url("https://example.com/one.xml\nhttps://example.com/two.xml")
     service = LiveEpgService(
@@ -301,6 +301,7 @@ def test_live_epg_service_refresh_records_partial_failure_without_raising(tmp_pa
             }
         ),
     )
+    monkeypatch.setattr("atv_player.live_epg_service.time.time", lambda: 1_713_169_800)
 
     service.refresh()
 
@@ -308,7 +309,7 @@ def test_live_epg_service_refresh_records_partial_failure_without_raising(tmp_pa
     schedule = service.get_schedule("CCTV-1", now_text="2026-04-18T09:30:00+08:00")
 
     assert "成功节目" in config.cache_text
-    assert config.last_refreshed_at == 1
+    assert config.last_refreshed_at == 1_713_169_800
     assert config.last_error == "https://example.com/one.xml: boom-one"
     assert schedule is not None
     assert schedule.current == "09:00-10:00 成功节目"
