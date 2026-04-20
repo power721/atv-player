@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from xml.etree import ElementTree
@@ -64,9 +65,10 @@ class LiveEpgService:
             )
             raise RuntimeError(message)
         text = self._serialize_xmltv(merged_channel_names, merged_programmes)
+        refreshed_at = int(time.time())
         self._repository.save_refresh_result(
             cache_text=text,
-            last_refreshed_at=max(1, config.last_refreshed_at + 1),
+            last_refreshed_at=refreshed_at,
             last_error="\n".join(errors),
         )
 

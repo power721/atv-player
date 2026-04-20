@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -209,6 +210,7 @@ class CustomLiveService:
                 last_refreshed_at=source.last_refreshed_at,
             )
             raise
+        refreshed_at = int(time.time())
         self._repository.update_source(
             source.id,
             display_name=source.display_name,
@@ -216,7 +218,7 @@ class CustomLiveService:
             source_value=source.source_value,
             cache_text=text,
             last_error="",
-            last_refreshed_at=max(1, source.last_refreshed_at + 1),
+            last_refreshed_at=refreshed_at,
         )
 
     def _build_request_from_channel(self, view: _MergedChannelView) -> OpenPlayerRequest:
@@ -266,6 +268,7 @@ class CustomLiveService:
         if source.cache_text:
             return parse_live_playlist(source.cache_text)
         text = self._read_source_text(source)
+        refreshed_at = int(time.time())
         self._repository.update_source(
             source.id,
             display_name=source.display_name,
@@ -273,7 +276,7 @@ class CustomLiveService:
             source_value=source.source_value,
             cache_text=text,
             last_error="",
-            last_refreshed_at=max(1, source.last_refreshed_at + 1),
+            last_refreshed_at=refreshed_at,
         )
         return parse_live_playlist(text)
 

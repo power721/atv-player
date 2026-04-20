@@ -190,6 +190,27 @@ def test_live_epg_service_decompresses_gzip_xmltv_payload(tmp_path: Path) -> Non
     assert "CCTV-1" in repo.load().cache_text
 
 
+def test_live_epg_service_refresh_stores_current_unix_timestamp(tmp_path: Path, monkeypatch) -> None:
+    repo = LiveEpgRepository(tmp_path / "app.db")
+    repo.save_url("https://example.com/epg.xml")
+    service = LiveEpgService(
+        repo,
+        FakeHttpBytesClient(
+            payload=(
+                "<tv>"
+                '<channel id="c1"><display-name>CCTV-1</display-name></channel>'
+                '<programme start="20260418090000 +0800" stop="20260418100000 +0800" channel="c1"><title>朝闻天下</title></programme>'
+                "</tv>"
+            ).encode("utf-8")
+        ),
+    )
+    monkeypatch.setattr("atv_player.live_epg_service.time.time", lambda: 1_713_169_200)
+
+    service.refresh()
+
+    assert repo.load().last_refreshed_at == 1_713_169_200
+
+
 def test_live_epg_service_refresh_merges_multiple_urls_and_prefers_earlier_programmes(
     tmp_path: Path,
 ) -> None:

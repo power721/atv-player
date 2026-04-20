@@ -139,6 +139,37 @@ def test_custom_live_service_refresh_source_stores_last_error_and_keeps_cache(tm
     assert saved.last_error == "timeout"
 
 
+def test_custom_live_service_refresh_source_stores_current_unix_timestamp(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo = LiveSourceRepository(tmp_path / "app.db")
+    source = repo.add_source("remote", "https://example.com/live.m3u", "自定义远程")
+    service = CustomLiveService(repo, http_client=FakeHttpClient(text="#EXTM3U\n"))
+    monkeypatch.setattr("atv_player.custom_live_service.time.time", lambda: 1_713_168_000)
+
+    service.refresh_source(source.id)
+
+    assert repo.get_source(source.id).last_refreshed_at == 1_713_168_000
+
+
+def test_custom_live_service_load_items_stores_current_unix_timestamp_when_fetching_uncached_source(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo = LiveSourceRepository(tmp_path / "app.db")
+    source = repo.add_source("remote", "https://example.com/live.m3u", "自定义远程")
+    service = CustomLiveService(
+        repo,
+        http_client=FakeHttpClient(text="#EXTM3U\n#EXTINF:-1,CCTV-1\nhttps://live.example/cctv1.m3u8\n"),
+    )
+    monkeypatch.setattr("atv_player.custom_live_service.time.time", lambda: 1_713_168_600)
+
+    service.load_items(f"custom:{source.id}", 1)
+
+    assert repo.get_source(source.id).last_refreshed_at == 1_713_168_600
+
+
 def test_custom_live_service_build_request_copies_channel_headers(tmp_path: Path) -> None:
     repo = LiveSourceRepository(tmp_path / "app.db")
     source = repo.add_source("remote", "https://example.com/live.m3u", "自定义远程")
