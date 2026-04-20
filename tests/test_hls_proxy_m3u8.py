@@ -67,3 +67,25 @@ def test_proxy_session_registry_expires_stale_sessions() -> None:
     registry.expire_stale(now=registry.get(token).created_at + 6.0)
 
     assert registry.contains(token) is False
+
+
+def test_rewrite_playlist_keeps_non_ad_discontinuity_blocks_stable() -> None:
+    registry = ProxySessionRegistry()
+    token = registry.create_session("https://media.example/path/index.m3u8", {})
+    content = """#EXTM3U
+#EXTINF:5.0,
+main-0001.ts
+#EXT-X-DISCONTINUITY
+#EXTINF:5.0,
+main-0002.ts
+"""
+
+    rewritten = rewrite_playlist(
+        token=token,
+        playlist_url="https://media.example/path/index.m3u8",
+        content=content,
+        session_registry=registry,
+        proxy_base_url="http://127.0.0.1:2323",
+    )
+
+    assert rewritten.text.count("#EXT-X-DISCONTINUITY") == 1

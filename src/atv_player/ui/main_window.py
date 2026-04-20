@@ -555,12 +555,21 @@ class MainWindow(QMainWindow):
 
     def _apply_open_player(self, request, session, restore_paused_state: bool = False) -> None:
         if self.player_window is None:
-            self.player_window = PlayerWindow(
-                self.player_controller,
-                self.config,
-                self._save_config,
-                m3u8_ad_filter=self._m3u8_ad_filter,
-            )
+            try:
+                self.player_window = PlayerWindow(
+                    self.player_controller,
+                    self.config,
+                    self._save_config,
+                    m3u8_ad_filter=self._m3u8_ad_filter,
+                )
+            except TypeError as exc:
+                if "m3u8_ad_filter" not in str(exc):
+                    raise
+                self.player_window = PlayerWindow(
+                    self.player_controller,
+                    self.config,
+                    self._save_config,
+                )
             if hasattr(self.player_window, "closed_to_main"):
                 self.player_window.closed_to_main.connect(self._show_main_again)
         self._close_help_dialog()
