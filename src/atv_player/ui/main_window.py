@@ -121,9 +121,11 @@ class MainWindow(QMainWindow):
             drive_detail_loader=None,
             show_emby_tab: bool = True,
             show_jellyfin_tab: bool = True,
+            m3u8_ad_filter=None,
     ) -> None:
         super().__init__()
         self._save_config = save_config or (lambda: None)
+        self._m3u8_ad_filter = m3u8_ad_filter
         self._plugin_definitions = list(spider_plugins or [])
         self._plugin_manager = plugin_manager
         self._drive_detail_loader = drive_detail_loader
@@ -553,7 +555,12 @@ class MainWindow(QMainWindow):
 
     def _apply_open_player(self, request, session, restore_paused_state: bool = False) -> None:
         if self.player_window is None:
-            self.player_window = PlayerWindow(self.player_controller, self.config, self._save_config)
+            self.player_window = PlayerWindow(
+                self.player_controller,
+                self.config,
+                self._save_config,
+                m3u8_ad_filter=self._m3u8_ad_filter,
+            )
             if hasattr(self.player_window, "closed_to_main"):
                 self.player_window.closed_to_main.connect(self._show_main_again)
         self._close_help_dialog()

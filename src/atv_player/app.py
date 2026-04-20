@@ -27,6 +27,7 @@ from atv_player.paths import app_cache_dir, app_data_dir
 from atv_player.live_source_repository import LiveSourceRepository
 from atv_player.plugins import SpiderPluginLoader, SpiderPluginManager
 from atv_player.plugins.repository import SpiderPluginRepository
+from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.storage import SettingsRepository
 from atv_player.ui.login_window import LoginWindow
 from atv_player.ui.main_window import MainWindow
@@ -112,6 +113,7 @@ class AppCoordinator(QObject):
         self.login_window: LoginWindow | None = None
         self.main_window: MainWindow | None = None
         self._api_client: ApiClient | None = None
+        self._m3u8_ad_filter = M3U8AdFilter()
         if hasattr(repo, "database_path"):
             self._live_source_repository = LiveSourceRepository(repo.database_path)
             self._live_epg_repository = LiveEpgRepository(repo.database_path)
@@ -239,6 +241,7 @@ class AppCoordinator(QObject):
             drive_detail_loader=drive_detail_loader,
             show_emby_tab=bool(capabilities.get("emby")),
             show_jellyfin_tab=bool(capabilities.get("jellyfin")),
+            m3u8_ad_filter=self._m3u8_ad_filter,
         )
         self.main_window.logout_requested.connect(self._handle_logout_requested)
         if self.login_window is not None:
@@ -311,3 +314,8 @@ class AppCoordinator(QObject):
         self.repo.clear_token()
         widget = self._show_login()
         widget.show()
+
+    def close(self) -> None:
+        close_filter = getattr(self._m3u8_ad_filter, "close", None)
+        if callable(close_filter):
+            close_filter()

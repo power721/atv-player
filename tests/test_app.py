@@ -1921,6 +1921,66 @@ def test_app_coordinator_falls_back_to_main_when_player_restore_fails(monkeypatc
     assert repo.config.last_active_window == "main"
 
 
+def test_app_coordinator_passes_shared_m3u8_filter_into_main_window(monkeypatch) -> None:
+    class FakeRepo:
+        def __init__(self) -> None:
+            self.config = AppConfig(
+                base_url="http://127.0.0.1:4567",
+                username="alice",
+                token="auth-123",
+                vod_token="vod-123",
+            )
+
+        def load_config(self) -> AppConfig:
+            return self.config
+
+        def save_config(self, config: AppConfig) -> None:
+            self.config = config
+
+        def clear_token(self) -> None:
+            self.config.token = ""
+            self.config.vod_token = ""
+
+    captured_filters: list[object] = []
+
+    class DummyMainWindow:
+        logout_requested = type("SignalStub", (), {"connect": lambda self, cb: None})()
+
+        def __init__(self, **kwargs) -> None:
+            captured_filters.append(kwargs["m3u8_ad_filter"])
+
+    repo = FakeRepo()
+    coordinator = AppCoordinator(repo)
+
+    monkeypatch.setattr(app_module, "MainWindow", DummyMainWindow)
+    monkeypatch.setattr(coordinator, "_build_api_client", lambda: object())
+    monkeypatch.setattr(coordinator, "_load_capabilities", lambda client: {"emby": False, "jellyfin": False})
+
+    coordinator._show_main()
+
+    assert captured_filters[0] is coordinator._m3u8_ad_filter
+
+
+def test_app_coordinator_closes_m3u8_filter_when_shutting_down() -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig()
+
+    coordinator = AppCoordinator(FakeRepo())
+
+    class DummyFilter:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    coordinator._m3u8_ad_filter = DummyFilter()
+    coordinator.close()
+
+    assert coordinator._m3u8_ad_filter.closed is True
+
+
 def test_app_coordinator_show_main_starts_async_player_restore_when_supported(monkeypatch) -> None:
     class FakeRepo:
         def __init__(self) -> None:
