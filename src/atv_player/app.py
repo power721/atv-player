@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+import logging
 from pathlib import Path
 
 from PySide6.QtCore import QObject
@@ -31,6 +32,7 @@ from atv_player.ui.login_window import LoginWindow
 from atv_player.ui.main_window import MainWindow
 
 POSTER_CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+logger = logging.getLogger(__name__)
 
 
 class _NullPluginManager:
@@ -99,6 +101,7 @@ def build_application() -> tuple[QApplication, SettingsRepository]:
     data_dir = app_data_dir()
     repo = SettingsRepository(data_dir / "app.db")
     purge_stale_poster_cache()
+    logger.info("Application initialized data_dir=%s", data_dir)
     return app, repo
 
 
@@ -125,6 +128,7 @@ class AppCoordinator(QObject):
 
     def start(self) -> QWidget:
         config = self.repo.load_config()
+        logger.info("App start view=%s", decide_start_view(config))
         if decide_start_view(config) == "main":
             self._api_client = ApiClient(
                 config.base_url,
@@ -134,9 +138,11 @@ class AppCoordinator(QObject):
             try:
                 self._ensure_vod_token(self._api_client)
             except UnauthorizedError:
+                logger.warning("Stored login expired, redirect to login")
                 self.repo.clear_token()
                 return self._show_login()
             except ApiError as exc:
+                logger.warning("App startup failed, redirect to login error=%s", exc)
                 return self._show_login(error_message=str(exc))
             return self._show_main()
         return self._show_login()
@@ -159,9 +165,11 @@ class AppCoordinator(QObject):
         vod_token = api_client.fetch_vod_token()
         config.vod_token = vod_token
         self.repo.save_config(config)
+        logger.info("Fetched and stored vod token")
         return vod_token
 
     def _show_login(self, error_message: str = "") -> LoginWindow:
+        logger.info("Show login window has_error=%s", bool(error_message))
         login_controller = LoginController(
             self.repo,
             lambda base_url: ApiClient(base_url),
@@ -208,6 +216,12 @@ class AppCoordinator(QObject):
         history_controller = HistoryController(self._api_client)
         player_controller = PlayerController(self._api_client)
         self._start_live_background_refresh(live_source_manager, live_epg_service)
+        logger.info(
+            "Show main window emby=%s jellyfin=%s spider_plugins=%s",
+            bool(capabilities.get("emby")),
+            bool(capabilities.get("jellyfin")),
+            len(spider_plugins),
+        )
         self.main_window = MainWindow(
             browse_controller=browse_controller,
             history_controller=history_controller,
@@ -250,7 +264,9 @@ class AppCoordinator(QObject):
             try:
                 if live_epg_service.load_config().epg_url.strip():
                     live_epg_service.refresh()
+                    logger.info("Background refresh finished target=epg")
             except Exception:
+                logger.exception("Background refresh failed target=epg")
                 return
 
         def refresh_sources() -> None:
@@ -259,7 +275,9 @@ class AppCoordinator(QObject):
                     continue
                 try:
                     live_source_manager.refresh_source(source.id)
+                    logger.info("Background refresh finished target=live-source source_id=%s", source.id)
                 except Exception:
+                    logger.exception("Background refresh failed target=live-source source_id=%s", source.id)
                     continue
 
         threading.Thread(target=refresh_epg, daemon=True).start()
@@ -273,8 +291,10 @@ class AppCoordinator(QObject):
         try:
             response = get_capabilities()
         except (ApiError, UnauthorizedError):
+            logger.warning("Load capabilities failed, fallback to defaults")
             return default_capabilities
         if not isinstance(response, dict):
+            logger.warning("Load capabilities returned invalid payload, fallback to defaults")
             return default_capabilities
         capabilities = dict(default_capabilities)
         capabilities["emby"] = bool(response.get("emby", capabilities["emby"]))
@@ -282,10 +302,12 @@ class AppCoordinator(QObject):
         return capabilities
 
     def _handle_login_succeeded(self) -> None:
+        logger.info("Login succeeded")
         widget = self._show_main()
         widget.show()
 
     def _handle_logout_requested(self) -> None:
+        logger.info("Logout requested")
         self.repo.clear_token()
         widget = self._show_login()
         widget.show()

@@ -1,9 +1,13 @@
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from time import time
 
 from atv_player.models import HistoryRecord, PlayItem, PlaybackLoadResult, VodItem
 from atv_player.player.resume import resolve_resume_index
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -90,6 +94,13 @@ class PlayerController:
         else:
             position_seconds = 0
             speed = 1.0
+        logger.info(
+            "Create player session vod_id=%s playlist_size=%s start_index=%s restored=%s",
+            vod.vod_id,
+            len(active_playlist),
+            start_index,
+            matched_history,
+        )
         return PlayerSession(
             vod=vod,
             playlist=active_playlist,
@@ -144,6 +155,13 @@ class PlayerController:
         position_ms = position_seconds * 1000
         if session.playback_progress_reporter is not None:
             session.playback_progress_reporter(current_item, position_ms, paused)
+        logger.debug(
+            "Report playback progress vod_id=%s index=%s position_ms=%s paused=%s",
+            session.vod.vod_id,
+            current_index,
+            position_ms,
+            paused,
+        )
         payload = {
             "cid": 0,
             "key": session.vod.vod_id,
@@ -170,4 +188,5 @@ class PlayerController:
             return
         if not (0 <= current_index < len(session.playlist)):
             return
+        logger.info("Stop playback vod_id=%s index=%s", session.vod.vod_id, current_index)
         session.playback_stopper(session.playlist[current_index])

@@ -1,3 +1,8 @@
+import logging
+
+import pytest
+
+from atv_player.api import ApiError
 from atv_player.plugins.controller import SpiderPluginController
 
 
@@ -78,6 +83,11 @@ class DriveLinkSpider(FakeSpider):
     def playerContent(self, flag, id, vipFlags):
         self.player_calls.append((flag, id))
         return super().playerContent(flag, id, vipFlags)
+
+
+class FailingSearchSpider(FakeSpider):
+    def searchContent(self, key, quick, pg="1"):
+        raise RuntimeError("search boom")
 
 
 def test_controller_load_categories_prepends_home_when_home_list_exists() -> None:
@@ -312,3 +322,18 @@ def test_controller_build_request_attaches_local_playback_history_callbacks() ->
 
     assert load_calls == ["/detail/1"]
     assert save_calls == [("/detail/1", {"position": 45000})]
+
+
+def test_controller_logs_search_failure(caplog) -> None:
+    controller = SpiderPluginController(
+        FailingSearchSpider(),
+        plugin_name="失败插件",
+        search_enabled=True,
+    )
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(ApiError, match="search boom"):
+            controller.search_items("庆余年", 1)
+
+    assert "Spider plugin search failed" in caplog.text
+    assert "失败插件" in caplog.text

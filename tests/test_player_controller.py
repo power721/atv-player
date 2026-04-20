@@ -1,3 +1,5 @@
+import logging
+
 from atv_player.controllers.player_controller import PlayerController
 from atv_player.models import HistoryRecord, PlayItem, VodItem
 
@@ -240,6 +242,39 @@ def test_player_controller_prefers_plugin_local_history_loader() -> None:
     assert session.speed == 1.25
     assert session.opening_seconds == 5
     assert session.ending_seconds == 10
+
+
+def test_player_controller_logs_session_creation(caplog) -> None:
+    controller = PlayerController(FakeApiClient())
+    vod = VodItem(vod_id="movie-1", vod_name="Movie", vod_pic="pic")
+    playlist = [PlayItem(title="Episode 1", url="1.m3u8")]
+
+    with caplog.at_level(logging.INFO):
+        controller.create_session(vod, playlist, clicked_index=0)
+
+    assert "Create player session" in caplog.text
+    assert "movie-1" in caplog.text
+
+
+def test_player_controller_logs_progress_reporting(caplog) -> None:
+    controller = PlayerController(FakeApiClient())
+    vod = VodItem(vod_id="movie-1", vod_name="Movie", vod_pic="pic")
+    playlist = [PlayItem(title="Episode 1", url="1.m3u8")]
+    session = controller.create_session(vod, playlist, clicked_index=0)
+
+    with caplog.at_level(logging.INFO):
+        controller.report_progress(
+            session,
+            current_index=0,
+            position_seconds=12,
+            speed=1.0,
+            opening_seconds=0,
+            ending_seconds=0,
+            paused=False,
+        )
+
+    assert "Report playback progress" in caplog.text
+    assert "movie-1" in caplog.text
 
 
 def test_player_controller_restores_selected_playlist_group_from_history_loader() -> None:

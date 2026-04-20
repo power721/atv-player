@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable
 from collections.abc import Mapping
 from urllib.parse import urlparse
@@ -10,6 +11,9 @@ from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_category, _map_item
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
 from atv_player.models import DoubanCategory, OpenPlayerRequest, PlayItem, PlaybackLoadResult, VodItem
+
+
+logger = logging.getLogger(__name__)
 
 
 def _looks_like_media_url(value: str) -> bool:
@@ -94,6 +98,7 @@ class SpiderPluginController:
         try:
             payload = self._spider.homeContent(False) or {}
         except Exception as exc:
+            logger.exception("Spider plugin home load failed plugin=%s", self._plugin_name)
             raise ApiError(str(exc)) from exc
         categories = [_map_category(item) for item in payload.get("class", [])]
         items = self._map_items(payload)
@@ -114,6 +119,12 @@ class SpiderPluginController:
         try:
             payload = self._spider.categoryContent(category_id, str(page), False, {}) or {}
         except Exception as exc:
+            logger.exception(
+                "Spider plugin category load failed plugin=%s category_id=%s page=%s",
+                self._plugin_name,
+                category_id,
+                page,
+            )
             raise ApiError(str(exc)) from exc
         items = self._map_items(payload)
         total = int(payload.get("total") or 0)
@@ -127,6 +138,12 @@ class SpiderPluginController:
         try:
             payload = self._spider.searchContent(keyword, False, str(page)) or {}
         except Exception as exc:
+            logger.exception(
+                "Spider plugin search failed plugin=%s keyword=%s page=%s",
+                self._plugin_name,
+                keyword,
+                page,
+            )
             raise ApiError(str(exc)) from exc
         items = self._map_items(payload)
         total = int(payload.get("total") or len(items))
@@ -210,10 +227,21 @@ class SpiderPluginController:
                 payload = self._drive_detail_loader(item.vod_id)
                 detail = _map_vod_item(payload["list"][0])
             except (KeyError, IndexError) as exc:
+                logger.exception(
+                    "Spider plugin drive detail failed plugin=%s source=%s",
+                    self._plugin_name,
+                    item.vod_id,
+                )
                 raise ValueError(f"没有可播放的项目: {item.title or item.vod_id}") from exc
             replacement = self._build_drive_replacement_playlist(detail, item.play_source)
             if not replacement:
                 raise ValueError(f"没有可播放的项目: {detail.vod_name or item.title}")
+            logger.info(
+                "Spider plugin resolved drive playlist plugin=%s source=%s items=%s",
+                self._plugin_name,
+                item.vod_id,
+                len(replacement),
+            )
             return PlaybackLoadResult(
                 replacement_playlist=replacement,
                 replacement_start_index=0,
@@ -221,18 +249,30 @@ class SpiderPluginController:
         try:
             payload = self._spider.playerContent(item.play_source, item.vod_id, []) or {}
         except Exception as exc:
+            logger.exception(
+                "Spider plugin playback resolve failed plugin=%s source=%s",
+                self._plugin_name,
+                item.vod_id,
+            )
             raise ValueError(str(exc)) from exc
         url = str(payload.get("url") or "").strip()
         if not _looks_like_media_url(url):
             raise ValueError("插件未返回可播放地址")
         item.url = url
         item.headers = _normalize_headers(payload.get("header"))
+        logger.info(
+            "Spider plugin resolved playback url plugin=%s source=%s play_source=%s",
+            self._plugin_name,
+            item.vod_id,
+            item.play_source,
+        )
         return None
 
     def build_request(self, vod_id: str) -> OpenPlayerRequest:
         try:
             payload = self._spider.detailContent([vod_id]) or {}
         except Exception as exc:
+            logger.exception("Spider plugin detail load failed plugin=%s vod_id=%s", self._plugin_name, vod_id)
             raise ValueError(str(exc)) from exc
         try:
             detail = _map_vod_item(payload["list"][0])
@@ -241,6 +281,12 @@ class SpiderPluginController:
         playlists = self._build_playlist(detail)
         if not playlists:
             raise ValueError(f"没有可播放的项目: {detail.vod_name}")
+        logger.info(
+            "Spider plugin build request plugin=%s vod_id=%s routes=%s",
+            self._plugin_name,
+            detail.vod_id,
+            len(playlists),
+        )
         playlist = playlists[0]
         history_loader = None
         history_saver = None

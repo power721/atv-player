@@ -179,7 +179,7 @@ def test_mpv_widget_sets_http_header_fields_as_property_before_loading(qtbot) ->
     )
 
     assert widget._player.calls == [
-        ("http://m/1.m3u8", "replace", {})
+        ("http://m/1.m3u8", "replace", {"demuxer_lavf_o_add": "allowed_extensions=ALL"})
     ]
     assert widget._player.options == {
         "http-header-fields": [
@@ -187,6 +187,32 @@ def test_mpv_widget_sets_http_header_fields_as_property_before_loading(qtbot) ->
             "Referer: https://site.example",
         ]
     }
+
+
+def test_mpv_widget_loads_m3u8_with_allowed_extensions_override(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.pause = False
+            self.calls: list[tuple[str, str, object, dict[str, object]]] = []
+
+        def loadfile(self, url: str, mode: str = "replace", index=None, **options) -> None:
+            self.calls.append((url, mode, index, options))
+
+    widget._player = FakePlayer()
+
+    widget.load("https://media.example/path/index.m3u8")
+
+    assert widget._player.calls == [
+        (
+            "https://media.example/path/index.m3u8",
+            "replace",
+            None,
+            {"demuxer_lavf_o_add": "allowed_extensions=ALL"},
+        )
+    ]
 
 
 def test_mpv_widget_clears_previous_http_header_fields_when_loading_without_headers(qtbot) -> None:
@@ -214,8 +240,8 @@ def test_mpv_widget_clears_previous_http_header_fields_when_loading_without_head
     widget.load("http://m/1.m3u8", headers={"Referer": "https://site.example"})
     widget.load("http://m/2.m3u8")
 
-    assert widget._player.loadfile_calls == ["http://m/1.m3u8"]
-    assert widget._player.play_calls == ["http://m/2.m3u8"]
+    assert widget._player.loadfile_calls == ["http://m/1.m3u8", "http://m/2.m3u8"]
+    assert widget._player.play_calls == []
     assert widget._player.options == {
         "http-header-fields": []
     }

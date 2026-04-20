@@ -136,6 +136,12 @@ class MpvWidget(QWidget):
             return
         player["http-header-fields"] = header_fields
 
+    def _loadfile_options(self, url: str) -> dict[str, str]:
+        if ".m3u8" not in url.lower():
+            return {}
+        # Some HLS sources disguise transport stream segments with image suffixes.
+        return {"demuxer_lavf_o_add": "allowed_extensions=ALL"}
+
     def _player_property(self, name: str, default: object | None = None) -> object | None:
         if self._player is None:
             return default
@@ -206,12 +212,14 @@ class MpvWidget(QWidget):
         if player is None:
             return
         header_fields = self._build_http_header_fields(headers)
+        loadfile_options = self._loadfile_options(url)
+        can_loadfile = hasattr(player, "loadfile")
         try:
             self._apply_http_header_fields(player, header_fields)
-            if start_seconds > 0:
-                player.loadfile(url, start=str(start_seconds))
-            elif header_fields:
-                player.loadfile(url)
+            if start_seconds > 0 and can_loadfile:
+                player.loadfile(url, start=str(start_seconds), **loadfile_options)
+            elif (header_fields or loadfile_options) and can_loadfile:
+                player.loadfile(url, **loadfile_options)
             else:
                 player.play(url)
         except Exception:
@@ -220,10 +228,11 @@ class MpvWidget(QWidget):
                 self._player = player
                 self._register_player_events()
                 self._apply_http_header_fields(player, header_fields)
-                if start_seconds > 0:
-                    player.loadfile(url, start=str(start_seconds))
-                elif header_fields:
-                    player.loadfile(url)
+                can_loadfile = hasattr(player, "loadfile")
+                if start_seconds > 0 and can_loadfile:
+                    player.loadfile(url, start=str(start_seconds), **loadfile_options)
+                elif (header_fields or loadfile_options) and can_loadfile:
+                    player.loadfile(url, **loadfile_options)
                 else:
                     player.play(url)
             else:

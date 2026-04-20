@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 import httpx
@@ -233,3 +234,24 @@ class Spider(Spider):
 
     assert loaded.plugin_name == "site=https://example.com\ncookie=abc"
     assert loaded.config.config_text == "site=https://example.com\ncookie=abc"
+
+
+def test_loader_logs_loaded_plugin(tmp_path: Path, caplog) -> None:
+    plugin_path = tmp_path / "红果短剧.py"
+    plugin_path.write_text(PLUGIN_SOURCE, encoding="utf-8")
+    loader = SpiderPluginLoader(cache_dir=tmp_path / "cache")
+    config = SpiderPluginConfig(
+        id=31,
+        source_type="local",
+        source_value=str(plugin_path),
+        display_name="",
+        enabled=True,
+        sort_order=0,
+    )
+
+    with caplog.at_level(logging.INFO):
+        loaded = loader.load(config)
+
+    assert loaded.plugin_name == "红果短剧"
+    assert "Loaded spider plugin" in caplog.text
+    assert "红果短剧" in caplog.text

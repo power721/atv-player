@@ -1,3 +1,5 @@
+import logging
+
 import httpx
 import pytest
 
@@ -258,6 +260,38 @@ def test_api_client_maps_transport_http_error_to_network_request_failed() -> Non
         client.telegram_search("movie")
 
     assert str(exc.value) == "网络请求失败"
+
+
+def test_api_client_logs_request_start_without_sensitive_payload(caplog) -> None:
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"token": "vod-1"}))
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="secret-token",
+        transport=transport,
+    )
+
+    with caplog.at_level(logging.INFO):
+        client.login("alice", "super-secret")
+
+    assert "API request" in caplog.text
+    assert "/api/accounts/login" in caplog.text
+    assert "secret-token" not in caplog.text
+    assert "super-secret" not in caplog.text
+
+
+def test_api_client_logs_request_failure(caplog) -> None:
+    transport = httpx.MockTransport(lambda request: httpx.Response(500, text="boom"))
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        transport=transport,
+    )
+
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(ApiError):
+            client.get_capabilities()
+
+    assert "API request failed" in caplog.text
+    assert "/api/capabilities" in caplog.text
 
 
 def test_api_client_lists_telegram_search_categories() -> None:

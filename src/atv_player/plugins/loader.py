@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 import sys
 import types
 from dataclasses import dataclass
@@ -11,6 +12,9 @@ import httpx
 from atv_player.models import SpiderPluginConfig
 import atv_player.plugins.compat.base.spider as compat_spider_module
 from atv_player.plugins.compat.base.spider import Spider as CompatSpider
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -62,6 +66,13 @@ class SpiderPluginLoader:
             last_error=config.last_error,
             config_text=config.config_text,
         )
+        logger.info(
+            "Loaded spider plugin id=%s name=%s source_type=%s search_enabled=%s",
+            config.id,
+            plugin_name or config.display_name or source_path.stem,
+            config.source_type,
+            search_enabled,
+        )
         return LoadedSpiderPlugin(
             config=updated_config,
             spider=spider,
@@ -83,8 +94,15 @@ class SpiderPluginLoader:
         if not force_refresh and config.cached_file_path:
             cached = Path(config.cached_file_path)
             if cached.is_file() and cached.stat().st_size > 0:
+                logger.info("Use cached spider plugin id=%s path=%s", config.id, cached)
                 return cached
         try:
+            logger.info(
+                "Download spider plugin id=%s source=%s force_refresh=%s",
+                config.id,
+                config.source_value,
+                force_refresh,
+            )
             response = self._get(config.source_value, timeout=15.0, follow_redirects=True)
             if response.status_code >= 300:
                 raise httpx.HTTPStatusError(
@@ -96,5 +114,6 @@ class SpiderPluginLoader:
             return cache_path
         except Exception:
             if cache_path.is_file() and cache_path.stat().st_size > 0:
+                logger.warning("Spider plugin refresh failed, fallback to cache id=%s path=%s", config.id, cache_path)
                 return cache_path
             raise

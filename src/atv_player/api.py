@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
@@ -13,6 +14,9 @@ class ApiError(RuntimeError):
 
 class UnauthorizedError(ApiError):
     pass
+
+
+logger = logging.getLogger(__name__)
 
 
 class ApiClient:
@@ -51,20 +55,47 @@ class ApiClient:
             return False
         return params.get("ac") == "gui" and "t" in params
 
+    def _summarize_params(self, params: Any) -> dict[str, Any] | None:
+        if not isinstance(params, dict):
+            return None
+        summary: dict[str, Any] = {}
+        for key, value in params.items():
+            if key.lower() in {"token", "authorization", "password"}:
+                continue
+            if key in {"wd", "t", "id", "ids", "pg", "size", "ac", "web", "sort", "page"}:
+                summary[str(key)] = value
+        return summary or None
+
     def _request(self, method: str, url: str, **kwargs: Any) -> Any:
+        logger.info(
+            "API request method=%s url=%s params=%s",
+            method,
+            url,
+            self._summarize_params(kwargs.get("params")),
+        )
         try:
             response = self._client.request(method, url, **kwargs)
         except httpx.ReadTimeout as exc:
+            logger.warning("API request timeout method=%s url=%s", method, url, exc_info=exc)
             if self._is_file_list_request(url, kwargs.get("params")):
                 raise ApiError("加载文件列表超时") from exc
             raise ApiError("请求超时") from exc
         except httpx.TimeoutException as exc:
+            logger.warning("API request timeout method=%s url=%s", method, url, exc_info=exc)
             raise ApiError("请求超时") from exc
         except httpx.HTTPError as exc:
+            logger.warning("API request transport error method=%s url=%s", method, url, exc_info=exc)
             raise ApiError("网络请求失败") from exc
         if response.status_code == 401:
+            logger.warning("API request unauthorized method=%s url=%s", method, url)
             raise UnauthorizedError("Unauthorized")
         if response.is_error:
+            logger.warning(
+                "API request failed method=%s url=%s status=%s",
+                method,
+                url,
+                response.status_code,
+            )
             try:
                 payload = response.json()
             except ValueError:
@@ -259,25 +290,33 @@ class ApiClient:
         return self._request("GET", "/api/capabilities")
 
     def get_text(self, url: str) -> str:
+        logger.info("API text request url=%s", url)
         try:
             response = self._client.get(url, follow_redirects=True)
             response.raise_for_status()
         except httpx.ReadTimeout as exc:
+            logger.warning("API text request timeout url=%s", url, exc_info=exc)
             raise ApiError("请求超时") from exc
         except httpx.TimeoutException as exc:
+            logger.warning("API text request timeout url=%s", url, exc_info=exc)
             raise ApiError("请求超时") from exc
         except httpx.HTTPError as exc:
+            logger.warning("API text request failed url=%s", url, exc_info=exc)
             raise ApiError("网络请求失败") from exc
         return response.text
 
     def get_bytes(self, url: str) -> bytes:
+        logger.info("API bytes request url=%s", url)
         try:
             response = self._client.get(url, follow_redirects=True)
             response.raise_for_status()
         except httpx.ReadTimeout as exc:
+            logger.warning("API bytes request timeout url=%s", url, exc_info=exc)
             raise ApiError("请求超时") from exc
         except httpx.TimeoutException as exc:
+            logger.warning("API bytes request timeout url=%s", url, exc_info=exc)
             raise ApiError("请求超时") from exc
         except httpx.HTTPError as exc:
+            logger.warning("API bytes request failed url=%s", url, exc_info=exc)
             raise ApiError("网络请求失败") from exc
         return response.content
