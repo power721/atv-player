@@ -19,6 +19,7 @@ class FakeLoader:
                 cached_file_path=config.cached_file_path or "/tmp/plugin.py",
                 last_loaded_at=config.last_loaded_at,
                 last_error=config.last_error,
+                config_text=config.config_text,
             ),
             spider=object(),
             plugin_name="",
@@ -137,3 +138,18 @@ def test_manager_load_enabled_plugins_wires_repository_playback_history_callback
     assert updated is not None
     assert updated.position == 90000
     assert updated.playlist_index == 0
+
+
+def test_manager_set_plugin_config_persists_raw_text_and_survives_other_updates(tmp_path: Path) -> None:
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    plugin = repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧")
+    manager = SpiderPluginManager(repository, FakeLoader())
+
+    manager.set_plugin_config(plugin.id, "token=abc\ncookie = 1\n")
+    manager.rename_plugin(plugin.id, "红果短剧新版")
+    manager.refresh_plugin(plugin.id)
+
+    saved = repository.get_plugin(plugin.id)
+
+    assert saved.display_name == "红果短剧新版"
+    assert saved.config_text == "token=abc\ncookie = 1\n"

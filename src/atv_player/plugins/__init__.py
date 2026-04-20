@@ -55,6 +55,7 @@ class SpiderPluginManager:
             cached_file_path=plugin.cached_file_path,
             last_loaded_at=plugin.last_loaded_at,
             last_error=plugin.last_error,
+            config_text=plugin.config_text,
         )
 
     def set_plugin_enabled(self, plugin_id: int, enabled: bool) -> None:
@@ -66,6 +67,19 @@ class SpiderPluginManager:
             cached_file_path=plugin.cached_file_path,
             last_loaded_at=plugin.last_loaded_at,
             last_error=plugin.last_error,
+            config_text=plugin.config_text,
+        )
+
+    def set_plugin_config(self, plugin_id: int, config_text: str) -> None:
+        plugin = self._repository.get_plugin(plugin_id)
+        self._repository.update_plugin(
+            plugin_id,
+            display_name=plugin.display_name,
+            enabled=plugin.enabled,
+            cached_file_path=plugin.cached_file_path,
+            last_loaded_at=plugin.last_loaded_at,
+            last_error=plugin.last_error,
+            config_text=config_text,
         )
 
     def move_plugin(self, plugin_id: int, direction: int) -> None:
@@ -83,6 +97,7 @@ class SpiderPluginManager:
                 cached_file_path=plugin.cached_file_path,
                 last_loaded_at=plugin.last_loaded_at,
                 last_error=str(exc),
+                config_text=plugin.config_text,
             )
             self._repository.append_log(plugin.id, "error", str(exc))
             return
@@ -93,6 +108,7 @@ class SpiderPluginManager:
             cached_file_path=loaded.config.cached_file_path,
             last_loaded_at=int(time.time()),
             last_error="",
+            config_text=plugin.config_text,
         )
 
     def delete_plugin(self, plugin_id: int) -> None:
@@ -116,6 +132,7 @@ class SpiderPluginManager:
                     cached_file_path=plugin.cached_file_path,
                     last_loaded_at=plugin.last_loaded_at,
                     last_error=str(exc),
+                    config_text=plugin.config_text,
                 )
                 self._repository.append_log(plugin.id, "error", str(exc))
                 continue
