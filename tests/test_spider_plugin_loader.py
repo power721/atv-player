@@ -201,3 +201,35 @@ def test_loader_does_not_fallback_to_empty_cached_remote_file_when_refresh_fails
 
     with pytest.raises(httpx.ConnectError, match="network down"):
         loader.load(config, force_refresh=True)
+
+
+def test_loader_passes_saved_config_text_into_spider_init(tmp_path: Path) -> None:
+    plugin_path = tmp_path / "config_plugin.py"
+    plugin_path.write_text(
+        """
+from base.spider import Spider
+
+class Spider(Spider):
+    def init(self, extend=""):
+        self.extend = extend
+
+    def getName(self):
+        return self.extend
+""",
+        encoding="utf-8",
+    )
+    loader = SpiderPluginLoader(cache_dir=tmp_path / "cache")
+    config = SpiderPluginConfig(
+        id=21,
+        source_type="local",
+        source_value=str(plugin_path),
+        display_name="",
+        enabled=True,
+        sort_order=0,
+        config_text="site=https://example.com\ncookie=abc",
+    )
+
+    loaded = loader.load(config)
+
+    assert loaded.plugin_name == "site=https://example.com\ncookie=abc"
+    assert loaded.config.config_text == "site=https://example.com\ncookie=abc"

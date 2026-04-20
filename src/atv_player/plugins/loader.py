@@ -47,7 +47,7 @@ class SpiderPluginLoader:
             raise ValueError("缺少 Spider 类")
         spider = spider_cls()
         if hasattr(spider, "init"):
-            spider.init("")
+            spider.init(config.config_text)
         plugin_name = str(getattr(spider, "getName", lambda: "")() or "")
         search_enabled = type(spider).searchContent is not CompatSpider.searchContent
         updated_config = SpiderPluginConfig(
@@ -60,6 +60,7 @@ class SpiderPluginLoader:
             cached_file_path=str(source_path) if config.source_type == "remote" else config.cached_file_path,
             last_loaded_at=config.last_loaded_at,
             last_error=config.last_error,
+            config_text=config.config_text,
         )
         return LoadedSpiderPlugin(
             config=updated_config,
