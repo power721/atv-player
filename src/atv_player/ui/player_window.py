@@ -1189,7 +1189,7 @@ class PlayerWindow(QWidget):
             return
         if self.session is None or self.current_index != pending_prepare.index:
             return
-        self._append_log(f"广告过滤失败，继续播放原地址: {message}")
+        self._append_log(f"播放代理失败，继续播放原地址: {message}")
         try:
             self._start_current_item_playback(
                 start_position_seconds=pending_prepare.start_position_seconds,

@@ -178,14 +178,14 @@ def test_player_window_hides_route_selector_for_single_group(qtbot) -> None:
     assert window.playlist_group_combo.isHidden() is True
 
 
-def test_player_window_filters_remote_m3u8_before_video_load(qtbot) -> None:
+def test_player_window_rewrites_remote_m3u8_to_local_proxy_url(qtbot) -> None:
     class FakeM3U8AdFilter:
         def __init__(self) -> None:
             self.calls: list[tuple[str, dict[str, str]]] = []
 
         def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
             self.calls.append((url, dict(headers or {})))
-            return "/tmp/cleaned-playlist.m3u8"
+            return "http://127.0.0.1:2323/m3u?token=proxy-1"
 
     session = PlayerSession(
         vod=VodItem(vod_id="movie-1", vod_name="Movie"),
@@ -207,7 +207,7 @@ def test_player_window_filters_remote_m3u8_before_video_load(qtbot) -> None:
     window.video = video
 
     window.open_session(session)
-    qtbot.waitUntil(lambda: video.load_calls == [("/tmp/cleaned-playlist.m3u8", 0)])
+    qtbot.waitUntil(lambda: video.load_calls == [("http://127.0.0.1:2323/m3u?token=proxy-1", 0)])
 
     assert filter_service.calls == [
         (
@@ -217,10 +217,10 @@ def test_player_window_filters_remote_m3u8_before_video_load(qtbot) -> None:
     ]
 
 
-def test_player_window_falls_back_to_original_url_when_filtering_fails(qtbot) -> None:
+def test_player_window_logs_proxy_prepare_failure_and_plays_original_url(qtbot) -> None:
     class FailingM3U8AdFilter:
         def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
-            raise RuntimeError("network down")
+            raise RuntimeError("port 2323 busy")
 
     session = PlayerSession(
         vod=VodItem(vod_id="movie-1", vod_name="Movie"),
@@ -237,10 +237,10 @@ def test_player_window_falls_back_to_original_url_when_filtering_fails(qtbot) ->
     window.open_session(session)
     qtbot.waitUntil(lambda: video.load_calls == [("https://media.example/path/index.m3u8", 0)])
 
-    assert "广告过滤失败" in window.log_view.toPlainText()
+    assert "port 2323 busy" in window.log_view.toPlainText()
 
 
-def test_player_window_filters_resolved_m3u8_after_detail_lookup(qtbot) -> None:
+def test_player_window_rewrites_resolved_m3u8_after_detail_lookup(qtbot) -> None:
     class ResolvingPlayerController(FakePlayerController):
         def resolve_play_item_detail(self, session, play_item):
             play_item.url = "https://media.example/path/resolved.m3u8"
@@ -252,7 +252,7 @@ def test_player_window_filters_resolved_m3u8_after_detail_lookup(qtbot) -> None:
 
     class FakeM3U8AdFilter:
         def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
-            return "/tmp/resolved-cleaned.m3u8"
+            return "http://127.0.0.1:2323/m3u?token=resolved-1"
 
     session = PlayerSession(
         vod=VodItem(vod_id="movie-1", vod_name="Movie"),
@@ -268,7 +268,7 @@ def test_player_window_filters_resolved_m3u8_after_detail_lookup(qtbot) -> None:
     window.video = video
 
     window.open_session(session)
-    qtbot.waitUntil(lambda: video.load_calls == [("/tmp/resolved-cleaned.m3u8", 0)])
+    qtbot.waitUntil(lambda: video.load_calls == [("http://127.0.0.1:2323/m3u?token=resolved-1", 0)])
 
 
 def test_player_window_uses_detail_container_with_metadata_and_log_views(qtbot) -> None:
