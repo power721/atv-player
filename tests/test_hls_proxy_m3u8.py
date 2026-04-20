@@ -1,0 +1,69 @@
+from atv_player.proxy.m3u8 import rewrite_playlist
+from atv_player.proxy.session import ProxySessionRegistry
+
+
+def test_rewrite_playlist_rewrites_media_segments_and_assets() -> None:
+    registry = ProxySessionRegistry()
+    token = registry.create_session(
+        playlist_url="https://media.example/path/index.m3u8",
+        headers={"Referer": "https://site.example"},
+    )
+    content = """#EXTM3U
+#EXT-X-KEY:METHOD=AES-128,URI="enc.key"
+#EXT-X-MAP:URI="init.mp4"
+#EXTINF:5.0,
+main-0001.ts
+#EXTINF:0.5,
+ad-0002.ts
+#EXTINF:5.0,
+main-0003.ts
+"""
+
+    rewritten = rewrite_playlist(
+        token=token,
+        playlist_url="https://media.example/path/index.m3u8",
+        content=content,
+        session_registry=registry,
+        proxy_base_url="http://127.0.0.1:2323",
+    )
+
+    assert 'URI="http://127.0.0.1:2323/asset?token=' in rewritten.text
+    assert "http://127.0.0.1:2323/seg?token=" in rewritten.text
+    assert "ad-0002.ts" not in rewritten.text
+    session = registry.get(token)
+    assert [segment.url for segment in session.segments] == [
+        "https://media.example/path/main-0001.ts",
+        "https://media.example/path/main-0003.ts",
+    ]
+
+
+def test_rewrite_playlist_rewrites_master_playlist_to_child_tokens() -> None:
+    registry = ProxySessionRegistry()
+    token = registry.create_session(
+        playlist_url="https://media.example/master.m3u8",
+        headers={},
+    )
+    content = """#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=1280000
+video/720.m3u8
+"""
+
+    rewritten = rewrite_playlist(
+        token=token,
+        playlist_url="https://media.example/master.m3u8",
+        content=content,
+        session_registry=registry,
+        proxy_base_url="http://127.0.0.1:2323",
+    )
+
+    assert "http://127.0.0.1:2323/m3u?token=" in rewritten.text
+    assert rewritten.is_master is True
+
+
+def test_proxy_session_registry_expires_stale_sessions() -> None:
+    registry = ProxySessionRegistry(ttl_seconds=5.0)
+    token = registry.create_session("https://media.example/master.m3u8", {})
+
+    registry.expire_stale(now=registry.get(token).created_at + 6.0)
+
+    assert registry.contains(token) is False
