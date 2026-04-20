@@ -2190,6 +2190,112 @@ def test_app_coordinator_starts_epg_and_remote_live_refresh_in_background(monkey
     assert fake_live_source_manager.event.wait(timeout=1)
 
 
+def test_start_live_background_refresh_skips_recent_epg_and_sources(monkeypatch) -> None:
+    class ImmediateThread:
+        def __init__(self, target, daemon=None):
+            del daemon
+            self._target = target
+
+        def start(self) -> None:
+            self._target()
+
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig()
+
+    class FakeEpgService:
+        def __init__(self) -> None:
+            self.refresh_calls = 0
+
+        def load_config(self):
+            return type(
+                "Config",
+                (),
+                {"epg_url": "https://example.com/epg.xml", "last_refreshed_at": 1_713_168_000},
+            )()
+
+        def refresh(self) -> None:
+            self.refresh_calls += 1
+
+    class FakeLiveSourceManager:
+        def __init__(self) -> None:
+            self.refresh_calls: list[int] = []
+
+        def list_sources(self):
+            return [
+                type("Source", (), {"id": 1, "source_type": "remote", "last_refreshed_at": 1_713_168_000})(),
+                type("Source", (), {"id": 2, "source_type": "local", "last_refreshed_at": 1_713_168_000})(),
+                type("Source", (), {"id": 3, "source_type": "manual", "last_refreshed_at": 1_713_168_000})(),
+            ]
+
+        def refresh_source(self, source_id: int) -> None:
+            self.refresh_calls.append(source_id)
+
+    monkeypatch.setattr(app_module.threading, "Thread", ImmediateThread)
+    monkeypatch.setattr("atv_player.app.time.time", lambda: 1_713_171_000)
+    coordinator = AppCoordinator(FakeRepo())
+    epg_service = FakeEpgService()
+    live_source_manager = FakeLiveSourceManager()
+
+    coordinator._start_live_background_refresh(live_source_manager, epg_service)
+
+    assert epg_service.refresh_calls == 0
+    assert live_source_manager.refresh_calls == []
+
+
+def test_start_live_background_refresh_refreshes_stale_epg_and_non_manual_sources(monkeypatch) -> None:
+    class ImmediateThread:
+        def __init__(self, target, daemon=None):
+            del daemon
+            self._target = target
+
+        def start(self) -> None:
+            self._target()
+
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig()
+
+    class FakeEpgService:
+        def __init__(self) -> None:
+            self.refresh_calls = 0
+
+        def load_config(self):
+            return type(
+                "Config",
+                (),
+                {"epg_url": "https://example.com/epg.xml", "last_refreshed_at": 12},
+            )()
+
+        def refresh(self) -> None:
+            self.refresh_calls += 1
+
+    class FakeLiveSourceManager:
+        def __init__(self) -> None:
+            self.refresh_calls: list[int] = []
+
+        def list_sources(self):
+            return [
+                type("Source", (), {"id": 1, "source_type": "remote", "last_refreshed_at": 12})(),
+                type("Source", (), {"id": 2, "source_type": "local", "last_refreshed_at": 1_713_150_000})(),
+                type("Source", (), {"id": 3, "source_type": "manual", "last_refreshed_at": 0})(),
+            ]
+
+        def refresh_source(self, source_id: int) -> None:
+            self.refresh_calls.append(source_id)
+
+    monkeypatch.setattr(app_module.threading, "Thread", ImmediateThread)
+    monkeypatch.setattr("atv_player.app.time.time", lambda: 1_713_171_000)
+    coordinator = AppCoordinator(FakeRepo())
+    epg_service = FakeEpgService()
+    live_source_manager = FakeLiveSourceManager()
+
+    coordinator._start_live_background_refresh(live_source_manager, epg_service)
+
+    assert epg_service.refresh_calls == 1
+    assert live_source_manager.refresh_calls == [1, 2]
+
+
 def test_app_coordinator_show_main_keeps_window_open_when_initial_browse_times_out(
     qtbot,
     monkeypatch,

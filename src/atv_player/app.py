@@ -29,6 +29,7 @@ from atv_player.plugins import SpiderPluginLoader, SpiderPluginManager
 from atv_player.plugins.repository import SpiderPluginRepository
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.storage import SettingsRepository
+from atv_player.time_utils import is_refresh_stale
 from atv_player.ui.login_window import LoginWindow
 from atv_player.ui.main_window import MainWindow
 
@@ -265,7 +266,8 @@ class AppCoordinator(QObject):
     def _start_live_background_refresh(self, live_source_manager, live_epg_service) -> None:
         def refresh_epg() -> None:
             try:
-                if live_epg_service.load_config().epg_url.strip():
+                config = live_epg_service.load_config()
+                if config.epg_url.strip() and is_refresh_stale(getattr(config, "last_refreshed_at", 0)):
                     live_epg_service.refresh()
                     logger.info("Background refresh finished target=epg")
             except Exception:
@@ -273,8 +275,11 @@ class AppCoordinator(QObject):
                 return
 
         def refresh_sources() -> None:
+            now = int(time.time())
             for source in live_source_manager.list_sources():
-                if source.source_type != "remote":
+                if source.source_type == "manual":
+                    continue
+                if not is_refresh_stale(getattr(source, "last_refreshed_at", 0), now=now):
                     continue
                 try:
                     live_source_manager.refresh_source(source.id)
