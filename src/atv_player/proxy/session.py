@@ -29,6 +29,7 @@ class ProxySessionRegistry:
         self._ttl_seconds = ttl_seconds
 
     def create_session(self, playlist_url: str, headers: dict[str, str]) -> str:
+        self.expire_stale()
         token = secrets.token_urlsafe(9)
         self._sessions[token] = ProxySession(
             token=token,
@@ -38,11 +39,13 @@ class ProxySessionRegistry:
         return token
 
     def get(self, token: str) -> ProxySession:
+        self.expire_stale()
         session = self._sessions[token]
         session.last_accessed_at = time.time()
         return session
 
     def contains(self, token: str) -> bool:
+        self.expire_stale()
         return token in self._sessions
 
     def delete(self, token: str) -> None:

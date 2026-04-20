@@ -255,37 +255,62 @@ def test_m3u8_ad_filter_writes_cleaned_playlist_to_cache(tmp_path: Path) -> None
     ]
 
 
-def test_m3u8_ad_filter_returns_original_url_when_fetch_fails(tmp_path: Path) -> None:
-    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
-        raise RuntimeError("network down")
+def test_m3u8_ad_filter_prepare_returns_proxy_url_without_fetching_origin() -> None:
+    class FakeServer:
+        def __init__(self) -> None:
+            self.started = False
+            self.calls: list[tuple[str, dict[str, str]]] = []
 
-    ad_filter = M3U8AdFilter(cache_dir=tmp_path, get=fake_get)
+        def start(self) -> None:
+            self.started = True
 
-    original = "https://media.example/path/index.m3u8"
-    prepared = ad_filter.prepare(original, {"Referer": "https://site.example"})
+        def create_playlist_url(self, url: str, headers: dict[str, str] | None = None) -> str:
+            self.calls.append((url, dict(headers or {})))
+            return "http://127.0.0.1:2323/m3u?token=test-token"
 
-    assert prepared == original
-
-
-def test_m3u8_ad_filter_returns_original_url_for_master_playlist(tmp_path: Path) -> None:
-    class FakeResponse:
-        text = """#EXTM3U
-#EXT-X-STREAM-INF:BANDWIDTH=1280000
-sub/playlist.m3u8
-"""
-
-        def raise_for_status(self) -> None:
+        def close(self) -> None:
             return None
 
-    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool) -> FakeResponse:
-        return FakeResponse()
+    server = FakeServer()
+    ad_filter = M3U8AdFilter(proxy_server=server)
 
-    ad_filter = M3U8AdFilter(cache_dir=tmp_path, get=fake_get)
+    prepared = ad_filter.prepare(
+        "https://media.example/path/index.m3u8",
+        {"Referer": "https://site.example"},
+    )
 
-    original = "https://media.example/master.m3u8"
-    prepared = ad_filter.prepare(original)
+    assert prepared == "http://127.0.0.1:2323/m3u?token=test-token"
+    assert server.started is True
+    assert server.calls == [
+        (
+            "https://media.example/path/index.m3u8",
+            {"Referer": "https://site.example"},
+        )
+    ]
 
-    assert prepared == original
+
+def test_m3u8_ad_filter_prepare_returns_proxy_url_for_master_playlist_without_inspection() -> None:
+    class FakeServer:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str]]] = []
+
+        def start(self) -> None:
+            return None
+
+        def create_playlist_url(self, url: str, headers: dict[str, str] | None = None) -> str:
+            self.calls.append((url, dict(headers or {})))
+            return "http://127.0.0.1:2323/m3u?token=master-token"
+
+        def close(self) -> None:
+            return None
+
+    server = FakeServer()
+    ad_filter = M3U8AdFilter(proxy_server=server)
+
+    prepared = ad_filter.prepare("https://media.example/master.m3u8")
+
+    assert prepared == "http://127.0.0.1:2323/m3u?token=master-token"
+    assert server.calls == [("https://media.example/master.m3u8", {})]
 
 
 @pytest.mark.skip(reason="Known baseline failure: recursive prepare() currently returns the original URL instead of a cache file path.")

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import errno
+import logging
 import threading
 from urllib.parse import parse_qs, quote, urlparse
 
@@ -10,11 +12,14 @@ from atv_player.proxy.m3u8 import rewrite_playlist
 from atv_player.proxy.segment import SegmentProxy
 from atv_player.proxy.session import ProxySessionRegistry
 
+logger = logging.getLogger(__name__)
+
 
 class LocalHlsProxyServer:
     def __init__(self, host: str = "127.0.0.1", port: int = 2323, get=httpx.get) -> None:
         self.host = host
         self.port = port
+        self._preferred_port = port
         self._get = get
         self._registry = ProxySessionRegistry()
         self._segment_proxy = SegmentProxy(self._registry, get=get)
@@ -24,7 +29,18 @@ class LocalHlsProxyServer:
     def start(self) -> None:
         if self._server is not None:
             return
-        self._server = ThreadingHTTPServer((self.host, self.port), self._handler_type())
+        try:
+            self._server = ThreadingHTTPServer((self.host, self._preferred_port), self._handler_type())
+        except OSError as exc:
+            if exc.errno != errno.EADDRINUSE or self._preferred_port == 0:
+                raise
+            logger.warning(
+                "Local HLS proxy port busy, fallback to ephemeral port host=%s port=%s",
+                self.host,
+                self._preferred_port,
+            )
+            self._server = ThreadingHTTPServer((self.host, 0), self._handler_type())
+        self.port = int(self._server.server_address[1])
         self._server.proxy_server = self  # type: ignore[attr-defined]
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
@@ -36,6 +52,7 @@ class LocalHlsProxyServer:
         self._server.server_close()
         self._server = None
         self._thread = None
+        self.port = self._preferred_port
 
     def create_playlist_url(self, url: str, headers: dict[str, str] | None = None) -> str:
         token = self._registry.create_session(url, dict(headers or {}))

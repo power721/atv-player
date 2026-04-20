@@ -69,6 +69,19 @@ def test_proxy_session_registry_expires_stale_sessions() -> None:
     assert registry.contains(token) is False
 
 
+def test_proxy_session_registry_expires_stale_sessions_when_creating_new_session(monkeypatch) -> None:
+    registry = ProxySessionRegistry(ttl_seconds=5.0)
+    stale_token = registry.create_session("https://media.example/old.m3u8", {})
+    registry._sessions[stale_token].last_accessed_at = 10.0
+
+    monkeypatch.setattr("atv_player.proxy.session.time.time", lambda: 16.0)
+
+    fresh_token = registry.create_session("https://media.example/new.m3u8", {})
+
+    assert stale_token not in registry._sessions
+    assert fresh_token in registry._sessions
+
+
 def test_rewrite_playlist_keeps_non_ad_discontinuity_blocks_stable() -> None:
     registry = ProxySessionRegistry()
     token = registry.create_session("https://media.example/path/index.m3u8", {})

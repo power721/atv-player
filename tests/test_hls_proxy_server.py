@@ -1,3 +1,5 @@
+import errno
+
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.proxy.server import LocalHlsProxyServer
 import httpx
@@ -118,3 +120,35 @@ segment-0001.ts
     assert second_body == expected_body
     assert requests == [origin_url, origin_url]
     assert server._registry.contains(token) is True
+
+
+def test_local_hls_proxy_server_falls_back_to_ephemeral_port_when_default_port_is_busy(monkeypatch) -> None:
+    bind_attempts: list[tuple[str, int]] = []
+
+    class FakeThreadingHTTPServer:
+        def __init__(self, server_address: tuple[str, int], handler) -> None:
+            del handler
+            bind_attempts.append(server_address)
+            if server_address[1] == 2323:
+                raise OSError(errno.EADDRINUSE, "Address already in use")
+            self.server_address = (server_address[0], 45123)
+
+        def serve_forever(self) -> None:
+            return None
+
+        def shutdown(self) -> None:
+            return None
+
+        def server_close(self) -> None:
+            return None
+
+    monkeypatch.setattr("atv_player.proxy.server.ThreadingHTTPServer", FakeThreadingHTTPServer)
+
+    server = LocalHlsProxyServer()
+
+    server.start()
+    prepared = server.create_playlist_url("https://media.example/path/index.m3u8", {})
+    server.close()
+
+    assert bind_attempts == [("127.0.0.1", 2323), ("127.0.0.1", 0)]
+    assert prepared.startswith("http://127.0.0.1:45123/m3u?token=")
