@@ -48,6 +48,7 @@ class PluginManagerDialog(QDialog):
         self.add_local_button = QPushButton("添加本地插件")
         self.add_remote_button = QPushButton("添加远程插件")
         self.rename_button = QPushButton("编辑名称")
+        self.config_button = QPushButton("编辑配置")
         self.toggle_button = QPushButton("启用/禁用")
         self.up_button = QPushButton("上移")
         self.down_button = QPushButton("下移")
@@ -60,6 +61,7 @@ class PluginManagerDialog(QDialog):
             self.add_local_button,
             self.add_remote_button,
             self.rename_button,
+            self.config_button,
             self.toggle_button,
             self.up_button,
             self.down_button,
@@ -77,6 +79,7 @@ class PluginManagerDialog(QDialog):
         self.add_local_button.clicked.connect(self._add_local_plugin)
         self.add_remote_button.clicked.connect(self._add_remote_plugin)
         self.rename_button.clicked.connect(self._rename_selected)
+        self.config_button.clicked.connect(self._edit_selected_config)
         self.toggle_button.clicked.connect(self._toggle_selected_enabled)
         self.up_button.clicked.connect(lambda: self._move_selected(-1))
         self.down_button.clicked.connect(lambda: self._move_selected(1))
@@ -115,6 +118,7 @@ class PluginManagerDialog(QDialog):
         row = self.plugin_table.currentRow()
         last_row = self.plugin_table.rowCount() - 1
         self.rename_button.setEnabled(has_selection)
+        self.config_button.setEnabled(has_selection)
         self.toggle_button.setEnabled(has_selection)
         self.up_button.setEnabled(has_selection and row > 0)
         self.down_button.setEnabled(has_selection and row >= 0 and row < last_row)
@@ -146,6 +150,10 @@ class PluginManagerDialog(QDialog):
     def _prompt_display_name(self, current: str) -> str:
         value, accepted = QInputDialog.getText(self, "编辑名称", "显示名称", text=current)
         return value.strip() if accepted else ""
+
+    def _prompt_config_text(self, current: str) -> str | None:
+        value, accepted = QInputDialog.getMultiLineText(self, "编辑配置", "配置文本", current)
+        return value if accepted else None
 
     def _pick_local_plugin_path(self) -> str:
         path, _ = QFileDialog.getOpenFileName(self, "选择 Python 插件", "", "Python Files (*.py)")
@@ -181,6 +189,19 @@ class PluginManagerDialog(QDialog):
         if not display_name:
             return
         self.plugin_manager.rename_plugin(plugin_id, display_name)
+        self.reload_plugins()
+
+    def _edit_selected_config(self) -> None:
+        plugin_id = self._selected_plugin_id()
+        if plugin_id is None:
+            return
+        plugin = next((item for item in self.plugin_manager.list_plugins() if item.id == plugin_id), None)
+        if plugin is None:
+            return
+        config_text = self._prompt_config_text(plugin.config_text)
+        if config_text is None:
+            return
+        self.plugin_manager.set_plugin_config(plugin_id, config_text)
         self.reload_plugins()
 
     def _toggle_selected_enabled(self) -> None:

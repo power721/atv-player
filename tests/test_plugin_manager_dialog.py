@@ -7,13 +7,31 @@ from atv_player.ui.plugin_manager_dialog import PluginManagerDialog
 class FakePluginManager:
     def __init__(self) -> None:
         self.plugins = [
-            SpiderPluginConfig(id=1, source_type="local", source_value="/plugins/a.py", display_name="本地A", enabled=True, sort_order=0),
-            SpiderPluginConfig(id=2, source_type="remote", source_value="https://example.com/b.py", display_name="远程B", enabled=False, sort_order=1, last_error="下载失败"),
+            SpiderPluginConfig(
+                id=1,
+                source_type="local",
+                source_value="/plugins/a.py",
+                display_name="本地A",
+                enabled=True,
+                sort_order=0,
+                config_text="token=local",
+            ),
+            SpiderPluginConfig(
+                id=2,
+                source_type="remote",
+                source_value="https://example.com/b.py",
+                display_name="远程B",
+                enabled=False,
+                sort_order=1,
+                last_error="下载失败",
+                config_text="token=remote\ncookie=1\n",
+            ),
         ]
         self.logs = {
             2: [SpiderPluginLogEntry(id=1, plugin_id=2, level="error", message="下载失败", created_at=1713206400)]
         }
         self.rename_calls: list[tuple[int, str]] = []
+        self.config_calls: list[tuple[int, str]] = []
         self.toggle_calls: list[tuple[int, bool]] = []
         self.move_calls: list[tuple[int, int]] = []
         self.refresh_calls: list[int] = []
@@ -32,6 +50,9 @@ class FakePluginManager:
 
     def rename_plugin(self, plugin_id: int, display_name: str) -> None:
         self.rename_calls.append((plugin_id, display_name))
+
+    def set_plugin_config(self, plugin_id: int, config_text: str) -> None:
+        self.config_calls.append((plugin_id, config_text))
 
     def set_plugin_enabled(self, plugin_id: int, enabled: bool) -> None:
         self.toggle_calls.append((plugin_id, enabled))
@@ -91,6 +112,7 @@ def test_plugin_manager_dialog_disables_row_actions_without_selection(qtbot) -> 
     dialog.plugin_table.clearSelection()
 
     assert dialog.rename_button.isEnabled() is False
+    assert dialog.config_button.isEnabled() is False
     assert dialog.toggle_button.isEnabled() is False
     assert dialog.up_button.isEnabled() is False
     assert dialog.down_button.isEnabled() is False
@@ -140,6 +162,30 @@ def test_plugin_manager_dialog_actions_call_manager(qtbot, monkeypatch) -> None:
     assert manager.move_calls == [(2, -1)]
     assert manager.refresh_calls == [2]
     assert manager.delete_calls == [2]
+
+
+def test_plugin_manager_dialog_edit_config_allows_empty_string_and_keeps_raw_current_value(
+    qtbot,
+    monkeypatch,
+) -> None:
+    manager = FakePluginManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.plugin_table.selectRow(1)
+
+    captured: list[str] = []
+
+    def fake_prompt(current: str) -> str | None:
+        captured.append(current)
+        return ""
+
+    monkeypatch.setattr(dialog, "_prompt_config_text", fake_prompt)
+
+    dialog._edit_selected_config()
+
+    assert captured == ["token=remote\ncookie=1\n"]
+    assert manager.config_calls == [(2, "")]
 
 
 def test_plugin_manager_dialog_keeps_selection_on_moved_plugin(qtbot) -> None:
