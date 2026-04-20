@@ -52,13 +52,24 @@ class LocalHlsProxyServer:
                 if not self._registry.contains(token):
                     return 404, [], b"missing proxy session"
                 session = self._registry.get(token)
-                response = self._get(
-                    session.playlist_url,
-                    headers=session.headers,
-                    timeout=10.0,
-                    follow_redirects=True,
-                )
-                response.raise_for_status()
+                try:
+                    response = self._get(
+                        session.playlist_url,
+                        headers=session.headers,
+                        timeout=10.0,
+                        follow_redirects=True,
+                    )
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    if exc.response is not None and exc.response.status_code == 403:
+                        if session.cached_playlist_text is not None:
+                            return (
+                                200,
+                                [("Content-Type", "application/vnd.apple.mpegurl")],
+                                session.cached_playlist_text.encode("utf-8"),
+                            )
+                        self._registry.delete(token)
+                    raise
                 rewritten = rewrite_playlist(
                     token=token,
                     playlist_url=session.playlist_url,
@@ -66,6 +77,7 @@ class LocalHlsProxyServer:
                     session_registry=self._registry,
                     proxy_base_url=f"http://{self.host}:{self.port}",
                 )
+                session.cached_playlist_text = rewritten.text
                 return 200, [("Content-Type", "application/vnd.apple.mpegurl")], rewritten.text.encode("utf-8")
             if parsed.path == "/seg":
                 token = query["token"][0]

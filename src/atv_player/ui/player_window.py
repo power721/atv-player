@@ -1251,6 +1251,24 @@ class PlayerWindow(QWidget):
         except Exception as exc:
             self._append_log(f"进度上报失败: {exc}")
 
+    def _remember_restore_state(self) -> None:
+        if self.session is None:
+            return
+        if hasattr(self.session, "start_index"):
+            self.session.start_index = self.current_index
+        if hasattr(self.session, "speed"):
+            self.session.speed = self.current_speed
+        if hasattr(self.session, "opening_seconds"):
+            self.session.opening_seconds = self.opening_spin.value()
+        if hasattr(self.session, "ending_seconds"):
+            self.session.ending_seconds = self.ending_spin.value()
+        try:
+            position_seconds = self.video.position_seconds()
+        except Exception:
+            position_seconds = None
+        if position_seconds is not None and hasattr(self.session, "start_position_seconds"):
+            self.session.start_position_seconds = position_seconds
+
     def _stop_current_playback(self) -> None:
         if self.session is None:
             return
@@ -2247,12 +2265,14 @@ class PlayerWindow(QWidget):
         self._invalidate_play_item_resolution()
         self._close_help_dialog()
         self._close_video_context_menu()
+        self._remember_restore_state()
         try:
             self.video.pause()
         except Exception:
             pass
         self.is_playing = False
         self.report_progress()
+        self._stop_current_playback()
         self._refresh_window_title()
         self._restore_video_cursor()
         self._set_last_player_paused(True)
@@ -2260,16 +2280,24 @@ class PlayerWindow(QWidget):
         if self.config is not None:
             self.config.last_active_window = "main"
         self._persist_geometry()
+        self.video_widget.shutdown()
         self.hide()
         self.closed_to_main.emit()
 
     def resume_from_main(self) -> None:
         if self.session is None:
             return
-        if not self.is_playing:
-            self.video.resume()
-            self.is_playing = True
-            self._set_last_player_paused(False)
+        self.is_playing = True
+        self._set_last_player_paused(False)
+        try:
+            self._play_item_at_index(
+                self.session.start_index,
+                start_position_seconds=self.session.start_position_seconds,
+            )
+        except Exception as exc:
+            self.is_playing = False
+            self._set_last_player_paused(True)
+            self._append_log(f"恢复播放失败: {exc}")
         self._update_play_button_icon()
         self._refresh_window_title()
         self._sync_video_cursor_autohide()

@@ -4956,12 +4956,13 @@ def test_player_window_persists_and_restores_main_splitter_state(qtbot) -> None:
     assert restored.main_splitter.saveState() == QByteArray(config.player_main_splitter_state)
 
 
-def test_player_window_return_to_main_hides_window_without_closing_session(qtbot) -> None:
+def test_player_window_return_to_main_hides_window_and_stops_video_backend(qtbot, monkeypatch) -> None:
     emitted = {"count": 0}
     config = AppConfig(last_active_window="player")
     window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
     qtbot.addWidget(window)
     pauses = {"count": 0}
+    shutdowns = {"count": 0}
 
     class FakeVideo:
         def pause(self) -> None:
@@ -4969,6 +4970,7 @@ def test_player_window_return_to_main_hides_window_without_closing_session(qtbot
 
     window.session = object()
     window.video = FakeVideo()
+    monkeypatch.setattr(window.video_widget, "shutdown", lambda: shutdowns.__setitem__("count", shutdowns["count"] + 1))
     window.closed_to_main.connect(lambda: emitted.__setitem__("count", emitted["count"] + 1))
     window.show()
     window._return_to_main()
@@ -4978,6 +4980,7 @@ def test_player_window_return_to_main_hides_window_without_closing_session(qtbot
     assert window.session is not None
     assert config.last_active_window == "main"
     assert pauses["count"] == 1
+    assert shutdowns["count"] == 1
 
 
 def test_player_window_ctrl_q_quits_application(qtbot, monkeypatch) -> None:
@@ -5346,7 +5349,7 @@ def test_player_window_return_to_main_persists_paused_restore_state(qtbot) -> No
     assert config.last_player_paused is True
 
 
-def test_player_window_return_to_main_reports_current_progress_without_stopping_session(qtbot) -> None:
+def test_player_window_return_to_main_reports_current_progress_and_stops_current_playback(qtbot) -> None:
     controller = RecordingPlayerController()
     window = PlayerWindow(controller, config=AppConfig(last_active_window="player"), save_config=lambda: None)
     qtbot.addWidget(window)
@@ -5357,9 +5360,11 @@ def test_player_window_return_to_main_reports_current_progress_without_stopping_
 
     window._return_to_main()
 
-    qtbot.waitUntil(lambda: controller.progress_calls == [(1, 30, 1.0, 0, 0, True)])
+    qtbot.waitUntil(
+        lambda: controller.progress_calls == [(1, 30, 1.0, 0, 0, True)] and controller.stop_calls == [1]
+    )
     assert controller.progress_calls == [(1, 30, 1.0, 0, 0, True)]
-    assert controller.stop_calls == []
+    assert controller.stop_calls == [1]
 
 
 def test_player_window_return_to_main_restores_application_title(qtbot) -> None:
@@ -5374,7 +5379,7 @@ def test_player_window_return_to_main_restores_application_title(qtbot) -> None:
     assert window.windowTitle() == "alist-tvbox 播放器"
 
 
-def test_player_window_resume_from_main_resumes_playback_and_updates_state(qtbot) -> None:
+def test_player_window_resume_from_main_reloads_current_item_and_updates_state(qtbot) -> None:
     config = AppConfig(last_active_window="main", last_player_paused=True)
     window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
     qtbot.addWidget(window)
@@ -5386,7 +5391,8 @@ def test_player_window_resume_from_main_resumes_playback_and_updates_state(qtbot
     window.resume_from_main()
 
     assert video.pause_calls == 1
-    assert video.resume_calls == 1
+    assert video.resume_calls == 0
+    assert video.load_calls == [("http://m/1.m3u8", 0), ("http://m/1.m3u8", 30)]
     assert window.is_playing is True
     assert window.windowTitle() == "Movie - Episode 1"
     assert config.last_player_paused is False

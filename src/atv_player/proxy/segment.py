@@ -21,7 +21,7 @@ class SegmentProxy:
         self._get = get
         self._cache = cache or ProxyCache()
 
-    def fetch_segment(self, token: str, index: int) -> bytes:
+    def fetch_segment(self, token: str, index: int, *, prefetch: bool = False) -> bytes:
         session = self._session_registry.get(token)
         segment = session.segments[index]
         cache_key = self._segment_cache_key(segment.url, session.headers)
@@ -37,7 +37,8 @@ class SegmentProxy:
         response.raise_for_status()
         repaired = repair_segment_bytes(bytes(response.content))
         self._cache.set_segment(cache_key, repaired)
-        self.schedule_prefetch(token, index)
+        if not prefetch:
+            self.schedule_prefetch(token, index)
         return repaired
 
     def fetch_asset(self, token: str, url: str) -> bytes:
@@ -58,7 +59,7 @@ class SegmentProxy:
 
     def _prefetch_segment(self, token: str, segment_index: int) -> None:
         threading.Thread(
-            target=lambda: self.fetch_segment(token, segment_index),
+            target=lambda: self.fetch_segment(token, segment_index, prefetch=True),
             daemon=True,
         ).start()
 

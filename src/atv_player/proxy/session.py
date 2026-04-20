@@ -18,6 +18,7 @@ class ProxySession:
     playlist_url: str
     headers: dict[str, str]
     segments: list[PlaylistSegment] = field(default_factory=list)
+    cached_playlist_text: str | None = None
     created_at: float = field(default_factory=time.time)
     last_accessed_at: float = field(default_factory=time.time)
 
@@ -43,6 +44,9 @@ class ProxySessionRegistry:
 
     def contains(self, token: str) -> bool:
         return token in self._sessions
+
+    def delete(self, token: str) -> None:
+        self._sessions.pop(token, None)
 
     def expire_stale(self, now: float | None = None) -> None:
         cutoff = (now if now is not None else time.time()) - self._ttl_seconds
