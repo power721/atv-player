@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from atv_player.time_utils import format_refresh_timestamp
 from atv_player.ui.manual_live_source_dialog import ManualLiveSourceDialog
 
 
@@ -124,7 +125,7 @@ class LiveSourceManagerDialog(QDialog):
     def _load_epg_config(self) -> None:
         config = self.manager.load_epg_config()
         self.epg_url_edit.setPlainText(config.epg_url)
-        self.epg_status_label.setText(config.last_error or str(config.last_refreshed_at or ""))
+        self.epg_status_label.setText(config.last_error or format_refresh_timestamp(config.last_refreshed_at))
 
     def _save_epg_url(self) -> None:
         self.manager.save_epg_url(self._normalized_epg_url_text())
@@ -151,7 +152,7 @@ class LiveSourceManagerDialog(QDialog):
             self.source_table.setItem(row, 2, QTableWidgetItem(source.source_value))
             self.source_table.setItem(row, 3, QTableWidgetItem("是" if source.enabled else "否"))
             self.source_table.setItem(row, 4, QTableWidgetItem(source.last_error or "正常"))
-            self.source_table.setItem(row, 5, QTableWidgetItem(str(source.last_refreshed_at or "")))
+            self.source_table.setItem(row, 5, QTableWidgetItem(format_refresh_timestamp(source.last_refreshed_at)))
         self._sync_action_state()
 
     def _selected_source_id(self) -> int | None:

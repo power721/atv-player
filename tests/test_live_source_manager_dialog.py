@@ -1,4 +1,5 @@
 import threading
+from datetime import datetime
 
 from atv_player.models import LiveSourceConfig, LiveSourceEntry
 from atv_player.ui.live_source_manager_dialog import LiveSourceManagerDialog
@@ -148,6 +149,35 @@ def test_live_source_manager_dialog_renders_multiline_epg_editor(qtbot) -> None:
     )
     assert dialog.save_epg_button.text() == "保存"
     assert dialog.refresh_epg_button.text() == "立即更新"
+
+
+def test_live_source_manager_dialog_formats_source_refresh_time(qtbot) -> None:
+    manager = FakeLiveSourceManager()
+    manager.sources[0].last_refreshed_at = 1_713_168_000
+    dialog = LiveSourceManagerDialog(manager)
+    qtbot.addWidget(dialog)
+
+    expected = datetime.fromtimestamp(1_713_168_000).strftime("%Y-%m-%d %H:%M:%S")
+    assert dialog.source_table.item(0, 5).text() == expected
+
+
+def test_live_source_manager_dialog_formats_epg_refresh_time_when_no_error(qtbot) -> None:
+    manager = FakeLiveSourceManager()
+    manager.epg_config.last_refreshed_at = 1_713_168_000
+    dialog = LiveSourceManagerDialog(manager)
+    qtbot.addWidget(dialog)
+
+    expected = datetime.fromtimestamp(1_713_168_000).strftime("%Y-%m-%d %H:%M:%S")
+    assert dialog.epg_status_label.text() == expected
+
+
+def test_live_source_manager_dialog_hides_legacy_refresh_counters(qtbot) -> None:
+    manager = FakeLiveSourceManager()
+    dialog = LiveSourceManagerDialog(manager)
+    qtbot.addWidget(dialog)
+
+    assert dialog.source_table.item(0, 5).text() == ""
+    assert dialog.epg_status_label.text() == ""
 
 
 def test_live_source_manager_dialog_saves_normalized_multiline_epg_urls(qtbot) -> None:
