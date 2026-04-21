@@ -6,6 +6,137 @@ from atv_player.plugins.repository import SpiderPluginRepository
 from atv_player.storage import SettingsRepository
 
 
+def test_local_playback_history_repository_round_trip_emby_source_metadata(tmp_path: Path) -> None:
+    from atv_player.local_playback_history import LocalPlaybackHistoryRepository
+
+    repo = LocalPlaybackHistoryRepository(tmp_path / "app.db")
+    repo.save_history(
+        "emby",
+        "emby-1",
+        {
+            "vodName": "Emby Movie",
+            "vodPic": "poster",
+            "vodRemarks": "Episode 2",
+            "episode": 1,
+            "episodeUrl": "2.m3u8",
+            "position": 45000,
+            "opening": 0,
+            "ending": 0,
+            "speed": 1.25,
+            "playlistIndex": 1,
+            "createTime": 1713206400000,
+        },
+        source_name="Emby",
+    )
+
+    history = repo.get_history("emby", "emby-1")
+
+    assert history is not None
+    assert history.source_kind == "emby"
+    assert history.source_key == ""
+    assert history.source_name == "Emby"
+
+
+def test_local_playback_history_repository_lists_and_deletes_jellyfin_records(tmp_path: Path) -> None:
+    from atv_player.local_playback_history import LocalPlaybackHistoryRepository
+
+    repo = LocalPlaybackHistoryRepository(tmp_path / "app.db")
+    repo.save_history(
+        "jellyfin",
+        "jf-1",
+        {
+            "vodName": "Jellyfin Movie",
+            "vodPic": "poster",
+            "vodRemarks": "Episode 1",
+            "episode": 0,
+            "episodeUrl": "1.m3u8",
+            "position": 10000,
+            "opening": 0,
+            "ending": 0,
+            "speed": 1.0,
+            "playlistIndex": 0,
+            "createTime": 1713206400001,
+        },
+        source_name="Jellyfin",
+    )
+
+    records = repo.list_histories()
+    repo.delete_history("jellyfin", "jf-1")
+
+    assert [record.source_kind for record in records] == ["jellyfin"]
+    assert repo.get_history("jellyfin", "jf-1") is None
+
+
+def test_local_playback_history_repository_migrates_spider_plugin_legacy_rows(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE spider_plugins (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_type TEXT NOT NULL,
+                source_value TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                sort_order INTEGER NOT NULL,
+                cached_file_path TEXT NOT NULL DEFAULT '',
+                last_loaded_at INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT NOT NULL DEFAULT '',
+                config_text TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE spider_plugin_playback_history (
+                plugin_id INTEGER NOT NULL,
+                vod_id TEXT NOT NULL,
+                vod_name TEXT NOT NULL DEFAULT '',
+                vod_pic TEXT NOT NULL DEFAULT '',
+                vod_remarks TEXT NOT NULL DEFAULT '',
+                episode INTEGER NOT NULL DEFAULT 0,
+                episode_url TEXT NOT NULL DEFAULT '',
+                position INTEGER NOT NULL DEFAULT 0,
+                opening INTEGER NOT NULL DEFAULT 0,
+                ending INTEGER NOT NULL DEFAULT 0,
+                speed REAL NOT NULL DEFAULT 1.0,
+                playlist_index INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (plugin_id, vod_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO spider_plugins (
+                id, source_type, source_value, display_name, enabled, sort_order,
+                cached_file_path, last_loaded_at, last_error, config_text
+            )
+            VALUES (1, 'local', '/plugins/demo.py', '红果短剧', 1, 0, '', 0, '', '')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO spider_plugin_playback_history (
+                plugin_id, vod_id, vod_name, vod_pic, vod_remarks, episode,
+                episode_url, position, opening, ending, speed, playlist_index, updated_at
+            )
+            VALUES (1, 'detail-1', '红果短剧', 'poster', '第2集', 1, '2.m3u8', 45000, 0, 0, 1.0, 0, 1713206400000)
+            """
+        )
+
+    from atv_player.local_playback_history import LocalPlaybackHistoryRepository
+
+    repo = LocalPlaybackHistoryRepository(db_path)
+    records = repo.list_histories()
+
+    assert len(records) == 1
+    assert records[0].source_kind == "spider_plugin"
+    assert records[0].source_key == "1"
+    assert records[0].source_name == "红果短剧"
+    assert records[0].key == "detail-1"
+
+
 def test_settings_repository_round_trip(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     repo = SettingsRepository(db_path)

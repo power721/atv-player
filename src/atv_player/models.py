@@ -94,6 +94,8 @@ class HistoryRecord:
     source_kind: str = "remote"
     source_plugin_id: int = 0
     source_plugin_name: str = ""
+    source_key: str = ""
+    source_name: str = ""
 
 
 @dataclass(slots=True)

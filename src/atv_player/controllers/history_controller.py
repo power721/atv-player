@@ -2,9 +2,9 @@ from atv_player.models import HistoryRecord
 
 
 class HistoryController:
-    def __init__(self, api_client, plugin_repository=None) -> None:
+    def __init__(self, api_client, playback_history_repository=None) -> None:
         self._api_client = api_client
-        self._plugin_repository = plugin_repository
+        self._playback_history_repository = playback_history_repository
 
     def _load_remote_records(self) -> list[HistoryRecord]:
         payload = self._api_client.list_history(page=1, size=10000)
@@ -29,8 +29,8 @@ class HistoryController:
 
     def load_page(self, page: int, size: int) -> tuple[list[HistoryRecord], int]:
         records = self._load_remote_records()
-        if self._plugin_repository is not None:
-            records.extend(self._plugin_repository.list_playback_histories())
+        if self._playback_history_repository is not None:
+            records.extend(self._playback_history_repository.list_histories())
         records.sort(key=lambda item: item.create_time, reverse=True)
         total = len(records)
         start = max(page - 1, 0) * size
@@ -41,19 +41,27 @@ class HistoryController:
         if record.source_kind == "remote":
             self._api_client.delete_history(record.id)
             return
-        if self._plugin_repository is None:
+        if self._playback_history_repository is None:
             return
-        self._plugin_repository.delete_playback_history(record.source_plugin_id, record.key)
+        self._playback_history_repository.delete_history(
+            record.source_kind,
+            record.key,
+            record.source_key,
+        )
 
     def delete_many(self, records: list[HistoryRecord]) -> None:
         remote_ids = [record.id for record in records if record.source_kind == "remote"]
         if remote_ids:
             self._api_client.delete_histories(remote_ids)
-        if self._plugin_repository is None:
+        if self._playback_history_repository is None:
             return
         for record in records:
-            if record.source_kind == "spider_plugin":
-                self._plugin_repository.delete_playback_history(record.source_plugin_id, record.key)
+            if record.source_kind != "remote":
+                self._playback_history_repository.delete_history(
+                    record.source_kind,
+                    record.key,
+                    record.source_key,
+                )
 
     def clear_page(self, records: list[HistoryRecord]) -> None:
         self.delete_many(records)

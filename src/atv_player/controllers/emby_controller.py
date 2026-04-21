@@ -1,18 +1,26 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_category, _map_item
 from atv_player.controllers.telegram_search_controller import _parse_playlist
-from atv_player.models import DoubanCategory, OpenPlayerRequest, PlayItem, VodItem
+from atv_player.models import DoubanCategory, HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
 
 
 class EmbyController:
     _PAGE_SIZE = 30
 
-    def __init__(self, api_client) -> None:
+    def __init__(
+        self,
+        api_client,
+        playback_history_loader: Callable[[str], HistoryRecord | None] | None = None,
+        playback_history_saver: Callable[[str, dict[str, object]], None] | None = None,
+    ) -> None:
         self._api_client = api_client
+        self._playback_history_loader = playback_history_loader
+        self._playback_history_saver = playback_history_saver
 
     def load_categories(self) -> list[DoubanCategory]:
         payload = self._api_client.list_emby_categories()
@@ -121,6 +129,15 @@ class EmbyController:
             playlist = list(detail.items)
         if not playlist:
             raise ValueError(f"没有可播放的项目: {detail.vod_name}")
+        history_loader = None
+        history_saver = None
+        if self._playback_history_loader is not None:
+            history_loader = lambda source_vod_id=detail.vod_id: self._playback_history_loader(source_vod_id)
+        if self._playback_history_saver is not None:
+            history_saver = lambda payload, source_vod_id=detail.vod_id: self._playback_history_saver(
+                source_vod_id,
+                payload,
+            )
         return OpenPlayerRequest(
             vod=detail,
             playlist=playlist,
@@ -128,8 +145,11 @@ class EmbyController:
             source_kind="emby",
             source_mode="detail",
             source_vod_id=detail.vod_id,
+            use_local_history=False,
             detail_resolver=self.resolve_playlist_item,
             playback_loader=self.load_playback_item,
             playback_progress_reporter=self.report_playback_progress,
             playback_stopper=self.stop_playback,
+            playback_history_loader=history_loader,
+            playback_history_saver=history_saver,
         )

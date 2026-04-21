@@ -1708,6 +1708,100 @@ def test_main_window_opens_plugin_history_detail_asynchronously(qtbot, monkeypat
     assert opened[0].source_vod_id == "detail-1"
 
 
+def test_main_window_opens_emby_history_detail_asynchronously(qtbot, monkeypatch) -> None:
+    controller = AsyncRequestController(lambda vod_id: _make_telegram_request(vod_id, vod_name="Emby Movie"))
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=controller,
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened: list[OpenPlayerRequest] = []
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    monkeypatch.setattr(window, "show_error", lambda message: None)
+
+    window.open_history_detail(
+        HistoryRecord(
+            id=0,
+            key="emby-1",
+            vod_name="Emby Movie",
+            vod_pic="",
+            vod_remarks="Episode 1",
+            episode=0,
+            episode_url="",
+            position=0,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+            source_kind="emby",
+            source_name="Emby",
+        )
+    )
+    _wait_for_request_call(qtbot, controller, "emby-1")
+    controller.finish_request("emby-1", request=_make_telegram_request("emby-1", vod_name="Emby Movie"))
+
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
+
+    assert opened[0].vod.vod_name == "Emby Movie"
+    assert opened[0].source_vod_id == "emby-1"
+
+
+def test_main_window_opens_jellyfin_history_detail_asynchronously(qtbot, monkeypatch) -> None:
+    controller = AsyncRequestController(lambda vod_id: _make_telegram_request(vod_id, vod_name="Jellyfin Movie"))
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=controller,
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened: list[OpenPlayerRequest] = []
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    monkeypatch.setattr(window, "show_error", lambda message: None)
+
+    window.open_history_detail(
+        HistoryRecord(
+            id=0,
+            key="jf-1",
+            vod_name="Jellyfin Movie",
+            vod_pic="",
+            vod_remarks="Episode 1",
+            episode=0,
+            episode_url="",
+            position=0,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+            source_kind="jellyfin",
+            source_name="Jellyfin",
+        )
+    )
+    _wait_for_request_call(qtbot, controller, "jf-1")
+    controller.finish_request("jf-1", request=_make_telegram_request("jf-1", vod_name="Jellyfin Movie"))
+
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
+
+    assert opened[0].vod.vod_name == "Jellyfin Movie"
+    assert opened[0].source_vod_id == "jf-1"
+
+
 def test_main_window_shows_error_when_plugin_history_source_is_missing(qtbot, monkeypatch) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),
@@ -2199,6 +2293,93 @@ def test_app_coordinator_show_main_uses_capabilities_to_toggle_media_tabs(monkey
     assert isinstance(window, FakeMainWindow)
     assert window.kwargs["show_emby_tab"] is False
     assert window.kwargs["show_jellyfin_tab"] is True
+
+
+def test_app_coordinator_show_main_injects_shared_local_playback_history_repository(monkeypatch, tmp_path) -> None:
+    class FakeRepo:
+        def __init__(self) -> None:
+            self.database_path = tmp_path / "app.db"
+            self.config = AppConfig(
+                base_url="http://127.0.0.1:4567",
+                username="alice",
+                token="auth-123",
+                vod_token="vod-123",
+            )
+
+        def load_config(self) -> AppConfig:
+            return self.config
+
+        def save_config(self, config: AppConfig) -> None:
+            self.config = config
+
+        def clear_token(self) -> None:
+            self.config.token = ""
+            self.config.vod_token = ""
+
+    class FakeApiClient:
+        def __init__(self, base_url: str, token: str = "", vod_token: str = "") -> None:
+            self.base_url = base_url
+            self.token = token
+            self.vod_token = vod_token
+
+        def set_vod_token(self, vod_token: str) -> None:
+            self.vod_token = vod_token
+
+        def get_capabilities(self) -> dict[str, bool]:
+            return {"emby": True, "jellyfin": True}
+
+    captured: dict[str, object] = {}
+
+    class RecordingSpiderPluginManager:
+        def __init__(self, repository, loader, playback_history_repository=None) -> None:
+            captured["plugin_repository"] = playback_history_repository
+
+        def load_enabled_plugins(self, drive_detail_loader=None):
+            return []
+
+    class RecordingEmbyController:
+        def __init__(self, api_client, playback_history_loader=None, playback_history_saver=None) -> None:
+            captured["emby_loader"] = playback_history_loader
+            captured["emby_saver"] = playback_history_saver
+
+    class RecordingJellyfinController:
+        def __init__(self, api_client, playback_history_loader=None, playback_history_saver=None) -> None:
+            captured["jellyfin_loader"] = playback_history_loader
+            captured["jellyfin_saver"] = playback_history_saver
+
+    class RecordingHistoryController:
+        def __init__(self, api_client, playback_history_repository=None) -> None:
+            captured["history_repository"] = playback_history_repository
+
+    class DummyMainWindow:
+        logout_requested = type("SignalStub", (), {"connect": lambda self, cb: None})()
+
+        def __init__(self, **kwargs) -> None:
+            captured["window_kwargs"] = kwargs
+
+    monkeypatch.setattr(app_module, "ApiClient", FakeApiClient)
+    monkeypatch.setattr(app_module, "SpiderPluginRepository", lambda db_path: object())
+    monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
+    monkeypatch.setattr(app_module, "SpiderPluginManager", RecordingSpiderPluginManager)
+    monkeypatch.setattr(app_module, "EmbyController", RecordingEmbyController)
+    monkeypatch.setattr(app_module, "JellyfinController", RecordingJellyfinController)
+    monkeypatch.setattr(app_module, "HistoryController", RecordingHistoryController)
+    monkeypatch.setattr(app_module, "MainWindow", DummyMainWindow)
+
+    repo = FakeRepo()
+    coordinator = AppCoordinator(repo)
+    monkeypatch.setattr(coordinator, "_build_api_client", lambda: FakeApiClient(repo.config.base_url, repo.config.token, repo.config.vod_token))
+    monkeypatch.setattr(coordinator, "_start_live_background_refresh", lambda *args: None)
+
+    coordinator._show_main()
+
+    shared_repo = captured["history_repository"]
+    assert shared_repo is not None
+    assert captured["plugin_repository"] is shared_repo
+    assert callable(captured["emby_loader"])
+    assert callable(captured["emby_saver"])
+    assert callable(captured["jellyfin_loader"])
+    assert callable(captured["jellyfin_saver"])
 
 
 def test_app_coordinator_starts_epg_and_remote_live_refresh_in_background(monkeypatch, tmp_path) -> None:
@@ -3083,6 +3264,53 @@ def test_main_window_restore_last_player_routes_emby_detail_to_emby_controller(q
 
     assert restored is window.player_window
     assert window.player_window.opened[0][0]["vod"].vod_name == "Emby Movie"
+    assert window.player_window.opened[0][1] is True
+
+
+def test_main_window_restore_last_player_routes_jellyfin_detail_to_jellyfin_controller(qtbot, monkeypatch) -> None:
+    class RestoreBrowseController:
+        def build_request_from_detail(self, vod_id: str):
+            raise AssertionError(f"browse restore should not be used for {vod_id}")
+
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.opened: list[tuple[object, bool]] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.opened.append((session, start_paused))
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    controller = FakeJellyfinController()
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    config = AppConfig(
+        last_active_window="player",
+        last_playback_source="jellyfin",
+        last_playback_mode="detail",
+        last_playback_vod_id="vod-1",
+        last_player_paused=True,
+    )
+    window = MainWindow(
+        browse_controller=RestoreBrowseController(),
+        jellyfin_controller=controller,
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=config,
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+
+    restored = window.restore_last_player()
+
+    assert restored is window.player_window
+    assert window.player_window.opened[0][0]["vod"].vod_name == "Jellyfin Movie"
     assert window.player_window.opened[0][1] is True
 
 

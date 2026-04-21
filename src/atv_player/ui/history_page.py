@@ -205,7 +205,11 @@ class HistoryPage(QWidget):
 
     def _source_label(self, record: HistoryRecord) -> str:
         if record.source_kind == "spider_plugin":
-            return record.source_plugin_name or "插件"
+            return record.source_name or record.source_plugin_name or "插件"
+        if record.source_kind == "emby":
+            return record.source_name or "Emby"
+        if record.source_kind == "jellyfin":
+            return record.source_name or "Jellyfin"
         return "远程"
 
     def _format_episode(self, episode: int) -> str:

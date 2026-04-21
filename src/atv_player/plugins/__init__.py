@@ -30,9 +30,15 @@ def _default_plugin_name(source_type: str, source_value: str) -> str:
 
 
 class SpiderPluginManager:
-    def __init__(self, repository: SpiderPluginRepository, loader: SpiderPluginLoader) -> None:
+    def __init__(
+        self,
+        repository: SpiderPluginRepository,
+        loader: SpiderPluginLoader,
+        playback_history_repository=None,
+    ) -> None:
         self._repository = repository
         self._loader = loader
+        self._playback_history_repository = playback_history_repository
 
     def list_plugins(self) -> list[SpiderPluginConfig]:
         return self._repository.list_plugins()
@@ -144,14 +150,21 @@ class SpiderPluginManager:
                 plugin_name=title,
                 search_enabled=loaded.search_enabled,
                 drive_detail_loader=drive_detail_loader,
-                playback_history_loader=lambda vod_id, plugin_id=plugin.id: self._repository.get_playback_history(
-                    plugin_id,
+                playback_history_loader=None
+                if self._playback_history_repository is None
+                else lambda vod_id, plugin_id=plugin.id: self._playback_history_repository.get_history(
+                    "spider_plugin",
                     vod_id,
+                    source_key=str(plugin_id),
                 ),
-                playback_history_saver=lambda vod_id, payload, plugin_id=plugin.id: self._repository.save_playback_history(
-                    plugin_id,
+                playback_history_saver=None
+                if self._playback_history_repository is None
+                else lambda vod_id, payload, source_name=title, plugin_id=plugin.id: self._playback_history_repository.save_history(
+                    "spider_plugin",
                     vod_id,
                     payload,
+                    source_key=str(plugin_id),
+                    source_name=source_name,
                 ),
             )
             definitions.append(

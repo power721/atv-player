@@ -120,7 +120,7 @@ def test_load_folder_items_uses_t_query_and_first_page() -> None:
     assert [item.vod_remarks for item in items] == ["2022", "2022 - 8.8"]
 
 
-def test_build_request_enables_local_history_and_exposes_jellyfin_playback_hooks() -> None:
+def test_build_request_disables_remote_history_and_exposes_local_jellyfin_history_hooks() -> None:
     from atv_player.controllers.jellyfin_controller import JellyfinController
 
     api = FakeApiClient()
@@ -134,21 +134,33 @@ def test_build_request_enables_local_history_and_exposes_jellyfin_playback_hooks
             }
         ]
     }
-    controller = JellyfinController(api)
+    load_calls: list[str] = []
+    save_calls: list[tuple[str, dict[str, object]]] = []
+    controller = JellyfinController(
+        api,
+        playback_history_loader=lambda vod_id: load_calls.append(vod_id) or None,
+        playback_history_saver=lambda vod_id, payload: save_calls.append((vod_id, payload)),
+    )
 
     request = controller.build_request("1-3281")
     first_item = request.playlist[0]
 
-    assert request.use_local_history is True
+    assert request.use_local_history is False
     assert request.restore_history is False
     assert request.playback_loader is not None
     assert request.playback_progress_reporter is not None
     assert request.playback_stopper is not None
+    assert request.playback_history_loader is not None
+    assert request.playback_history_saver is not None
 
+    request.playback_history_loader()
+    request.playback_history_saver({"position": 45000})
     request.playback_loader(first_item)
     request.playback_progress_reporter(first_item, 2000, False)
     request.playback_stopper(first_item)
 
+    assert load_calls == ["1-3281"]
+    assert save_calls == [("1-3281", {"position": 45000})]
     assert first_item.url == "http://j/1.mp4"
     assert first_item.headers == {"User-Agent": "Jellyfin"}
     assert api.playback_source_calls == ["1-3458"]

@@ -22,6 +22,7 @@ from atv_player.controllers.player_controller import PlayerController
 from atv_player.controllers.telegram_search_controller import TelegramSearchController
 from atv_player.live_epg_repository import LiveEpgRepository
 from atv_player.live_epg_service import LiveEpgService
+from atv_player.local_playback_history import LocalPlaybackHistoryRepository
 from atv_player.models import AppConfig, LiveEpgConfig
 from atv_player.paths import app_cache_dir, app_data_dir
 from atv_player.live_source_repository import LiveSourceRepository
@@ -119,13 +120,19 @@ class AppCoordinator(QObject):
             self._live_source_repository = LiveSourceRepository(repo.database_path)
             self._live_epg_repository = LiveEpgRepository(repo.database_path)
             self._plugin_repository = SpiderPluginRepository(repo.database_path)
+            self._playback_history_repository = LocalPlaybackHistoryRepository(repo.database_path)
             cache_dir = repo.database_path.parent / "plugins" / "cache"
             self._plugin_loader = SpiderPluginLoader(cache_dir)
-            self._plugin_manager = SpiderPluginManager(self._plugin_repository, self._plugin_loader)
+            self._plugin_manager = SpiderPluginManager(
+                self._plugin_repository,
+                self._plugin_loader,
+                self._playback_history_repository,
+            )
         else:
             self._live_source_repository = _NullLiveSourceRepository()
             self._live_epg_repository = None
             self._plugin_repository = None
+            self._playback_history_repository = None
             self._plugin_loader = None
             self._plugin_manager = _NullPluginManager()
 
@@ -213,10 +220,36 @@ class AppCoordinator(QObject):
         douban_controller = DoubanController(self._api_client)
         telegram_controller = TelegramSearchController(self._api_client)
         live_controller = LiveController(self._api_client, custom_live_service=live_source_manager)
-        emby_controller = EmbyController(self._api_client)
-        jellyfin_controller = JellyfinController(self._api_client)
+        emby_controller = EmbyController(
+            self._api_client,
+            playback_history_loader=None
+            if self._playback_history_repository is None
+            else lambda vod_id: self._playback_history_repository.get_history("emby", vod_id),
+            playback_history_saver=None
+            if self._playback_history_repository is None
+            else lambda vod_id, payload: self._playback_history_repository.save_history(
+                "emby",
+                vod_id,
+                payload,
+                source_name="Emby",
+            ),
+        )
+        jellyfin_controller = JellyfinController(
+            self._api_client,
+            playback_history_loader=None
+            if self._playback_history_repository is None
+            else lambda vod_id: self._playback_history_repository.get_history("jellyfin", vod_id),
+            playback_history_saver=None
+            if self._playback_history_repository is None
+            else lambda vod_id, payload: self._playback_history_repository.save_history(
+                "jellyfin",
+                vod_id,
+                payload,
+                source_name="Jellyfin",
+            ),
+        )
         browse_controller = BrowseController(self._api_client)
-        history_controller = HistoryController(self._api_client, self._plugin_repository)
+        history_controller = HistoryController(self._api_client, self._playback_history_repository)
         player_controller = PlayerController(self._api_client)
         self._start_live_background_refresh(live_source_manager, live_epg_service)
         logger.info(

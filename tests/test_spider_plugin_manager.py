@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from atv_player.local_playback_history import LocalPlaybackHistoryRepository
 from atv_player.models import SpiderPluginConfig
 from atv_player.plugins import SpiderPluginManager
 from atv_player.plugins.loader import LoadedSpiderPlugin
@@ -87,11 +88,12 @@ def test_manager_refresh_plugin_records_error_and_log_instead_of_raising(tmp_pat
     assert logs[0].message == "network down"
 
 
-def test_manager_load_enabled_plugins_wires_repository_playback_history_callbacks(tmp_path: Path) -> None:
-    repository = SpiderPluginRepository(tmp_path / "app.db")
-    plugin = repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧")
-    repository.save_playback_history(
-        plugin.id,
+def test_manager_load_enabled_plugins_wires_local_repository_playback_history_callbacks(tmp_path: Path) -> None:
+    plugin_repository = SpiderPluginRepository(tmp_path / "app.db")
+    local_history_repository = LocalPlaybackHistoryRepository(tmp_path / "app.db")
+    plugin = plugin_repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧")
+    local_history_repository.save_history(
+        "spider_plugin",
         "detail-1",
         {
             "vodName": "红果短剧",
@@ -106,8 +108,10 @@ def test_manager_load_enabled_plugins_wires_repository_playback_history_callback
             "playlistIndex": 1,
             "createTime": 1713206400000,
         },
+        source_key=str(plugin.id),
+        source_name="红果短剧",
     )
-    manager = SpiderPluginManager(repository, HistoryLoader())
+    manager = SpiderPluginManager(plugin_repository, HistoryLoader(), local_history_repository)
 
     definitions = manager.load_enabled_plugins()
     request = definitions[0].controller.build_request("detail-1")
@@ -134,7 +138,7 @@ def test_manager_load_enabled_plugins_wires_repository_playback_history_callback
             "createTime": 1713206500000,
         }
     )
-    updated = repository.get_playback_history(plugin.id, "detail-1")
+    updated = local_history_repository.get_history("spider_plugin", "detail-1", source_key=str(plugin.id))
     assert updated is not None
     assert updated.position == 90000
     assert updated.playlist_index == 0

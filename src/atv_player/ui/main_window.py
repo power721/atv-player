@@ -456,11 +456,18 @@ class MainWindow(QMainWindow):
 
     def open_history_detail(self, record: HistoryRecord) -> None:
         if record.source_kind == "spider_plugin":
-            controller = self._find_plugin_controller(record.source_plugin_id)
+            plugin_id = record.source_key or str(record.source_plugin_id or "")
+            controller = self._plugin_controller_by_id(plugin_id)
             if controller is None:
-                self.show_error(f"没有可播放的项目: {record.source_plugin_name or record.key}")
+                self.show_error(f"没有可播放的项目: {record.source_name or record.source_plugin_name or record.key}")
                 return
             self._start_open_request(lambda: controller.build_request(record.key))
+            return
+        if record.source_kind == "emby":
+            self._start_open_request(lambda: self.emby_controller.build_request(record.key))
+            return
+        if record.source_kind == "jellyfin":
+            self._start_open_request(lambda: self.jellyfin_controller.build_request(record.key))
             return
         self._start_open_request(lambda: self.browse_controller.build_request_from_detail(record.key))
 

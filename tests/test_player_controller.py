@@ -244,6 +244,53 @@ def test_player_controller_prefers_plugin_local_history_loader() -> None:
     assert session.ending_seconds == 10
 
 
+def test_player_controller_prefers_emby_local_history_loader() -> None:
+    api = FakeApiClient()
+    api.history = HistoryRecord(
+        id=1,
+        key="emby-1",
+        vod_name="API Emby Movie",
+        vod_pic="api-pic",
+        vod_remarks="Episode 1",
+        episode=0,
+        episode_url="1.m3u8",
+        position=1000,
+        opening=0,
+        ending=0,
+        speed=1.0,
+        create_time=1,
+    )
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="emby-1", vod_name="Emby Movie", vod_pic="emby-pic")
+    playlist = [PlayItem(title="Episode 1", url="1.m3u8"), PlayItem(title="Episode 2", url="2.m3u8")]
+
+    session = controller.create_session(
+        vod,
+        playlist,
+        clicked_index=0,
+        use_local_history=False,
+        playback_history_loader=lambda: HistoryRecord(
+            id=0,
+            key="emby-1",
+            vod_name="Emby Movie",
+            vod_pic="emby-pic",
+            vod_remarks="Episode 2",
+            episode=1,
+            episode_url="2.m3u8",
+            position=45000,
+            opening=5000,
+            ending=10000,
+            speed=1.25,
+            create_time=2,
+        ),
+    )
+
+    assert api.history_calls == []
+    assert session.start_index == 1
+    assert session.start_position_seconds == 45
+    assert session.speed == 1.25
+
+
 def test_player_controller_reports_progress_to_plugin_local_saver_without_backend_history() -> None:
     api = FakeApiClient()
     controller = PlayerController(api)
@@ -271,6 +318,36 @@ def test_player_controller_reports_progress_to_plugin_local_saver_without_backen
 
     assert len(saved_payloads) == 1
     assert saved_payloads[0]["key"] == "plugin-1"
+    assert api.saved_payloads == []
+
+
+def test_player_controller_reports_progress_to_jellyfin_local_saver_without_backend_history() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="jf-1", vod_name="Jellyfin Movie", vod_pic="poster")
+    playlist = [PlayItem(title="Episode 1", url="https://media.example/1.m3u8")]
+    saved_payloads: list[dict[str, object]] = []
+
+    session = controller.create_session(
+        vod,
+        playlist,
+        clicked_index=0,
+        use_local_history=False,
+        playback_history_saver=lambda payload: saved_payloads.append(payload),
+    )
+
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=45,
+        speed=1.25,
+        opening_seconds=5,
+        ending_seconds=10,
+        paused=False,
+    )
+
+    assert len(saved_payloads) == 1
+    assert saved_payloads[0]["key"] == "jf-1"
     assert api.saved_payloads == []
 
 
