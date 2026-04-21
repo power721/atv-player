@@ -376,6 +376,66 @@ def test_spider_plugin_repository_updates_existing_playback_history_and_deletes_
     assert repo.get_playback_history(plugin.id, "detail-1") is None
 
 
+def test_spider_plugin_repository_lists_playback_histories_with_plugin_metadata(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    repo = SpiderPluginRepository(db_path)
+    plugin = repo.add_plugin("local", "/plugins/红果短剧.py", "红果短剧")
+
+    repo.save_playback_history(
+        plugin.id,
+        "detail-1",
+        {
+            "vodName": "红果短剧",
+            "vodPic": "poster-1",
+            "vodRemarks": "第2集",
+            "episode": 1,
+            "episodeUrl": "https://media.example/2.m3u8",
+            "position": 45000,
+            "opening": 5000,
+            "ending": 10000,
+            "speed": 1.25,
+            "playlistIndex": 1,
+            "createTime": 1713206400000,
+        },
+    )
+
+    records = repo.list_playback_histories()
+
+    assert len(records) == 1
+    assert records[0].key == "detail-1"
+    assert records[0].source_kind == "spider_plugin"
+    assert records[0].source_plugin_id == plugin.id
+    assert records[0].source_plugin_name == "红果短剧"
+
+
+def test_spider_plugin_repository_deletes_single_playback_history(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    repo = SpiderPluginRepository(db_path)
+    plugin = repo.add_plugin("local", "/plugins/红果短剧.py", "红果短剧")
+
+    repo.save_playback_history(
+        plugin.id,
+        "detail-1",
+        {
+            "vodName": "红果短剧",
+            "vodPic": "poster-1",
+            "vodRemarks": "第1集",
+            "episode": 0,
+            "episodeUrl": "https://media.example/1.m3u8",
+            "position": 15000,
+            "opening": 0,
+            "ending": 0,
+            "speed": 1.0,
+            "playlistIndex": 0,
+            "createTime": 1713206400000,
+        },
+    )
+
+    repo.delete_playback_history(plugin.id, "detail-1")
+
+    assert repo.get_playback_history(plugin.id, "detail-1") is None
+
+
 def test_spider_plugin_repository_migrates_tables_into_existing_settings_db(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     with sqlite3.connect(db_path) as conn:

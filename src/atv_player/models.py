@@ -91,6 +91,9 @@ class HistoryRecord:
     speed: float
     create_time: int
     playlist_index: int = 0
+    source_kind: str = "remote"
+    source_plugin_id: int = 0
+    source_plugin_name: str = ""
 
 
 @dataclass(slots=True)

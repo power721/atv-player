@@ -1613,7 +1613,7 @@ def test_main_window_plugin_card_signal_opens_player_asynchronously(qtbot, monke
     assert opened[0].source_key == "plugin-1"
 
 
-def test_main_window_opens_history_detail_asynchronously(qtbot, monkeypatch) -> None:
+def test_main_window_opens_remote_history_detail_asynchronously(qtbot, monkeypatch) -> None:
     browse_controller = AsyncHistoryBrowseController()
     window = MainWindow(
         douban_controller=FakeDoubanController(),
@@ -1633,7 +1633,23 @@ def test_main_window_opens_history_detail_asynchronously(qtbot, monkeypatch) -> 
     monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
     monkeypatch.setattr(window, "show_error", lambda message: None)
 
-    window.open_history_detail("history-vod-1")
+    window.open_history_detail(
+        HistoryRecord(
+            id=9,
+            key="history-vod-1",
+            vod_name="History Movie",
+            vod_pic="",
+            vod_remarks="Ep",
+            episode=0,
+            episode_url="",
+            position=0,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+            source_kind="remote",
+        )
+    )
     _wait_for_history_detail_call(qtbot, browse_controller, "history-vod-1")
     browse_controller.finish_detail("history-vod-1")
 
@@ -1641,6 +1657,97 @@ def test_main_window_opens_history_detail_asynchronously(qtbot, monkeypatch) -> 
 
     assert opened[0].vod.vod_name == "History Movie"
     assert opened[0].source_vod_id == "history-vod-1"
+
+
+def test_main_window_opens_plugin_history_detail_asynchronously(qtbot, monkeypatch) -> None:
+    controller = AsyncPluginController(_make_telegram_request)
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[{"id": 7, "title": "红果短剧", "controller": controller, "search_enabled": False}],
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened: list[OpenPlayerRequest] = []
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    monkeypatch.setattr(window, "show_error", lambda message: None)
+
+    window.open_history_detail(
+        HistoryRecord(
+            id=0,
+            key="detail-1",
+            vod_name="Plugin Movie",
+            vod_pic="",
+            vod_remarks="第1集",
+            episode=0,
+            episode_url="",
+            position=0,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+            source_kind="spider_plugin",
+            source_plugin_id=7,
+            source_plugin_name="红果短剧",
+        )
+    )
+    _wait_for_request_call(qtbot, controller, "detail-1")
+    controller.finish_request("detail-1", request=_make_telegram_request("detail-1", vod_name="插件电影"))
+
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
+
+    assert opened[0].vod.vod_name == "插件电影"
+    assert opened[0].source_vod_id == "detail-1"
+
+
+def test_main_window_shows_error_when_plugin_history_source_is_missing(qtbot, monkeypatch) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[],
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    errors: list[str] = []
+    monkeypatch.setattr(window, "show_error", lambda message: errors.append(message))
+
+    window.open_history_detail(
+        HistoryRecord(
+            id=0,
+            key="detail-1",
+            vod_name="Plugin Movie",
+            vod_pic="",
+            vod_remarks="第1集",
+            episode=0,
+            episode_url="",
+            position=0,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+            source_kind="spider_plugin",
+            source_plugin_id=999,
+            source_plugin_name="失效插件",
+        )
+    )
+
+    qtbot.waitUntil(lambda: errors == ["没有可播放的项目: 失效插件"], timeout=1000)
 
 
 def test_decide_start_view_prefers_login_without_token() -> None:

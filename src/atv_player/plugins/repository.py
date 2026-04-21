@@ -213,6 +213,47 @@ class SpiderPluginRepository:
             playlist_index=int(row[10]),
         )
 
+    def list_playback_histories(self) -> list[HistoryRecord]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT history.vod_id, history.vod_name, history.vod_pic, history.vod_remarks,
+                       history.episode, history.episode_url, history.position, history.opening,
+                       history.ending, history.speed, history.playlist_index, history.updated_at,
+                       plugin.id, plugin.display_name
+                FROM spider_plugin_playback_history AS history
+                JOIN spider_plugins AS plugin ON plugin.id = history.plugin_id
+                """
+            ).fetchall()
+        return [
+            HistoryRecord(
+                id=0,
+                key=row[0],
+                vod_name=row[1],
+                vod_pic=row[2],
+                vod_remarks=row[3],
+                episode=int(row[4]),
+                episode_url=row[5],
+                position=int(row[6]),
+                opening=int(row[7]),
+                ending=int(row[8]),
+                speed=float(row[9]),
+                create_time=int(row[11]),
+                playlist_index=int(row[10]),
+                source_kind="spider_plugin",
+                source_plugin_id=int(row[12]),
+                source_plugin_name=str(row[13] or ""),
+            )
+            for row in rows
+        ]
+
+    def delete_playback_history(self, plugin_id: int, vod_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM spider_plugin_playback_history WHERE plugin_id = ? AND vod_id = ?",
+                (plugin_id, vod_id),
+            )
+
     def save_playback_history(self, plugin_id: int, vod_id: str, payload: dict[str, object]) -> None:
         with self._connect() as conn:
             conn.execute(

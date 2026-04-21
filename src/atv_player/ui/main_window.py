@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.ui.browse_page import BrowsePage
-from atv_player.models import OpenPlayerRequest
+from atv_player.models import HistoryRecord, OpenPlayerRequest
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.poster_grid_page import PosterGridPage
 from atv_player.ui.history_page import HistoryPage
@@ -448,8 +448,21 @@ class MainWindow(QMainWindow):
             trim_breadcrumbs_to=1,
         )
 
-    def open_history_detail(self, vod_id: str) -> None:
-        self._start_open_request(lambda: self.browse_controller.build_request_from_detail(vod_id))
+    def _find_plugin_controller(self, plugin_id: int):
+        for definition in self._plugin_definitions:
+            if _plugin_value(definition, "id") == plugin_id:
+                return _plugin_value(definition, "controller")
+        return None
+
+    def open_history_detail(self, record: HistoryRecord) -> None:
+        if record.source_kind == "spider_plugin":
+            controller = self._find_plugin_controller(record.source_plugin_id)
+            if controller is None:
+                self.show_error(f"没有可播放的项目: {record.source_plugin_name or record.key}")
+                return
+            self._start_open_request(lambda: controller.build_request(record.key))
+            return
+        self._start_open_request(lambda: self.browse_controller.build_request_from_detail(record.key))
 
     def _start_open_request(self, builder) -> int:
         self._open_request_id += 1

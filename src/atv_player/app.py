@@ -216,7 +216,7 @@ class AppCoordinator(QObject):
         emby_controller = EmbyController(self._api_client)
         jellyfin_controller = JellyfinController(self._api_client)
         browse_controller = BrowseController(self._api_client)
-        history_controller = HistoryController(self._api_client)
+        history_controller = HistoryController(self._api_client, self._plugin_repository)
         player_controller = PlayerController(self._api_client)
         self._start_live_background_refresh(live_source_manager, live_epg_service)
         logger.info(

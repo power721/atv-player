@@ -244,6 +244,36 @@ def test_player_controller_prefers_plugin_local_history_loader() -> None:
     assert session.ending_seconds == 10
 
 
+def test_player_controller_reports_progress_to_plugin_local_saver_without_backend_history() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="plugin-1", vod_name="Plugin Movie", vod_pic="poster")
+    playlist = [PlayItem(title="第1集", url="https://media.example/1.m3u8")]
+    saved_payloads: list[dict[str, object]] = []
+
+    session = controller.create_session(
+        vod,
+        playlist,
+        clicked_index=0,
+        use_local_history=False,
+        playback_history_saver=lambda payload: saved_payloads.append(payload),
+    )
+
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=45,
+        speed=1.25,
+        opening_seconds=5,
+        ending_seconds=10,
+        paused=False,
+    )
+
+    assert len(saved_payloads) == 1
+    assert saved_payloads[0]["key"] == "plugin-1"
+    assert api.saved_payloads == []
+
+
 def test_player_controller_logs_session_creation(caplog) -> None:
     controller = PlayerController(FakeApiClient())
     vod = VodItem(vod_id="movie-1", vod_name="Movie", vod_pic="pic")

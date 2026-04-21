@@ -36,7 +36,7 @@ class _HistoryMutationSignals(QObject):
 
 
 class HistoryPage(QWidget):
-    open_detail_requested = Signal(str)
+    open_detail_requested = Signal(object)
     unauthorized = Signal()
 
     def __init__(self, controller) -> None:
@@ -50,8 +50,8 @@ class HistoryPage(QWidget):
         self.next_page_button = QPushButton("下一页")
         self.page_label = QLabel("第 1 / 1 页")
         self.page_size_combo = QComboBox()
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["标题", "集数", "当前播放", "进度", "时间"])
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["标题", "集数", "当前播放", "进度", "时间", "来源"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -148,15 +148,14 @@ class HistoryPage(QWidget):
         rows = sorted({index.row() for index in self.table.selectionModel().selectedRows()})
         if not rows:
             return
-        ids = [self.records[row].id for row in rows]
-        next_page = self.current_page - 1 if len(ids) == len(self.records) and self.current_page > 1 else self.current_page
+        records = [self.records[row] for row in rows]
+        next_page = (
+            self.current_page - 1 if len(records) == len(self.records) and self.current_page > 1 else self.current_page
+        )
 
         def run() -> None:
             try:
-                if len(ids) == 1:
-                    self.controller.delete_one(ids[0])
-                else:
-                    self.controller.delete_many(ids)
+                self.controller.delete_many(records)
             except UnauthorizedError:
                 if not self._can_deliver_worker_result():
                     return
@@ -176,12 +175,13 @@ class HistoryPage(QWidget):
         threading.Thread(target=run, daemon=True).start()
 
     def clear_all(self) -> None:
+        records = list(self.records)
         self._mutation_request_id += 1
         request_id = self._mutation_request_id
 
         def run() -> None:
             try:
-                self.controller.clear_all()
+                self.controller.clear_page(records)
             except UnauthorizedError:
                 if not self._can_deliver_worker_result():
                     return
@@ -201,7 +201,12 @@ class HistoryPage(QWidget):
     def _open_selected(self, row: int, _column: int) -> None:
         if not (0 <= row < len(self.records)):
             return
-        self.open_detail_requested.emit(self.records[row].key)
+        self.open_detail_requested.emit(self.records[row])
+
+    def _source_label(self, record: HistoryRecord) -> str:
+        if record.source_kind == "spider_plugin":
+            return record.source_plugin_name or "插件"
+        return "远程"
 
     def _format_episode(self, episode: int) -> str:
         return str(episode + 1) if episode >= 0 else ""
@@ -276,6 +281,7 @@ class HistoryPage(QWidget):
             self.table.setItem(row, 2, QTableWidgetItem(record.vod_remarks))
             self.table.setItem(row, 3, QTableWidgetItem(self._format_duration(record.position)))
             self.table.setItem(row, 4, QTableWidgetItem(self._format_timestamp(record.create_time)))
+            self.table.setItem(row, 5, QTableWidgetItem(self._source_label(record)))
         self._sync_action_state()
         self._update_pagination_controls()
 

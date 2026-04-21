@@ -36,9 +36,9 @@ class FakeHistoryController:
 class AsyncHistoryPageController:
     def __init__(self) -> None:
         self.load_calls: list[tuple[int, int]] = []
-        self.delete_one_calls: list[int] = []
-        self.delete_many_calls: list[list[int]] = []
-        self.clear_all_calls = 0
+        self.delete_one_calls: list[HistoryRecord] = []
+        self.delete_many_calls: list[list[HistoryRecord]] = []
+        self.clear_page_calls: list[list[HistoryRecord]] = []
         self._main_thread_id = threading.get_ident()
         self._load_events_by_request: dict[tuple[int, int], list[threading.Event]] = {}
         self._load_results_by_request: dict[tuple[int, int], list[tuple[list[HistoryRecord], int]]] = {}
@@ -63,8 +63,8 @@ class AsyncHistoryPageController:
         self._load_results_by_request.setdefault(key, []).append((records, total))
         self._load_events_by_request[key].pop(0).set()
 
-    def delete_one(self, history_id: int) -> None:
-        self.delete_one_calls.append(history_id)
+    def delete_one(self, record: HistoryRecord) -> None:
+        self.delete_one_calls.append(record)
         assert threading.get_ident() != self._main_thread_id
         event = threading.Event()
         self._delete_one_events.append(event)
@@ -73,8 +73,8 @@ class AsyncHistoryPageController:
     def finish_delete_one(self) -> None:
         self._delete_one_events.pop(0).set()
 
-    def delete_many(self, history_ids: list[int]) -> None:
-        self.delete_many_calls.append(list(history_ids))
+    def delete_many(self, records: list[HistoryRecord]) -> None:
+        self.delete_many_calls.append(list(records))
         assert threading.get_ident() != self._main_thread_id
         event = threading.Event()
         self._delete_many_events.append(event)
@@ -83,12 +83,12 @@ class AsyncHistoryPageController:
     def finish_delete_many(self) -> None:
         self._delete_many_events.pop(0).set()
 
-    def clear_all(self) -> None:
-        self.clear_all_calls += 1
+    def clear_page(self, records: list[HistoryRecord]) -> None:
+        self.clear_page_calls.append(list(records))
         assert threading.get_ident() != self._main_thread_id
         event = threading.Event()
         self._clear_all_events.append(event)
-        assert event.wait(timeout=5), "clear_all was never released"
+        assert event.wait(timeout=5), "clear_page was never released"
 
     def finish_clear_all(self) -> None:
         self._clear_all_events.pop(0).set()
@@ -572,7 +572,7 @@ def test_search_results_tables_show_source_channel_time_and_name_columns(qtbot) 
     assert [search_page.results_table.horizontalHeaderItem(index).text() for index in range(2)] == expected_headers
 
 
-def test_history_page_formats_episode_progress_and_time(qtbot) -> None:
+def test_history_page_formats_episode_progress_time_and_source(qtbot) -> None:
     class Controller:
         def load_page(self, page: int, size: int):
             return [
@@ -589,6 +589,9 @@ def test_history_page_formats_episode_progress_and_time(qtbot) -> None:
                     ending=0,
                     speed=1.0,
                     create_time=1713168000000,
+                    source_kind="spider_plugin",
+                    source_plugin_id=7,
+                    source_plugin_name="红果短剧",
                 )
             ], 1
 
@@ -598,12 +601,14 @@ def test_history_page_formats_episode_progress_and_time(qtbot) -> None:
     page.load_history()
     qtbot.waitUntil(lambda: page.table.rowCount() == 1, timeout=1000)
 
-    assert page.table.columnCount() == 5
+    assert page.table.columnCount() == 6
     assert page.table.horizontalHeaderItem(1).text() == "集数"
     assert page.table.item(0, 1).text() == "2"
     assert page.table.item(0, 3).text() == "01:30"
     assert page.table.item(0, 4).text() != "1713168000000"
     assert ":" in page.table.item(0, 4).text()
+    assert page.table.horizontalHeaderItem(5).text() == "来源"
+    assert page.table.item(0, 5).text() == "红果短剧"
 
 
 def test_browse_page_handles_open_errors_without_missing_widget_crash(qtbot) -> None:
@@ -1370,7 +1375,7 @@ def test_history_page_delete_reloads_previous_page_when_last_page_becomes_empty(
             total = 51 if page == 2 else 50
             return self.records.get(page, []), total
 
-        def delete_one(self, history_id: int) -> None:
+        def delete_many(self, records: list[HistoryRecord]) -> None:
             self.records[2] = []
 
     controller = Controller()
@@ -1417,7 +1422,7 @@ def test_history_page_clear_all_resets_to_first_page(qtbot) -> None:
                 )
             ], 60
 
-        def clear_all(self) -> None:
+        def clear_page(self, records: list[HistoryRecord]) -> None:
             self.cleared = True
 
     controller = Controller()
@@ -1589,8 +1594,11 @@ def test_history_page_delete_selected_runs_off_main_thread_and_reloads(qtbot) ->
     page.table.selectRow(0)
 
     page.delete_selected()
-    qtbot.waitUntil(lambda: controller.delete_one_calls == [9], timeout=1000)
-    controller.finish_delete_one()
+    qtbot.waitUntil(
+        lambda: [[record.id for record in records] for records in controller.delete_many_calls] == [[9]],
+        timeout=1000,
+    )
+    controller.finish_delete_many()
     _wait_for_history_load(qtbot, controller, 1, 100)
     controller.finish_load(1, 100, records=[], total=0)
 
@@ -1605,12 +1613,95 @@ def test_history_page_clear_all_runs_off_main_thread_and_resets_first_page(qtbot
     page.page_size = 50
 
     page.clear_all()
-    qtbot.waitUntil(lambda: controller.clear_all_calls == 1, timeout=1000)
+    qtbot.waitUntil(lambda: [[record.id for record in records] for records in controller.clear_page_calls] == [[]], timeout=1000)
     controller.finish_clear_all()
     _wait_for_history_load(qtbot, controller, 1, 50)
     controller.finish_load(1, 50, records=[], total=0)
 
     qtbot.waitUntil(lambda: page.current_page == 1 and page.page_label.text() == "第 1 / 1 页", timeout=1000)
+
+
+def test_history_page_delete_selected_passes_records_to_controller(qtbot) -> None:
+    class Controller:
+        def __init__(self) -> None:
+            self.deleted_records: list[list[HistoryRecord]] = []
+
+        def load_page(self, page: int, size: int):
+            return [], 0
+
+        def delete_many(self, records: list[HistoryRecord]) -> None:
+            self.deleted_records.append(records)
+
+    controller = Controller()
+    page = HistoryPage(controller)
+    qtbot.addWidget(page)
+    page.records = [
+        HistoryRecord(
+            id=0,
+            key="detail-1",
+            vod_name="Movie",
+            vod_pic="",
+            vod_remarks="Ep",
+            episode=0,
+            episode_url="",
+            position=0,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+            source_kind="spider_plugin",
+            source_plugin_id=3,
+            source_plugin_name="红果短剧",
+        )
+    ]
+    page.total_items = 1
+    page.table.setColumnCount(6)
+    page.table.setRowCount(1)
+    page.table.setItem(0, 0, QTableWidgetItem("Movie"))
+    page.table.selectRow(0)
+
+    page.delete_selected()
+
+    qtbot.waitUntil(lambda: len(controller.deleted_records) == 1, timeout=1000)
+    assert controller.deleted_records[0][0].key == "detail-1"
+
+
+def test_history_page_clear_all_passes_current_page_records_to_controller(qtbot) -> None:
+    class Controller:
+        def __init__(self) -> None:
+            self.cleared_records: list[list[HistoryRecord]] = []
+
+        def load_page(self, page: int, size: int):
+            return [], 0
+
+        def clear_page(self, records: list[HistoryRecord]) -> None:
+            self.cleared_records.append(records)
+
+    controller = Controller()
+    page = HistoryPage(controller)
+    qtbot.addWidget(page)
+    page.records = [
+        HistoryRecord(
+            id=9,
+            key="movie-1",
+            vod_name="Movie",
+            vod_pic="",
+            vod_remarks="Ep",
+            episode=0,
+            episode_url="",
+            position=0,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+            source_kind="remote",
+        )
+    ]
+
+    page.clear_all()
+
+    qtbot.waitUntil(lambda: len(controller.cleared_records) == 1, timeout=1000)
+    assert controller.cleared_records[0][0].key == "movie-1"
 
 
 def test_browse_page_refresh_reuses_current_page_state(qtbot) -> None:
