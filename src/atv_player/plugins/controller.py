@@ -60,6 +60,27 @@ _SUPPORTED_DRIVE_DOMAINS = (
     "baidu.com",
 )
 
+_DRIVE_PROVIDER_LABELS = {
+    "alipan.com": "阿里",
+    "aliyundrive.com": "阿里",
+    "mypikpak.com": "PikPak",
+    "xunlei.com": "迅雷",
+    "123pan.com": "123云盘",
+    "123pan.cn": "123云盘",
+    "123684.com": "123云盘",
+    "123865.com": "123云盘",
+    "123912.com": "123云盘",
+    "123592.com": "123云盘",
+    "quark.cn": "夸克",
+    "139.com": "移动云盘",
+    "uc.cn": "UC",
+    "115.com": "115",
+    "115cdn.com": "115",
+    "anxia.com": "115",
+    "189.cn": "天翼",
+    "baidu.com": "百度",
+}
+
 
 def _looks_like_drive_share_link(value: str) -> bool:
     candidate = value.strip()
@@ -67,6 +88,24 @@ def _looks_like_drive_share_link(value: str) -> bool:
         return False
     hostname = (urlparse(candidate).hostname or "").lower()
     return any(hostname == domain or hostname.endswith(f".{domain}") for domain in _SUPPORTED_DRIVE_DOMAINS)
+
+
+def _detect_drive_provider_label(value: str) -> str:
+    candidate = value.strip()
+    if not candidate.lower().startswith(("http://", "https://")):
+        return ""
+    hostname = (urlparse(candidate).hostname or "").lower()
+    for domain, label in _DRIVE_PROVIDER_LABELS.items():
+        if hostname == domain or hostname.endswith(f".{domain}"):
+            return label
+    return ""
+
+
+def _format_drive_route_label(route: str, provider: str) -> str:
+    normalized_route = route.strip()
+    if not provider or provider in normalized_route:
+        return normalized_route
+    return f"{normalized_route}({provider})"
 
 
 class SpiderPluginController:
@@ -160,6 +199,7 @@ class SpiderPluginController:
         playlists: list[list[PlayItem]] = []
         for group_index, group in enumerate(groups):
             route = self._route_name(routes, group_index)
+            route_label = route
             playlist: list[PlayItem] = []
             for raw_chunk in group.split("#"):
                 chunk = raw_chunk.strip()
@@ -172,13 +212,17 @@ class SpiderPluginController:
                 clean_value = value.strip()
                 is_drive_link = _looks_like_drive_share_link(clean_value)
                 is_media_url = _looks_like_media_url(clean_value) and not is_drive_link
+                if is_drive_link:
+                    provider = _detect_drive_provider_label(clean_value)
+                    if provider:
+                        route_label = _format_drive_route_label(route, provider)
                 playlist.append(
                     PlayItem(
                         title=title.strip() or clean_value or f"选集 {len(playlist) + 1}",
                         url=clean_value if is_media_url else "",
                         vod_id="" if is_media_url else clean_value,
                         index=len(playlist),
-                        play_source=route,
+                        play_source=route_label,
                     )
                 )
             if playlist:

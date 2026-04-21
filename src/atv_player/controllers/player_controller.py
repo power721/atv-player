@@ -155,7 +155,7 @@ class PlayerController:
         position_ms = position_seconds * 1000
         if session.playback_progress_reporter is not None:
             session.playback_progress_reporter(current_item, position_ms, paused)
-        logger.debug(
+        logger.info(
             "Report playback progress vod_id=%s index=%s position_ms=%s paused=%s",
             session.vod.vod_id,
             current_index,

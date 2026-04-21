@@ -255,8 +255,78 @@ def test_controller_returns_replacement_playlist_for_quark_drive_route() -> None
     assert result is not None
     assert [item.title for item in result.replacement_playlist] == ["S1 - 1", "S1 - 2"]
     assert [item.url for item in result.replacement_playlist] == ["http://m/1.mp4", "http://m/2.mp4"]
-    assert [item.play_source for item in result.replacement_playlist] == ["网盘线", "网盘线"]
+    assert [item.play_source for item in result.replacement_playlist] == ["网盘线(夸克)", "网盘线(夸克)"]
     assert result.replacement_start_index == 0
+
+
+def test_controller_formats_generic_drive_route_with_detected_provider() -> None:
+    spider = DriveLinkSpider()
+    controller = SpiderPluginController(
+        spider,
+        plugin_name="红果短剧",
+        search_enabled=True,
+        drive_detail_loader=lambda link: {"list": []},
+    )
+
+    request = controller.build_request("/detail/drive")
+
+    assert [item.play_source for item in request.playlists[0]] == ["网盘线(夸克)"]
+    assert [item.play_source for item in request.playlists[1]] == ["直链线"]
+
+
+def test_controller_does_not_duplicate_provider_suffix_when_route_already_names_provider() -> None:
+    class BaiduDriveSpider(FakeSpider):
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "百度网盘剧集",
+                        "vod_play_from": "百度线",
+                        "vod_play_url": "查看$https://pan.baidu.com/s/1demo?pwd=test",
+                    }
+                ]
+            }
+
+    controller = SpiderPluginController(
+        BaiduDriveSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        drive_detail_loader=lambda link: {"list": []},
+    )
+
+    request = controller.build_request("/detail/baidu")
+
+    assert [item.play_source for item in request.playlist] == ["百度线"]
+
+
+def test_controller_preserves_formatted_drive_route_label_in_replacement_playlist() -> None:
+    spider = DriveLinkSpider()
+
+    controller = SpiderPluginController(
+        spider,
+        plugin_name="红果短剧",
+        search_enabled=True,
+        drive_detail_loader=lambda link: {
+            "list": [
+                {
+                    "vod_id": "1$94954$1",
+                    "vod_name": "夸克资源",
+                    "items": [
+                        {"title": "S1 - 1", "url": "http://m/1.mp4"},
+                        {"title": "S1 - 2", "url": "http://m/2.mp4"},
+                    ],
+                }
+            ]
+        },
+    )
+
+    request = controller.build_request("/detail/drive")
+    assert request.playback_loader is not None
+    result = request.playback_loader(request.playlists[0][0])
+
+    assert result is not None
+    assert [item.play_source for item in result.replacement_playlist] == ["网盘线(夸克)", "网盘线(夸克)"]
 
 
 def test_controller_returns_replacement_playlist_for_baidu_drive_route() -> None:
