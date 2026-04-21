@@ -170,12 +170,27 @@ def test_player_window_uses_splitters_for_resizable_panels(qtbot) -> None:
     assert window.sidebar_splitter.orientation() == Qt.Orientation.Vertical
 
 
-def test_player_window_hides_route_selector_for_single_group(qtbot) -> None:
+def test_player_window_shows_route_selector_for_single_group(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
+    session = PlayerSession(
+        vod=VodItem(vod_id="plugin-1", vod_name="网盘剧集"),
+        playlist=[PlayItem(title="查看", url="", vod_id="https://pan.quark.cn/s/demo", play_source="网盘线(夸克)")],
+        playlists=[
+            [PlayItem(title="查看", url="", vod_id="https://pan.quark.cn/s/demo", play_source="网盘线(夸克)")]
+        ],
+        playlist_index=0,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+
+    window.open_session(session)
 
     assert isinstance(window.playlist_group_combo, QComboBox)
-    assert window.playlist_group_combo.isHidden() is True
+    assert window.playlist_group_combo.isHidden() is False
+    assert window.playlist_group_combo.count() == 1
+    assert window.playlist_group_combo.itemText(0) == "网盘线(夸克)"
 
 
 def test_player_window_rewrites_remote_m3u8_to_local_proxy_url(qtbot) -> None:
