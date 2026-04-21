@@ -571,8 +571,11 @@ class PlayerWindow(QWidget):
         for index, playlist in enumerate(playlists):
             self.playlist_group_combo.addItem(self._playlist_group_label(playlist, index))
         has_multiple_groups = len(playlists) > 1
-        self.playlist_group_combo.setHidden(not has_multiple_groups)
-        if has_multiple_groups and self.session is not None:
+        should_show_single_group_label = (
+            len(playlists) == 1 and bool(playlists[0]) and bool(playlists[0][0].play_source)
+        )
+        self.playlist_group_combo.setHidden(not (has_multiple_groups or should_show_single_group_label))
+        if self.session is not None and playlists:
             self.playlist_group_combo.setCurrentIndex(self.session.playlist_index)
         self.playlist_group_combo.blockSignals(False)
 
