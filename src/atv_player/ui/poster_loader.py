@@ -109,6 +109,7 @@ def load_remote_poster_image(
             normalized_url,
             headers=build_poster_request_headers(normalized_url),
             timeout=timeout,
+            follow_redirects=True,
         )
         response.raise_for_status()
     except Exception:

@@ -44,7 +44,12 @@ def test_build_poster_request_headers_uses_site_specific_referers() -> None:
 
 
 def test_load_remote_poster_image_scales_downloaded_image() -> None:
-    def fake_get(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+    def fake_get(
+        url: str,
+        headers: dict[str, str],
+        timeout: float,
+        follow_redirects: bool = False,
+    ) -> FakeResponse:
         return FakeResponse(_png_bytes())
 
     loaded = load_remote_poster_image(
@@ -57,6 +62,33 @@ def test_load_remote_poster_image_scales_downloaded_image() -> None:
     assert loaded.isNull() is False
     assert loaded.width() <= 90
     assert loaded.height() <= 130
+
+
+def test_load_remote_poster_image_follows_redirects(monkeypatch, tmp_path) -> None:
+    cache_dir = tmp_path / "posters"
+    monkeypatch.setattr(poster_loader_module, "poster_cache_dir", lambda: cache_dir)
+    calls: list[bool] = []
+
+    def fake_get(
+        url: str,
+        headers: dict[str, str],
+        timeout: float,
+        follow_redirects: bool = False,
+    ) -> FakeResponse:
+        calls.append(follow_redirects)
+        if follow_redirects:
+            return FakeResponse(_png_bytes())
+        return FakeResponse(b"<html>redirect</html>")
+
+    loaded = load_remote_poster_image(
+        "https://by1.430520.xyz/t/?id=1&url=xinlangtupian.com/cover/a11907c639c2c74de3a0b9eb7a4575e9.jpg",
+        QSize(90, 130),
+        get=fake_get,
+    )
+
+    assert loaded is not None
+    assert loaded.isNull() is False
+    assert calls == [True]
 
 
 def test_load_remote_poster_image_reuses_cached_file(monkeypatch, tmp_path) -> None:
@@ -84,7 +116,12 @@ def test_load_remote_poster_image_writes_downloaded_bytes_to_cache(monkeypatch, 
     monkeypatch.setattr(poster_loader_module, "poster_cache_dir", lambda: cache_dir)
     poster_bytes = _png_bytes()
 
-    def fake_get(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+    def fake_get(
+        url: str,
+        headers: dict[str, str],
+        timeout: float,
+        follow_redirects: bool = False,
+    ) -> FakeResponse:
         return FakeResponse(poster_bytes)
 
     image_url = "https://img3.doubanio.com/view/photo/m/public/p123.jpg"
@@ -106,7 +143,12 @@ def test_load_remote_poster_image_refetches_when_cached_bytes_are_corrupt(monkey
     poster_bytes = _png_bytes()
     calls: list[str] = []
 
-    def fake_get(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+    def fake_get(
+        url: str,
+        headers: dict[str, str],
+        timeout: float,
+        follow_redirects: bool = False,
+    ) -> FakeResponse:
         calls.append(url)
         return FakeResponse(poster_bytes)
 
@@ -130,7 +172,12 @@ def test_load_remote_poster_image_refetches_when_cache_read_fails(monkeypatch, t
     calls: list[str] = []
     original_read_bytes = Path.read_bytes
 
-    def fake_get(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+    def fake_get(
+        url: str,
+        headers: dict[str, str],
+        timeout: float,
+        follow_redirects: bool = False,
+    ) -> FakeResponse:
         calls.append(url)
         return FakeResponse(poster_bytes)
 
@@ -153,7 +200,12 @@ def test_load_remote_poster_image_returns_image_when_cache_write_fails(monkeypat
     monkeypatch.setattr(poster_loader_module, "poster_cache_dir", lambda: cache_dir)
     poster_bytes = _png_bytes()
 
-    def fake_get(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+    def fake_get(
+        url: str,
+        headers: dict[str, str],
+        timeout: float,
+        follow_redirects: bool = False,
+    ) -> FakeResponse:
         return FakeResponse(poster_bytes)
 
     monkeypatch.setattr(
