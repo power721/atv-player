@@ -137,6 +137,53 @@ def test_local_playback_history_repository_migrates_spider_plugin_legacy_rows(tm
     assert records[0].key == "detail-1"
 
 
+def test_local_playback_history_repository_reads_legacy_spider_plugin_rows_without_source_key(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE media_playback_history (
+                source_kind TEXT NOT NULL,
+                source_key TEXT NOT NULL DEFAULT '',
+                source_name TEXT NOT NULL DEFAULT '',
+                vod_id TEXT NOT NULL,
+                vod_name TEXT NOT NULL DEFAULT '',
+                vod_pic TEXT NOT NULL DEFAULT '',
+                vod_remarks TEXT NOT NULL DEFAULT '',
+                episode INTEGER NOT NULL DEFAULT 0,
+                episode_url TEXT NOT NULL DEFAULT '',
+                position INTEGER NOT NULL DEFAULT 0,
+                opening INTEGER NOT NULL DEFAULT 0,
+                ending INTEGER NOT NULL DEFAULT 0,
+                speed REAL NOT NULL DEFAULT 1.0,
+                playlist_index INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (source_kind, source_key, vod_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO media_playback_history (
+                source_kind, source_key, source_name, vod_id, vod_name, vod_pic,
+                vod_remarks, episode, episode_url, position, opening, ending,
+                speed, playlist_index, updated_at
+            )
+            VALUES ('spider_plugin', '', '红果短剧', 'detail-1', '红果短剧', 'poster', '第2集', 1, '2.m3u8', 45000, 0, 0, 1.0, 0, 1713206400000)
+            """
+        )
+
+    from atv_player.local_playback_history import LocalPlaybackHistoryRepository
+
+    repo = LocalPlaybackHistoryRepository(db_path)
+    history = repo.get_history("spider_plugin", "detail-1", source_key="7")
+
+    assert history is not None
+    assert history.key == "detail-1"
+    assert history.source_key == ""
+    assert history.episode == 1
+
+
 def test_settings_repository_round_trip(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     repo = SettingsRepository(db_path)

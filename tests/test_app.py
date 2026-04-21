@@ -1706,6 +1706,171 @@ def test_main_window_opens_plugin_history_detail_asynchronously(qtbot, monkeypat
 
     assert opened[0].vod.vod_name == "插件电影"
     assert opened[0].source_vod_id == "detail-1"
+    assert opened[0].source_key == "7"
+
+
+def test_main_window_opens_plugin_history_detail_with_record_episode_and_playlist_fallback(
+    qtbot,
+    monkeypatch,
+) -> None:
+    class RestoreAwarePluginController:
+        def load_categories(self):
+            return []
+
+        def load_items(self, category_id: str, page: int):
+            return [], 0
+
+        def build_request(self, vod_id: str):
+            first_group = [
+                PlayItem(title="第1集", url="https://media.example/1-1.m3u8"),
+                PlayItem(title="第2集", url="https://media.example/1-2.m3u8"),
+            ]
+            second_group = [
+                PlayItem(title="第1集", url="https://media.example/2-1.m3u8"),
+                PlayItem(title="第2集", url="https://media.example/2-2.m3u8"),
+            ]
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="插件电影"),
+                playlist=first_group,
+                playlists=[first_group, second_group],
+                playlist_index=0,
+                clicked_index=0,
+                source_kind="plugin",
+                source_mode="detail",
+                source_vod_id=vod_id,
+            )
+
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[{"id": 7, "title": "红果短剧", "controller": RestoreAwarePluginController(), "search_enabled": False}],
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened: list[OpenPlayerRequest] = []
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    monkeypatch.setattr(window, "show_error", lambda message: None)
+
+    window.open_history_detail(
+        HistoryRecord(
+            id=0,
+            key="detail-1",
+            vod_name="Plugin Movie",
+            vod_pic="",
+            vod_remarks="第2集",
+            episode=1,
+            episode_url="",
+            position=0,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+            playlist_index=1,
+            source_kind="spider_plugin",
+            source_plugin_id=7,
+            source_plugin_name="红果短剧",
+            source_key="7",
+            source_name="红果短剧",
+        )
+    )
+
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
+
+    assert opened[0].playlist_index == 1
+    assert opened[0].clicked_index == 1
+
+
+def test_main_window_opens_plugin_history_detail_prefers_request_history_loader_over_record_fallback(
+    qtbot,
+    monkeypatch,
+) -> None:
+    class RestoreAwarePluginController:
+        def load_categories(self):
+            return []
+
+        def load_items(self, category_id: str, page: int):
+            return [], 0
+
+        def build_request(self, vod_id: str):
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="插件电影"),
+                playlist=[PlayItem(title="第1集", url="https://media.example/1.m3u8")],
+                clicked_index=0,
+                playlist_index=0,
+                source_kind="plugin",
+                source_mode="detail",
+                source_vod_id=vod_id,
+                playback_history_loader=lambda: HistoryRecord(
+                    id=0,
+                    key=vod_id,
+                    vod_name="插件电影",
+                    vod_pic="",
+                    vod_remarks="第1集",
+                    episode=0,
+                    episode_url="https://media.example/1.m3u8",
+                    position=45000,
+                    opening=0,
+                    ending=0,
+                    speed=1.0,
+                    create_time=1,
+                ),
+            )
+
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[{"id": 7, "title": "红果短剧", "controller": RestoreAwarePluginController(), "search_enabled": False}],
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened: list[OpenPlayerRequest] = []
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    monkeypatch.setattr(window, "show_error", lambda message: None)
+
+    window.open_history_detail(
+        HistoryRecord(
+            id=0,
+            key="detail-1",
+            vod_name="Plugin Movie",
+            vod_pic="",
+            vod_remarks="第2集",
+            episode=1,
+            episode_url="",
+            position=0,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+            playlist_index=1,
+            source_kind="spider_plugin",
+            source_plugin_id=7,
+            source_plugin_name="红果短剧",
+            source_key="7",
+            source_name="红果短剧",
+        )
+    )
+
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
+
+    assert opened[0].playback_history_loader is not None
+    assert opened[0].playlist_index == 0
+    assert opened[0].clicked_index == 0
 
 
 def test_main_window_opens_emby_history_detail_asynchronously(qtbot, monkeypatch) -> None:

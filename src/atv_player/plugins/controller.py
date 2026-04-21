@@ -11,6 +11,7 @@ from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_category, _map_item
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
 from atv_player.models import DoubanCategory, OpenPlayerRequest, PlayItem, PlaybackLoadResult, VodItem
+from atv_player.player.resume import resolve_resume_index
 
 
 logger = logging.getLogger(__name__)
@@ -220,6 +221,7 @@ class SpiderPluginController:
                     PlayItem(
                         title=title.strip() or clean_value or f"选集 {len(playlist) + 1}",
                         url=clean_value if is_media_url else "",
+                        path=detail.vod_id if is_drive_link else "",
                         vod_id="" if is_media_url else clean_value,
                         index=len(playlist),
                         play_source=route_label,
@@ -261,6 +263,12 @@ class SpiderPluginController:
             if item.url and not _looks_like_drive_share_link(item.url)
         ]
 
+    def _resolve_replacement_start_index(self, vod_id: str, replacement: list[PlayItem]) -> int:
+        if self._playback_history_loader is None or not replacement:
+            return 0
+        history = self._playback_history_loader(vod_id)
+        return resolve_resume_index(history, replacement, 0)
+
     def _resolve_play_item(self, item: PlayItem) -> PlaybackLoadResult | None:
         if item.url or not item.vod_id:
             return
@@ -288,7 +296,7 @@ class SpiderPluginController:
             )
             return PlaybackLoadResult(
                 replacement_playlist=replacement,
-                replacement_start_index=0,
+                replacement_start_index=self._resolve_replacement_start_index(item.path or detail.vod_id, replacement),
             )
         try:
             payload = self._spider.playerContent(item.play_source, item.vod_id, []) or {}

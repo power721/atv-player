@@ -87,7 +87,9 @@ class PlayerController:
             history,
         )
         start_index = resolve_resume_index(history, active_playlist, clicked_index)
-        matched_history = history is not None and start_index == history.episode
+        matched_history = history is not None and (
+            start_index == history.episode or playback_history_loader is not None
+        )
         if matched_history and history is not None:
             position_seconds = int(history.position / 1000)
             speed = history.speed

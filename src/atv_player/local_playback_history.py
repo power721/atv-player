@@ -95,6 +95,16 @@ class LocalPlaybackHistoryRepository:
                 """,
                 (source_kind, source_key, vod_id),
             ).fetchone()
+            if row is None and source_kind == "spider_plugin" and source_key:
+                row = conn.execute(
+                    """
+                    SELECT source_kind, source_key, source_name, vod_id, vod_name, vod_pic, vod_remarks,
+                           episode, episode_url, position, opening, ending, speed, playlist_index, updated_at
+                    FROM media_playback_history
+                    WHERE source_kind = ? AND source_key = '' AND vod_id = ?
+                    """,
+                    (source_kind, vod_id),
+                ).fetchone()
         if row is None:
             return None
         return HistoryRecord(

@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -461,7 +460,16 @@ class MainWindow(QMainWindow):
             if controller is None:
                 self.show_error(f"没有可播放的项目: {record.source_name or record.source_plugin_name or record.key}")
                 return
-            self._start_open_request(lambda: controller.build_request(record.key))
+            def build_request():
+                request = controller.build_request(record.key)
+                request.source_kind = "plugin"
+                request.source_key = plugin_id
+                if request.playback_history_loader is None:
+                    request.playlist_index = record.playlist_index
+                    request.clicked_index = record.episode
+                return request
+
+            self._start_open_request(build_request)
             return
         if record.source_kind == "emby":
             self._start_open_request(lambda: self.emby_controller.build_request(record.key))

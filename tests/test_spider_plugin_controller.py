@@ -259,6 +259,50 @@ def test_controller_returns_replacement_playlist_for_quark_drive_route() -> None
     assert result.replacement_start_index == 0
 
 
+def test_controller_uses_local_history_episode_for_quark_drive_replacement_start_index() -> None:
+    spider = DriveLinkSpider()
+    load_calls: list[str] = []
+
+    def load_drive_detail(link: str) -> dict:
+        assert link == "https://pan.quark.cn/s/f518510ef92a"
+        return {
+            "list": [
+                {
+                    "vod_id": "1$94954$1",
+                    "vod_name": "夸克资源",
+                    "items": [
+                        {"title": "S1 - 1", "url": "http://m/1.mp4", "path": "/S1/1.mp4", "size": 11},
+                        {"title": "S1 - 2", "url": "http://m/2.mp4", "path": "/S1/2.mp4", "size": 12},
+                    ],
+                }
+            ]
+        }
+
+    controller = SpiderPluginController(
+        spider,
+        plugin_name="红果短剧",
+        search_enabled=True,
+        drive_detail_loader=load_drive_detail,
+        playback_history_loader=lambda vod_id: load_calls.append(vod_id) or type(
+            "History",
+            (),
+            {
+                "episode": 1,
+                "episode_url": "http://m/2.mp4",
+                "playlist_index": 0,
+            },
+        )(),
+    )
+
+    request = controller.build_request("/detail/drive")
+    assert request.playback_loader is not None
+    result = request.playback_loader(request.playlists[0][0])
+
+    assert result is not None
+    assert load_calls == ["/detail/drive"]
+    assert result.replacement_start_index == 1
+
+
 def test_controller_formats_generic_drive_route_with_detected_provider() -> None:
     spider = DriveLinkSpider()
     controller = SpiderPluginController(

@@ -244,6 +244,40 @@ def test_player_controller_prefers_plugin_local_history_loader() -> None:
     assert session.ending_seconds == 10
 
 
+def test_player_controller_preserves_history_progress_for_plugin_placeholder_playlist() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="/detail/drive", vod_name="Plugin Movie", vod_pic="plugin-pic")
+    playlist = [PlayItem(title="查看", url="", vod_id="https://pan.baidu.com/s/demo")]
+
+    session = controller.create_session(
+        vod,
+        playlist,
+        clicked_index=0,
+        use_local_history=False,
+        playback_history_loader=lambda: HistoryRecord(
+            id=0,
+            key="/detail/drive",
+            vod_name="Plugin Movie",
+            vod_pic="plugin-pic",
+            vod_remarks="第2集",
+            episode=1,
+            episode_url="http://m/2.mp4",
+            position=45000,
+            opening=5000,
+            ending=10000,
+            speed=1.25,
+            create_time=2,
+        ),
+    )
+
+    assert session.start_index == 0
+    assert session.start_position_seconds == 45
+    assert session.speed == 1.25
+    assert session.opening_seconds == 5
+    assert session.ending_seconds == 10
+
+
 def test_player_controller_prefers_emby_local_history_loader() -> None:
     api = FakeApiClient()
     api.history = HistoryRecord(
