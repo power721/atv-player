@@ -17,7 +17,7 @@ def _looks_like_stream_url(value: str) -> bool:
             "udp://",
             "mms://",
         )
-    ) or any(ext in candidate for ext in (".m3u8", ".flv", ".mp4"))
+    ) or any(candidate.endswith(ext) or f"{ext}?" in candidate for ext in (".m3u8", ".flv", ".mp4"))
 
 
 def _parse_live_playlist(vod_play_from: str, vod_play_url: str) -> list[PlayItem]:
