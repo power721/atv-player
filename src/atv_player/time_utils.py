@@ -29,7 +29,7 @@ def format_local_datetime(value: str) -> str:
     if text.isdigit():
         timestamp = int(text)
         if timestamp >= 1_000_000_000_000:
-            timestamp /= 1000
+            timestamp //= 1000
         return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
 
     try:
