@@ -61,6 +61,9 @@ class SegmentProxy:
         if session is None:
             return
         for next_index in range(current_index + 1, min(current_index + 3, len(session.segments))):
+            cache_key = self._segment_cache_key(session.segments[next_index].url, session.headers)
+            if self._cache.get_segment(cache_key) is not None:
+                continue
             self._prefetch_segment(token, next_index)
 
     def _prefetch_segment(self, token: str, segment_index: int) -> None:
