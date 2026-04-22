@@ -131,8 +131,7 @@ class PlayerController:
                 return None
         else:
             resolved_vod = session.detail_resolver(play_item)
-            if resolved_vod is not None:
-                session.resolved_vod_by_id[play_item.vod_id] = resolved_vod
+            session.resolved_vod_by_id[play_item.vod_id] = resolved_vod
         if resolved_vod is None:
             return None
         url = resolved_vod.items[0].url if resolved_vod.items else resolved_vod.vod_play_url
