@@ -63,6 +63,7 @@ def rewrite_media_playlist(text: str, playlist_url: str) -> PlaylistRewriteResul
         return PlaylistRewriteResult(text=text, changed=False, is_master_playlist=True)
     output: list[str] = []
     removed_explicit_ad_segment = False
+    removed_discontinuity_count = 0
     pending_extinf: str | None = None
     removed_ad_segment = False
 
@@ -72,7 +73,7 @@ def rewrite_media_playlist(text: str, playlist_url: str) -> PlaylistRewriteResul
             continue
         if line.startswith("#"):
             if line == "#EXT-X-DISCONTINUITY" and removed_ad_segment:
-                changed = True
+                removed_discontinuity_count += 1
                 removed_ad_segment = False
                 continue
             output.append(_absolutize_uri_attributes(line, playlist_url))
@@ -93,8 +94,8 @@ def rewrite_media_playlist(text: str, playlist_url: str) -> PlaylistRewriteResul
         output.append(absolute_line)
         removed_ad_segment = False
 
-    changed = removed_explicit_ad_segment
-    if removed_explicit_ad_segment:
+    changed = removed_explicit_ad_segment or removed_discontinuity_count > 0
+    if changed:
         output, removed_discontinuity = _remove_redundant_discontinuities(output)
         changed = changed or removed_discontinuity
     return PlaylistRewriteResult(
