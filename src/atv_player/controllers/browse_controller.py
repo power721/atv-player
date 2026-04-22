@@ -153,6 +153,8 @@ class BrowseController:
     def build_request_from_detail(self, vod_id: str) -> OpenPlayerRequest:
         payload = self._api_client.get_detail(vod_id)
         detail = _map_vod_item(payload["list"][0])
+        if not detail.items:
+            raise ValueError(f"没有可播放的项目: {detail.vod_name}")
         return OpenPlayerRequest(
             vod=detail,
             playlist=detail.items,
