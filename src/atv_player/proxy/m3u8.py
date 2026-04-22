@@ -26,6 +26,8 @@ def rewrite_playlist(
 ) -> RewrittenPlaylist:
     lines = [line.strip() for line in content.splitlines() if line.strip()]
     session = session_registry.get(token)
+    if session is None:
+        return RewrittenPlaylist(text="", is_master=False)
     new_segments: list[PlaylistSegment] = []
     if any(line.startswith("#EXT-X-STREAM-INF") for line in lines):
         output: list[str] = []

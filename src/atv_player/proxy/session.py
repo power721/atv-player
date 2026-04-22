@@ -38,9 +38,11 @@ class ProxySessionRegistry:
         )
         return token
 
-    def get(self, token: str) -> ProxySession:
+    def get(self, token: str) -> ProxySession | None:
         self.expire_stale()
-        session = self._sessions[token]
+        session = self._sessions.get(token)
+        if session is None:
+            return None
         session.last_accessed_at = time.time()
         return session
 

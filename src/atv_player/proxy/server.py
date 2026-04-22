@@ -66,9 +66,9 @@ class LocalHlsProxyServer:
                 return 405, [], b"method not allowed"
             if parsed.path == "/m3u":
                 token = query["token"][0]
-                if not self._registry.contains(token):
-                    return 404, [], b"missing proxy session"
                 session = self._registry.get(token)
+                if session is None:
+                    return 404, [], b"missing proxy session"
                 try:
                     response = self._get(
                         session.playlist_url,
@@ -98,14 +98,16 @@ class LocalHlsProxyServer:
                 return 200, [("Content-Type", "application/vnd.apple.mpegurl")], rewritten.text.encode("utf-8")
             if parsed.path == "/seg":
                 token = query["token"][0]
-                if not self._registry.contains(token):
+                session = self._registry.get(token)
+                if session is None:
                     return 404, [], b"missing proxy session"
                 index = int(query["i"][0])
                 payload = self._segment_proxy.fetch_segment(token, index)
                 return 200, [("Content-Type", "video/MP2T")], payload
             if parsed.path == "/asset":
                 token = query["token"][0]
-                if not self._registry.contains(token):
+                session = self._registry.get(token)
+                if session is None:
                     return 404, [], b"missing proxy session"
                 asset_url = query["url"][0]
                 payload = self._segment_proxy.fetch_asset(token, asset_url)

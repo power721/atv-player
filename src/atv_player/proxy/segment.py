@@ -23,6 +23,8 @@ class SegmentProxy:
 
     def fetch_segment(self, token: str, index: int, *, prefetch: bool = False) -> bytes:
         session = self._session_registry.get(token)
+        if session is None:
+            raise ValueError("missing proxy session")
         segment = session.segments[index]
         cache_key = self._segment_cache_key(segment.url, session.headers)
         cached = self._cache.get_segment(cache_key)
@@ -43,6 +45,8 @@ class SegmentProxy:
 
     def fetch_asset(self, token: str, url: str) -> bytes:
         session = self._session_registry.get(token)
+        if session is None:
+            raise ValueError("missing proxy session")
         response = self._get(
             url,
             headers=dict(session.headers),
@@ -54,6 +58,8 @@ class SegmentProxy:
 
     def schedule_prefetch(self, token: str, current_index: int) -> None:
         session = self._session_registry.get(token)
+        if session is None:
+            return
         for next_index in range(current_index + 1, min(current_index + 3, len(session.segments))):
             self._prefetch_segment(token, next_index)
 
