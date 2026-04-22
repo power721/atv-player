@@ -55,6 +55,13 @@ class MpvWidget(QWidget):
             wid=str(int(self.winId())),
             input_default_bindings=False,
             input_vo_keyboard=False,
+            hwdec="auto-copy",
+            vo="gpu",
+            gpu_api="auto",
+            vd_lavc_dr=True,
+            cache=True,
+            demuxer_max_bytes="500M",
+            demuxer_readahead_secs=20,
         )
 
     def _ensure_player(self) -> None:

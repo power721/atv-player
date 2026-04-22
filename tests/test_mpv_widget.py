@@ -297,6 +297,9 @@ def test_mpv_widget_disables_mpv_keyboard_bindings_for_embedded_player(qtbot, mo
 
     assert captured["input_default_bindings"] is False
     assert captured["input_vo_keyboard"] is False
+    assert captured["hwdec"] == "auto-copy"
+    assert captured["vo"] == "gpu"
+    assert captured["cache"] is True
 
 
 def test_mpv_widget_emits_playback_finished_only_for_natural_end(qtbot, monkeypatch) -> None:
