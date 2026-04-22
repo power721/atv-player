@@ -30,15 +30,20 @@ class SegmentProxy:
         cached = self._cache.get_segment(cache_key)
         if cached is not None:
             return cached
-        response = self._get(
-            segment.url,
-            headers=dict(session.headers),
-            timeout=10.0,
-            follow_redirects=True,
-        )
-        response.raise_for_status()
-        repaired = repair_segment_bytes(bytes(response.content))
-        self._cache.set_segment(cache_key, repaired)
+        if not self._cache.mark_in_flight(cache_key):
+            return b""
+        try:
+            response = self._get(
+                segment.url,
+                headers=dict(session.headers),
+                timeout=10.0,
+                follow_redirects=True,
+            )
+            response.raise_for_status()
+            repaired = repair_segment_bytes(bytes(response.content))
+            self._cache.set_segment(cache_key, repaired)
+        finally:
+            self._cache.clear_in_flight(cache_key)
         if not prefetch:
             self.schedule_prefetch(token, index)
         return repaired
