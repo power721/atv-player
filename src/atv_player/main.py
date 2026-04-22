@@ -8,7 +8,10 @@ def main() -> int:
     coordinator = AppCoordinator(repo)
     widget = coordinator.start()
     widget.show()
-    return app.exec()
+    try:
+        return app.exec()
+    finally:
+        coordinator.close()
 
 
 if __name__ == "__main__":

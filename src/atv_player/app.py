@@ -361,3 +361,8 @@ class AppCoordinator(QObject):
         close_filter = getattr(self._m3u8_ad_filter, "close", None)
         if callable(close_filter):
             close_filter()
+        if self._api_client is not None:
+            close_client = getattr(self._api_client, "close", None)
+            if callable(close_client):
+                close_client()
+            self._api_client = None
