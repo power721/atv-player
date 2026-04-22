@@ -344,7 +344,11 @@ class AppCoordinator(QObject):
 
     def _handle_login_succeeded(self) -> None:
         logger.info("Login succeeded")
-        widget = self._show_main()
+        try:
+            widget = self._show_main()
+        except (ApiError, UnauthorizedError) as exc:
+            logger.exception("Failed to initialize after login error=%s", exc)
+            widget = self._show_login(error_message=str(exc))
         widget.show()
 
     def _handle_logout_requested(self) -> None:
