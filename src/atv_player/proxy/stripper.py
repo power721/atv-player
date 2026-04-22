@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 PNG_END = b"\x49\x45\x4E\x44\xAE\x42\x60\x82"
 TS_SYNC = 0x47
 TS_PACKET_SIZE = 188
@@ -18,6 +19,8 @@ def repair_segment_bytes(data: bytes) -> bytes:
 
 
 def _strip_png_prefix(data: bytes) -> bytes:
+    if not data.startswith(PNG_SIGNATURE):
+        return data
     png_end_index = data.find(PNG_END)
     if png_end_index < 0:
         return data
