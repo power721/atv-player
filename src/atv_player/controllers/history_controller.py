@@ -10,9 +10,9 @@ class HistoryController:
         payload = self._api_client.list_history(page=1, size=10000)
         return [
             HistoryRecord(
-                id=item["id"],
-                key=item["key"],
-                vod_name=item["vodName"],
+                id=item.get("id", 0),
+                key=item.get("key", ""),
+                vod_name=item.get("vodName", ""),
                 vod_pic=item.get("vodPic", ""),
                 vod_remarks=item.get("vodRemarks", ""),
                 episode=item.get("episode", 0),
@@ -21,10 +21,10 @@ class HistoryController:
                 opening=item.get("opening", 0),
                 ending=item.get("ending", 0),
                 speed=item.get("speed", 1.0),
-                create_time=item["createTime"],
+                create_time=item.get("createTime", 0),
                 source_kind="remote",
             )
-            for item in payload["content"]
+            for item in payload.get("content", [])
         ]
 
     def load_page(self, page: int, size: int) -> tuple[list[HistoryRecord], int]:
