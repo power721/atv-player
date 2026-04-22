@@ -26,7 +26,7 @@ def rewrite_playlist(
 ) -> RewrittenPlaylist:
     lines = [line.strip() for line in content.splitlines() if line.strip()]
     session = session_registry.get(token)
-    session.segments = []
+    new_segments: list[PlaylistSegment] = []
     if any(line.startswith("#EXT-X-STREAM-INF") for line in lines):
         output: list[str] = []
         for line in lines:
@@ -55,12 +55,13 @@ def rewrite_playlist(
                 output.pop()
             pending_duration = None
             continue
-        session.segments.append(
+        new_segments.append(
             PlaylistSegment(index=segment_index, url=absolute_url, duration=pending_duration)
         )
         output.append(f"{proxy_base_url}/seg?token={quote(token)}&i={segment_index}")
         segment_index += 1
         pending_duration = None
+    session.segments = new_segments
     return RewrittenPlaylist(text="\n".join(output) + "\n", is_master=False)
 
 
