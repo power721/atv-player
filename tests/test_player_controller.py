@@ -144,7 +144,7 @@ def test_player_controller_resolve_play_item_detail_handles_missing_detail() -> 
     assert calls == ["1$91483$1"]
     assert resolved is None
     assert playlist[0].url == "http://m/existing.m3u8"
-    assert session.resolved_vod_by_id == {}
+    assert session.resolved_vod_by_id == {"1$91483$1": None}
 
 
 def test_player_controller_skips_local_history_when_session_disables_it() -> None:

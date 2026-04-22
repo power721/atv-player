@@ -189,14 +189,14 @@ def test_build_request_disables_remote_history_and_exposes_local_emby_history_ho
     assert api.playback_stop_calls == ["1-3458"]
 
 
-def test_emby_progress_reporter_skips_paused_playback() -> None:
+def test_emby_progress_reporter_reports_while_paused() -> None:
     api = FakeApiClient()
     controller = EmbyController(api)
     item = PlayItem(title="Episode 1", url="", vod_id="1-3458")
 
     controller.report_playback_progress(item, 2000, True)
 
-    assert api.playback_progress_calls == []
+    assert api.playback_progress_calls == [("1-3458", 2000)]
 
 
 def test_build_request_single_video_uses_detail_vod_id_as_playlist_item_id() -> None:
