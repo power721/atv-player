@@ -14,7 +14,7 @@ def _looks_like_media_url(value: str) -> bool:
 
 def _parse_playlist(vod_play_url: str) -> list[PlayItem]:
     playlist: list[PlayItem] = []
-    for index, chunk in enumerate((vod_play_url or "").split("#")):
+    for chunk in (vod_play_url or "").split("#"):
         if not chunk:
             continue
         title, separator, value = chunk.partition("$")
@@ -24,11 +24,13 @@ def _parse_playlist(vod_play_url: str) -> list[PlayItem]:
                 clean_value = ""
         else:
             clean_value = value.strip()
+        if not clean_value:
+            continue
         playlist.append(
             PlayItem(
                 title=title.strip(),
                 url=clean_value if _looks_like_media_url(clean_value) else "",
-                index=index,
+                index=len(playlist),
                 vod_id="" if _looks_like_media_url(clean_value) else clean_value,
             )
         )
