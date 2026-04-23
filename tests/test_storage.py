@@ -214,6 +214,73 @@ def test_settings_repository_round_trip(tmp_path: Path) -> None:
     assert saved == config
 
 
+def test_settings_repository_round_trip_persists_preferred_parse_key(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    repo = SettingsRepository(db_path)
+
+    config = AppConfig(
+        base_url="http://127.0.0.1:4567",
+        username="alice",
+        token="token-123",
+        vod_token="vod-123",
+        preferred_parse_key="jx2",
+    )
+
+    repo.save_config(config)
+    saved = repo.load_config()
+
+    assert saved.preferred_parse_key == "jx2"
+    assert saved == config
+
+
+def test_settings_repository_migrates_missing_preferred_parse_key_column(tmp_path: Path) -> None:
+    db_path = tmp_path / "app.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE app_config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                base_url TEXT NOT NULL,
+                username TEXT NOT NULL,
+                token TEXT NOT NULL,
+                vod_token TEXT NOT NULL,
+                last_path TEXT NOT NULL,
+                last_active_window TEXT NOT NULL DEFAULT 'main',
+                last_playback_source TEXT NOT NULL DEFAULT 'browse',
+                last_playback_source_key TEXT NOT NULL DEFAULT '',
+                last_playback_mode TEXT NOT NULL DEFAULT '',
+                last_playback_path TEXT NOT NULL DEFAULT '',
+                last_playback_vod_id TEXT NOT NULL DEFAULT '',
+                last_playback_clicked_vod_id TEXT NOT NULL DEFAULT '',
+                last_player_paused INTEGER NOT NULL DEFAULT 0,
+                player_volume INTEGER NOT NULL DEFAULT 100,
+                player_muted INTEGER NOT NULL DEFAULT 0,
+                main_window_geometry BLOB,
+                player_window_geometry BLOB,
+                player_main_splitter_state BLOB,
+                browse_content_splitter_state BLOB
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO app_config (
+                id, base_url, username, token, vod_token, last_path,
+                last_active_window, last_playback_source, last_playback_source_key,
+                last_playback_mode, last_playback_path, last_playback_vod_id,
+                last_playback_clicked_vod_id, last_player_paused, player_volume,
+                player_muted, main_window_geometry, player_window_geometry,
+                player_main_splitter_state, browse_content_splitter_state
+            )
+            VALUES (1, 'http://127.0.0.1:4567', 'alice', '', '', '/', 'main', 'browse', '', '', '', '', '', 0, 100, 0, NULL, NULL, NULL, NULL)
+            """
+        )
+
+    repo = SettingsRepository(db_path)
+
+    assert repo.load_config().preferred_parse_key == ""
+
+
 def test_settings_repository_migrates_missing_last_player_paused_column(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     with sqlite3.connect(db_path) as conn:

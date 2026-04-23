@@ -19,6 +19,7 @@ class AppConfig:
     last_player_paused: bool = False
     player_volume: int = 100
     player_muted: bool = False
+    preferred_parse_key: str = ""
     main_window_geometry: bytes | None = None
     player_window_geometry: bytes | None = None
     player_main_splitter_state: bytes | None = None
