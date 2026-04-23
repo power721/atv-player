@@ -1,26 +1,25 @@
-# Playback Parse Management Design
+# Playback Parse Resolution Design
 
 ## Summary
 
-Add first-class playback parse source management for spider-plugin playback. Users should be able to manage parse interfaces inside the app, persist them in SQLite, automatically resolve `playerContent()` results that return `{"parse": 1}`, and manually override the preferred parse source from the player window through a dedicated combo box.
+Add built-in playback parsers for spider-plugin playback. When a spider plugin returns `{"parse": 1}`, the app should resolve the final media URL through a fixed set of built-in Python parsers converted from the JavaScript files under `/home/harold/Downloads/Telegram Desktop/爱优腾芒+movie360+解析js/jx`. The player window should expose those built-in parsers in a dedicated combo box so users can keep automatic probing or manually prefer one parser.
 
 ## Goals
 
-- Add an in-app parse manager next to the existing plugin manager.
-- Persist parse sources in SQLite instead of hardcoding them in memory.
-- Seed the database with five built-in parse interfaces on first run.
-- When a spider plugin returns `parse=1`, resolve the real playback URL through a parse source automatically.
-- Use `User-Agent: okhttp/4.1.0` by default for parse-source HTTP requests.
-- Let users manually choose a parse source in the player window.
-- Persist the user-selected parse source as the global default and fall back to automatic probing when that source fails.
+- Convert the five JavaScript parsers in the `jx` directory into built-in Python parser implementations.
+- Resolve spider-plugin playback URLs through those built-in parsers when `playerContent()` returns `parse=1`.
+- Keep a parser combo box in the player window immediately after the audio-track combo box.
+- Default to automatic parser probing and let users manually choose a preferred built-in parser.
+- Persist the preferred built-in parser in app settings so later playback sessions reuse it.
+- Use the parser-specific request behavior from the source JavaScript implementations.
 
 ## Non-Goals
 
-- Converting external JavaScript parse implementations into local Python spider plugins.
+- Adding a parse manager dialog.
+- Storing parser definitions in a dedicated database table.
+- Supporting add, edit, delete, reorder, or custom parser configuration in the UI.
 - Supporting parse sources outside spider-plugin playback.
-- Health checks, latency ranking, or background availability probing for parse sources.
-- Caching parse results across sessions.
-- Parsing arbitrary custom response schemas beyond the direct-play URL cases the app already accepts.
+- Converting arbitrary external JavaScript parser files at runtime.
 
 ## Scope
 
@@ -32,10 +31,7 @@ Primary implementation lives in:
 - `src/atv_player/ui/main_window.py`
 - `src/atv_player/ui/player_window.py`
 - `src/atv_player/plugins/controller.py`
-- `src/atv_player/plugins/repository.py`
-- `src/atv_player/plugins/__init__.py`
-- `src/atv_player/ui/plugin_manager_dialog.py`
-- new parse-management modules under `src/atv_player/`
+- new parser modules under `src/atv_player/`
 
 Primary verification lives in:
 
@@ -43,181 +39,152 @@ Primary verification lives in:
 - `tests/test_spider_plugin_controller.py`
 - `tests/test_main_window_ui.py`
 - `tests/test_player_window_ui.py`
-- `tests/test_parse_manager_dialog.py`
 
-## Built-In Parse Sources
+## Built-In Parsers
 
-Seed the following parse sources into the database if they are not already present:
+Implement the following built-in parsers from the JavaScript files in the `jx` directory:
 
-- `云` -> `https://yparse.ik9.cc/index.php?url=`
-- `虾米` -> `https://jx.hls.one/?url=`
-- `m3u8TV` -> `https://jx.m3u8.tv/jiexi/?url=`
-- `77` -> `https://jx.77flv.cc/?url=`
-- `咸鱼` -> `https://jx.xymp4.cc/?url=`
+- `fish` from `fish.js`
+- `jx1` from `jx1.js`
+- `jx2` from `jx2.js`
+- `mg1` from `mg1.js`
+- `tx1` from `tx1.js`
 
-Seeded sources should default to enabled, preserve insertion order as sort order, and remain user-editable after creation.
+Each parser should keep the source-specific API endpoint and request behavior from the JavaScript version:
+
+- `fish`
+  - endpoint: `https://kalbim.xatut.top/kalbim2025/781718/play/video_player.php`
+  - source user agent: `Mozilla/5.0 (Linux; Android 10; MI 8 Build/QKQ1.190828.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/83.0.4103.101 Mobile Safari/537.36 bsl/1.0;webank/h5face;webank/2.0`
+- `jx1`
+  - endpoint: `http://sspa8.top:8100/api/?key=1060089351&`
+  - source user agent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36 Edg/110.0.1587.57`
+- `jx2`
+  - endpoint: `http://sspa8.top:8100/api/?cat_ext=eyJmbGFnIjpbInFxIiwi6IW+6K6vIiwicWl5aSIsIueIseWlh+iJuiIsIuWlh+iJuiIsInlvdWt1Iiwi5LyY6YW3Iiwic29odSIsIuaQnOeLkCIsImxldHYiLCLkuZDop4YiLCJtZ3R2Iiwi6IqS5p6cIiwidG5tYiIsInNldmVuIiwiYmlsaWJpbGkiLCIxOTA1Il0sImhlYWRlciI6eyJVc2VyLUFnZW50Ijoib2todHRwLzQuOS4xIn19&key=星睿4k&`
+  - source user agent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36 Edg/110.0.1587.57`
+- `mg1`
+  - endpoint: `http://shybot.top/v2/video/jx/?shykey=4595a71a4e7712568edcfa43949236b42fcfcb04997788ebe7984d6da2c6a51c&qn=max&`
+  - source user agent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36 Edg/110.0.1587.57`
+- `tx1`
+  - endpoint: `http://shybot.top/v2/video/jx/?shykey=4595a71a4e7712568edcfa43949236b42fcfcb04997788ebe7984d6da2c6a51c&`
+  - source user agent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36 Edg/110.0.1587.57`
+
+The built-in parser order should match the order above.
 
 ## Design
 
+### Parser Architecture
+
+Create a small built-in parser module rather than storing parser definitions in SQLite.
+
+Each parser should expose:
+
+- stable parser key, for example `fish`
+- display label for the player combo box
+- API endpoint
+- request headers
+- one `resolve(flag, url)` method that returns:
+  - final media URL
+  - playback headers from the parser response if present
+
+The parser implementation should mirror the JavaScript behavior:
+
+- send `flag` and `url` as query parameters
+- expect JSON response
+- accept success when any of the following is true:
+  - `parse == 0`
+  - `jx == 0`
+  - returned `url` already looks like a media URL
+- propagate `header` or `headers` from the parser response into playback headers
+- raise a parser-specific failure when the response does not contain a playable result
+
 ### Persistence
 
-Add a dedicated parse-source model with fields for:
+No parser table should be added to SQLite.
 
-- `id`
-- `name`
-- `url`
-- `headers_text`
-- `enabled`
-- `sort_order`
-- `is_builtin`
-
-Create a new `parse_sources` table in the existing SQLite database. The table should store one row per parse source and support older databases through the existing migration pattern already used in repository code.
-
-Add a global default parse-source id to application settings so manual selection in the player window can survive app restarts.
-
-### Repository and Service Boundaries
-
-Keep parse-source persistence separate from spider-plugin metadata even though both live in the same SQLite file.
-
-The repository layer should support:
-
-- list parse sources ordered by `sort_order`
-- add parse source
-- update parse source
-- rename parse source
-- enable or disable parse source
-- move parse source up or down
-- delete parse source
-- seed built-in parse sources if missing
-
-Add a small parse manager or resolver service above the repository. That service owns selection order, HTTP request behavior, and response normalization so the player window and spider controller stay thin.
+Persist only the user's preferred built-in parser key in application settings. This keeps the current requirement of a remembered user choice without introducing parser CRUD or a parser repository.
 
 ### Parse Resolution Flow
 
 When `SpiderPluginController` calls `playerContent(...)`, keep the current direct-play path for:
 
-- `parse == 0`
-- direct media URLs already present in `url`
+- `parse == 0` with direct media URL already present in `url`
+- direct media URLs already returned even if parser flags are missing
 
-When the payload returns `parse == 1`, treat `payload["url"]` as the unresolved target URL and pass it into the parse resolver.
+When the payload returns `parse == 1`, treat `payload["url"]` as the unresolved target URL and resolve it through the built-in parser service.
 
 Resolution order should be:
 
-1. If the user manually selected a parse source in the player window, try that source first.
-2. Otherwise, if a global default parse source exists, try that source first.
-3. Then try the remaining enabled parse sources in configured sort order.
+1. If the player window currently selected a built-in parser, try that parser first.
+2. Otherwise, if app settings contain a preferred parser key, try that parser first.
+3. Then try the remaining built-in parsers in fixed order.
 
-For each parse source request:
-
-- build the request URL as `parse_source.url + quote(target_url, safe="")`
-- send default header `User-Agent: okhttp/4.1.0`
-- merge user-configured parse-source headers on top of the default header
-- accept redirects
-- treat the final response URL or response body as successful only when a direct playable media URL can be extracted using the app's existing media-URL heuristics
-
-The initial implementation should prioritize the simple interface form the user requested: parse source URL acts as a prefix and returns a final media URL through normal fetch behavior. If a particular source later needs custom HTML scraping or JSON decoding, that should be a future enhancement in the parse resolver only.
+If the preferred parser fails, continue to the remaining built-in parsers automatically.
 
 ### Response Normalization
 
-The resolver should return a structured result containing:
+The built-in parser service should return:
 
 - resolved media URL
-- headers to use for playback
-- parse source id and name that succeeded
+- playback headers
+- parser key that succeeded
 
-Playback headers should include the effective parse-source headers, because some parse interfaces require the same headers on subsequent media requests.
+The playback headers should come from parser response `header` or `headers` when present.
 
-If all enabled parse sources fail, surface a clear error such as `没有可用的解析接口` or `解析失败` and include per-source failure messages in player logs.
+If all built-in parsers fail, raise a clear playback error and include parser-specific failures in player logs.
 
 ### Player Window UI
 
-Add a parse combo box immediately after the audio-track combo box.
+Keep a parser combo box immediately after the audio-track combo box.
 
 Behavior:
 
 - first item is fixed text `解析`
-- following items are enabled parse sources in current sort order
-- if no parse sources are enabled, keep the combo disabled and show only the placeholder item
-- when the user selects a concrete parse source, persist that source id as the global default
-- if the current play item is still unresolved and depends on parse resolution, retry playback using the newly selected source
-- if the selected source fails, keep playback behavior resilient by falling back to the remaining enabled sources
+- following items are the fixed built-in parsers in the order `fish`, `jx1`, `jx2`, `mg1`, `tx1`
+- selecting the placeholder means automatic probing
+- selecting a concrete parser saves that parser key as the preferred parser in app settings
+- when the current play item still depends on parse resolution, switching the combo should retry playback with the newly preferred parser first
+- if a manually selected parser fails, playback should still fall back to the remaining built-in parsers
 
-The combo box is a preference control, not a per-episode history field. It should reflect the current global default when a player window opens.
+The combo box is only a preference control. It does not imply parser management and does not expose add, edit, or delete actions.
 
 ### Main Window UI
 
-Add a `解析管理` button immediately after `插件管理`.
+Do not add a `解析管理` button.
 
-The dialog should follow the existing plugin-manager interaction style:
-
-- table view of saved sources
-- add
-- edit
-- rename
-- enable or disable
-- move up
-- move down
-- delete
-
-Editing should include:
-
-- name
-- URL
-- optional HTTP headers as raw text
-
-Header text can be stored as JSON text. The first release only needs light validation: valid empty value or valid JSON object string. Invalid JSON should be rejected in the dialog before saving.
-
-### Parse Manager Dialog
-
-Use a separate dialog rather than overloading the plugin manager dialog.
-
-Suggested columns:
-
-- 名称
-- 地址
-- 请求头
-- 启用
-- 内置
-
-Show a compact header summary in the table, not a large multi-line blob. The full header JSON remains editable in a modal multi-line editor.
+The main window should stay unchanged except for any plumbing needed to pass parser services into the player window or playback controller.
 
 ### App Wiring
 
-Instantiate the parse-source repository and manager in `AppCoordinator` alongside the existing spider-plugin repository and manager.
+Instantiate one shared built-in parser service in app startup and pass it into:
 
-Pass the parse manager into:
+- `PlayerWindow` for combo-box population and saving preferred parser key
+- `SpiderPluginController` or the playback loader path for `parse=1` resolution
 
-- `MainWindow` so it can open the parse-manager dialog
-- `PlayerWindow` so it can populate the parse combo and persist manual selection
-- `SpiderPluginController` or the player-session playback loader path so `parse=1` playback can resolve through the shared service
-
-Keep one shared manager instance for the whole app so UI state and playback resolution use the same enabled-source ordering and saved default.
+Keep parser definitions in code so both playback and player UI use the same built-in ordering and labels.
 
 ### Error Handling
 
 Failure cases should be explicit:
 
-- no enabled parse source: fail fast with a user-readable error
-- invalid configured headers JSON: reject save in the dialog
-- parse source timeout or request failure: log source-specific error and continue to the next source
-- parse response does not contain a playable URL: treat as a failed source and continue
+- missing or empty unresolved parse target URL: fail fast
+- parser HTTP request failure: log parser-specific error and continue
+- parser JSON response without playable URL: treat as parser failure and continue
+- all parsers failed: surface a user-readable playback error
 
-The app should not mark parse sources permanently unhealthy from a single failure. Each playback attempt starts fresh from current configuration.
+The app should not permanently disable a built-in parser after one failure. Each playback attempt should retry from the preferred parser and then continue through the fixed fallback order.
 
 ## Testing
 
 Tests should cover:
 
-- repository migration and built-in source seeding
-- parse-source CRUD, reorder, rename, update, enable or disable, and delete
-- persistence of the global default parse-source id
-- resolver preferring manual or saved default source first
-- resolver falling back to later sources after failure
-- resolver merging default `User-Agent` with configured headers
-- spider plugin playback resolving `parse=1` payloads through the shared resolver
-- main window wiring for the new `解析管理` button
-- player window rendering and updating the parse combo box
+- persistence of preferred built-in parser key in app settings
+- built-in parser service matching the five JavaScript parser request contracts
+- parser response normalization for `header` and `headers`
+- spider plugin playback resolving `parse=1` payloads through the built-in parser service
+- fallback from preferred parser to later built-in parsers after failure
+- main window not exposing a parse manager button
+- player window rendering the built-in parser combo box and persisting manual selection
 
 ## Result
 
-After this change, spider plugins that return `{"parse": 1}` can be played through app-managed parse interfaces. Users can manage parse endpoints in the UI, the player window exposes a persistent parse preference, and playback automatically falls back across enabled parse sources until one resolves a real media URL.
+After this change, spider plugins that return `{"parse": 1}` can be played through a fixed built-in set of Python parsers converted from the provided JavaScript files. The player window keeps a parser combo box for auto or manual preference, but the app does not expose parser management UI or parser database records.
