@@ -11,6 +11,8 @@ from atv_player.proxy.stripper import repair_segment_bytes
 
 
 class SegmentProxy:
+    _IN_FLIGHT_WAIT_TIMEOUT_SECONDS = 2.0
+
     def __init__(
         self,
         session_registry: ProxySessionRegistry,
@@ -27,23 +29,28 @@ class SegmentProxy:
             raise ValueError("missing proxy session")
         segment = session.segments[index]
         cache_key = self._segment_cache_key(segment.url, session.headers)
-        cached = self._cache.get_segment(cache_key)
-        if cached is not None:
-            return cached
-        if not self._cache.mark_in_flight(cache_key):
-            return b""
-        try:
-            response = self._get(
-                segment.url,
-                headers=dict(session.headers),
-                timeout=10.0,
-                follow_redirects=True,
-            )
-            response.raise_for_status()
-            repaired = repair_segment_bytes(bytes(response.content))
-            self._cache.set_segment(cache_key, repaired)
-        finally:
-            self._cache.clear_in_flight(cache_key)
+        while True:
+            cached = self._cache.get_segment(cache_key)
+            if cached is not None:
+                return cached
+            if not self._cache.mark_in_flight(cache_key):
+                waited = self._cache.wait_for_segment(cache_key, timeout=self._IN_FLIGHT_WAIT_TIMEOUT_SECONDS)
+                if waited is not None:
+                    return waited
+                continue
+            try:
+                response = self._get(
+                    segment.url,
+                    headers=dict(session.headers),
+                    timeout=10.0,
+                    follow_redirects=True,
+                )
+                response.raise_for_status()
+                repaired = repair_segment_bytes(bytes(response.content))
+                self._cache.set_segment(cache_key, repaired)
+            finally:
+                self._cache.clear_in_flight(cache_key)
+            break
         if not prefetch:
             self.schedule_prefetch(token, index)
         return repaired

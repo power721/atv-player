@@ -102,3 +102,29 @@ main-0002.ts
     )
 
     assert rewritten.text.count("#EXT-X-DISCONTINUITY") == 1
+
+
+def test_rewrite_playlist_keeps_short_live_segments_without_ad_markers() -> None:
+    registry = ProxySessionRegistry()
+    token = registry.create_session("https://media.example/path/index.m3u8", {})
+    content = """#EXTM3U
+#EXTINF:0.5,
+live-0001.ts
+#EXTINF:0.5,
+live-0002.ts
+"""
+
+    rewritten = rewrite_playlist(
+        token=token,
+        playlist_url="https://media.example/path/index.m3u8",
+        content=content,
+        session_registry=registry,
+        proxy_base_url="http://127.0.0.1:2323",
+    )
+
+    assert rewritten.text.count("http://127.0.0.1:2323/seg?token=") == 2
+    session = registry.get(token)
+    assert [segment.url for segment in session.segments] == [
+        "https://media.example/path/live-0001.ts",
+        "https://media.example/path/live-0002.ts",
+    ]

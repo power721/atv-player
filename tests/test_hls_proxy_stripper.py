@@ -35,7 +35,7 @@ def test_repair_segment_bytes_falls_back_to_original_when_no_sync_found() -> Non
 
 
 def test_is_ad_segment_uses_duration_and_url_signals_conservatively() -> None:
-    assert is_ad_segment(0.5, "https://cdn.example/live/0001.ts") is True
+    assert is_ad_segment(0.5, "https://cdn.example/live/0001.ts") is False
     assert is_ad_segment(5.0, "https://media.example/video/adjump/0002.ts") is True
     assert is_ad_segment(5.0, "https://media.example/path/ad-0003.ts") is True
     assert is_ad_segment(5.0, "https://media.example/path/main-0004.ts") is False
