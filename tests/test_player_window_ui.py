@@ -1607,6 +1607,56 @@ def test_player_window_exposes_audio_combo_with_default_auto_entry(qtbot) -> Non
     assert window.audio_combo.isEnabled() is False
 
 
+def test_player_window_exposes_parse_combo_with_builtin_entries(qtbot) -> None:
+    class FakeParserService:
+        def parsers(self):
+            return [
+                type("Parser", (), {"key": "fish", "label": "fish"})(),
+                type("Parser", (), {"key": "jx1", "label": "jx1"})(),
+                type("Parser", (), {"key": "jx2", "label": "jx2"})(),
+                type("Parser", (), {"key": "mg1", "label": "mg1"})(),
+                type("Parser", (), {"key": "tx1", "label": "tx1"})(),
+            ]
+
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(), playback_parser_service=FakeParserService())
+    qtbot.addWidget(window)
+
+    assert window.parse_combo.count() == 6
+    assert window.parse_combo.itemText(0) == "解析"
+    assert [window.parse_combo.itemText(index) for index in range(1, window.parse_combo.count())] == [
+        "fish",
+        "jx1",
+        "jx2",
+        "mg1",
+        "tx1",
+    ]
+
+
+def test_player_window_saves_preferred_parse_key_when_user_selects_parser(qtbot) -> None:
+    saved = {"called": 0}
+    config = AppConfig()
+
+    class FakeParserService:
+        def parsers(self):
+            return [
+                type("Parser", (), {"key": "fish", "label": "fish"})(),
+                type("Parser", (), {"key": "jx1", "label": "jx1"})(),
+            ]
+
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=config,
+        save_config=lambda: saved.__setitem__("called", saved["called"] + 1),
+        playback_parser_service=FakeParserService(),
+    )
+    qtbot.addWidget(window)
+
+    window.parse_combo.setCurrentIndex(2)
+
+    assert config.preferred_parse_key == "jx1"
+    assert saved["called"] == 1
+
+
 def test_player_window_populates_embedded_audio_options_after_open_session(qtbot) -> None:
     class FakeVideo:
         def __init__(self) -> None:

@@ -478,6 +478,47 @@ def test_app_coordinator_passes_loaded_spider_plugins_into_main_window(qtbot, mo
     assert callable(captured_loader["value"])
 
 
+def test_app_coordinator_passes_playback_parser_service_into_main_window(qtbot, monkeypatch, tmp_path) -> None:
+    repo = app_module.SettingsRepository(tmp_path / "app.db")
+    repo.save_config(AppConfig(base_url="http://127.0.0.1:4567", token="token-123", vod_token="vod-123"))
+    captured = {"parser_service": None}
+
+    class FakeSignal:
+        def connect(self, callback) -> None:
+            return None
+
+    class FakeMainWindow:
+        def __init__(self, *args, **kwargs) -> None:
+            captured["parser_service"] = kwargs.get("playback_parser_service")
+            self.logout_requested = FakeSignal()
+
+    class FakePluginManager:
+        def load_enabled_plugins(self, drive_detail_loader=None):
+            return []
+
+    def api_factory(*args, **kwargs):
+        return ApiClient(
+            "http://127.0.0.1:4567",
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"token": "vod-123"})),
+        )
+
+    monkeypatch.setattr(app_module, "MainWindow", FakeMainWindow)
+    monkeypatch.setattr(app_module, "ApiClient", api_factory)
+    monkeypatch.setattr(
+        app_module,
+        "SpiderPluginManager",
+        lambda repository, loader, playback_history_repository: FakePluginManager(),
+    )
+    monkeypatch.setattr(app_module, "SpiderPluginRepository", lambda db_path: object())
+    monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
+    monkeypatch.setattr(app_module, "LocalPlaybackHistoryRepository", lambda db_path: object())
+
+    coordinator = AppCoordinator(repo)
+    coordinator._show_main()
+
+    assert captured["parser_service"] is not None
+
+
 def test_http_text_client_follows_redirects_for_live_source_text_requests() -> None:
     class FakeApiClient:
         def __init__(self) -> None:

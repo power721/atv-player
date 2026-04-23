@@ -209,12 +209,20 @@ class PlayerWindow(QWidget):
         "很大": 130,
     }
 
-    def __init__(self, controller, config=None, save_config=None, m3u8_ad_filter=None) -> None:
+    def __init__(
+        self,
+        controller,
+        config=None,
+        save_config=None,
+        m3u8_ad_filter=None,
+        playback_parser_service=None,
+    ) -> None:
         super().__init__()
         self.controller = controller
         self.config = config
         self._save_config = save_config or (lambda: None)
         self._m3u8_ad_filter = m3u8_ad_filter or M3U8AdFilter()
+        self._playback_parser_service = playback_parser_service
         self.session = None
         self.current_index = 0
         self.current_speed = 1.0
@@ -313,6 +321,7 @@ class PlayerWindow(QWidget):
         self.audio_combo = QComboBox()
         self.audio_combo.addItem("自动选择", ("auto", None))
         self.audio_combo.setEnabled(False)
+        self.parse_combo = QComboBox()
         self.opening_spin = self._create_skip_spinbox("片头 ")
         self.ending_spin = self._create_skip_spinbox("片尾 ")
 
@@ -409,6 +418,7 @@ class PlayerWindow(QWidget):
         control_group_layout.addWidget(self.speed_combo)
         control_group_layout.addWidget(self.subtitle_combo)
         control_group_layout.addWidget(self.audio_combo)
+        control_group_layout.addWidget(self.parse_combo)
         control_group_layout.addWidget(self.opening_spin)
         control_group_layout.addWidget(self.ending_spin)
         controls.addWidget(control_group, 0, Qt.AlignmentFlag.AlignCenter)
@@ -470,6 +480,7 @@ class PlayerWindow(QWidget):
         self.speed_combo.currentTextChanged.connect(self._change_speed)
         self.subtitle_combo.currentIndexChanged.connect(self._change_subtitle_selection)
         self.audio_combo.currentIndexChanged.connect(self._change_audio_selection)
+        self.parse_combo.currentIndexChanged.connect(self._change_parse_selection)
         self.opening_spin.valueChanged.connect(self._change_opening_seconds)
         self.ending_spin.valueChanged.connect(self._change_ending_seconds)
         self.volume_slider.valueChanged.connect(self._change_volume)
@@ -500,6 +511,7 @@ class PlayerWindow(QWidget):
         self._register_shortcuts()
         self._update_play_button_icon()
         self._update_mute_button_icon()
+        self._populate_parse_combo()
         self._apply_visibility_state()
         app = QApplication.instance()
         if app is not None:
@@ -1390,6 +1402,34 @@ class PlayerWindow(QWidget):
         self.audio_combo.setCurrentIndex(0)
         self.audio_combo.setEnabled(False)
         self.audio_combo.blockSignals(False)
+
+    def _populate_parse_combo(self) -> None:
+        self.parse_combo.blockSignals(True)
+        self.parse_combo.clear()
+        self.parse_combo.addItem("解析", "")
+        if self._playback_parser_service is not None:
+            for parser in self._playback_parser_service.parsers():
+                self.parse_combo.addItem(parser.label, parser.key)
+        preferred_parse_key = "" if self.config is None else getattr(self.config, "preferred_parse_key", "")
+        preferred_index = self.parse_combo.findData(preferred_parse_key)
+        self.parse_combo.setCurrentIndex(preferred_index if preferred_index >= 0 else 0)
+        self.parse_combo.blockSignals(False)
+
+    def _change_parse_selection(self, index: int) -> None:
+        if self.config is None:
+            return
+        parser_key = str(self.parse_combo.itemData(index) or "")
+        if getattr(self.config, "preferred_parse_key", "") == parser_key:
+            return
+        self.config.preferred_parse_key = parser_key
+        self._save_config()
+        if (
+            self.session is not None
+            and self.session.playback_loader is not None
+            and 0 <= self.current_index < len(self.session.playlist)
+            and not self.session.playlist[self.current_index].url
+        ):
+            self._replay_current_item()
 
     def _mark_manual_subtitle_switch_refresh(self) -> None:
         self._manual_subtitle_switch_refresh_until = (

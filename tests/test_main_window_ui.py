@@ -184,6 +184,28 @@ def test_main_window_shows_live_source_manager_button_after_plugin_manager(qtbot
     assert window.live_source_manager_button.text() == "直播源管理"
 
 
+def test_main_window_keeps_existing_header_buttons_without_parse_manager(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+    )
+
+    qtbot.addWidget(window)
+    window.show()
+
+    assert window.plugin_manager_button.text() == "插件管理"
+    assert window.live_source_manager_button.text() == "直播源管理"
+    assert not hasattr(window, "parse_manager_button")
+
+
 def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monkeypatch) -> None:
     class FakeSignal:
         def connect(self, _callback) -> None:

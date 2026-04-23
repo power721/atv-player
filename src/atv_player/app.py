@@ -28,6 +28,7 @@ from atv_player.paths import app_cache_dir, app_data_dir
 from atv_player.live_source_repository import LiveSourceRepository
 from atv_player.plugins import SpiderPluginLoader, SpiderPluginManager
 from atv_player.plugins.repository import SpiderPluginRepository
+from atv_player.playback_parsers import BuiltInPlaybackParserService
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.storage import SettingsRepository
 from atv_player.time_utils import is_refresh_stale
@@ -116,6 +117,7 @@ class AppCoordinator(QObject):
         self.main_window: MainWindow | None = None
         self._api_client: ApiClient | None = None
         self._m3u8_ad_filter = M3U8AdFilter()
+        self._playback_parser_service = BuiltInPlaybackParserService()
         if hasattr(repo, "database_path"):
             self._live_source_repository = LiveSourceRepository(repo.database_path)
             self._live_epg_repository = LiveEpgRepository(repo.database_path)
@@ -127,6 +129,12 @@ class AppCoordinator(QObject):
                 self._plugin_repository,
                 self._plugin_loader,
                 self._playback_history_repository,
+            )
+            setattr(self._plugin_manager, "_playback_parser_service", self._playback_parser_service)
+            setattr(
+                self._plugin_manager,
+                "_preferred_parse_key_loader",
+                lambda: self.repo.load_config().preferred_parse_key,
             )
         else:
             self._live_source_repository = _NullLiveSourceRepository()
@@ -276,6 +284,7 @@ class AppCoordinator(QObject):
             show_emby_tab=bool(capabilities.get("emby")),
             show_jellyfin_tab=bool(capabilities.get("jellyfin")),
             m3u8_ad_filter=self._m3u8_ad_filter,
+            playback_parser_service=self._playback_parser_service,
         )
         self.main_window.logout_requested.connect(self._handle_logout_requested)
         if self.login_window is not None:

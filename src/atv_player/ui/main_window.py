@@ -121,10 +121,12 @@ class MainWindow(QMainWindow):
             show_emby_tab: bool = True,
             show_jellyfin_tab: bool = True,
             m3u8_ad_filter=None,
+            playback_parser_service=None,
     ) -> None:
         super().__init__()
         self._save_config = save_config or (lambda: None)
         self._m3u8_ad_filter = m3u8_ad_filter
+        self._playback_parser_service = playback_parser_service
         self._plugin_definitions = list(spider_plugins or [])
         self._plugin_manager = plugin_manager
         self._drive_detail_loader = drive_detail_loader
@@ -589,9 +591,10 @@ class MainWindow(QMainWindow):
                     self.config,
                     self._save_config,
                     m3u8_ad_filter=self._m3u8_ad_filter,
+                    playback_parser_service=self._playback_parser_service,
                 )
             except TypeError as exc:
-                if "m3u8_ad_filter" not in str(exc):
+                if "m3u8_ad_filter" not in str(exc) and "playback_parser_service" not in str(exc):
                     raise
                 self.player_window = PlayerWindow(
                     self.player_controller,
