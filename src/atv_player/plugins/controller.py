@@ -118,6 +118,8 @@ class SpiderPluginController:
         drive_detail_loader: Callable[[str], dict] | None = None,
         playback_history_loader: Callable[[str], object | None] | None = None,
         playback_history_saver: Callable[[str, dict[str, object]], None] | None = None,
+        playback_parser_service=None,
+        preferred_parse_key_loader: Callable[[], str] | None = None,
     ) -> None:
         self._spider = spider
         self._plugin_name = plugin_name
@@ -125,6 +127,8 @@ class SpiderPluginController:
         self._drive_detail_loader = drive_detail_loader
         self._playback_history_loader = playback_history_loader
         self._playback_history_saver = playback_history_saver
+        self._playback_parser_service = playback_parser_service
+        self._preferred_parse_key_loader = preferred_parse_key_loader
         self._home_loaded = False
         self._home_categories: list[DoubanCategory] = []
         self._home_items: list[VodItem] = []
@@ -307,7 +311,25 @@ class SpiderPluginController:
                 item.vod_id,
             )
             raise ValueError(str(exc)) from exc
+        parse_required = int(payload.get("parse") or 0) == 1
         url = str(payload.get("url") or "").strip()
+        if parse_required:
+            if self._playback_parser_service is None:
+                raise ValueError("当前插件未配置内置解析")
+            result = self._playback_parser_service.resolve(
+                item.play_source,
+                url,
+                preferred_key="" if self._preferred_parse_key_loader is None else self._preferred_parse_key_loader(),
+            )
+            item.url = result.url
+            item.headers = dict(result.headers)
+            logger.info(
+                "Spider plugin resolved parse playback plugin=%s source=%s parser=%s",
+                self._plugin_name,
+                item.vod_id,
+                result.parser_key,
+            )
+            return None
         if not _looks_like_media_url(url):
             raise ValueError("插件未返回可播放地址")
         item.url = url

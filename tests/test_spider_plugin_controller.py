@@ -90,6 +90,11 @@ class FailingSearchSpider(FakeSpider):
         raise RuntimeError("search boom")
 
 
+class ParseRequiredSpider(FakeSpider):
+    def playerContent(self, flag, id, vipFlags):
+        return {"parse": 1, "url": f"https://page.example{id}"}
+
+
 def test_controller_load_categories_prepends_home_when_home_list_exists() -> None:
     controller = SpiderPluginController(FakeSpider(), plugin_name="红果短剧", search_enabled=True)
 
@@ -164,6 +169,51 @@ def test_controller_parses_json_string_headers_from_player_content() -> None:
         "User-Agent": "PluginUA",
         "Referer": "https://site.example",
     }
+
+
+def test_controller_resolves_parse_required_player_content_via_parser_service() -> None:
+    parser_calls: list[tuple[str, str, str]] = []
+
+    class FakeParserService:
+        def resolve(self, flag: str, url: str, preferred_key: str = ""):
+            parser_calls.append((flag, url, preferred_key))
+            return type(
+                "Result",
+                (),
+                {
+                    "parser_key": "jx2",
+                    "parser_label": "jx2",
+                    "url": "https://media.example/resolved.m3u8",
+                    "headers": {"Referer": "https://page.example"},
+                },
+            )()
+
+    controller = SpiderPluginController(
+        ParseRequiredSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        playback_parser_service=FakeParserService(),
+        preferred_parse_key_loader=lambda: "jx1",
+    )
+
+    request = controller.build_request("/detail/1")
+    first = request.playlist[0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+
+    assert parser_calls == [("备用线", "https://page.example/play/1", "jx1")]
+    assert first.url == "https://media.example/resolved.m3u8"
+    assert first.headers == {"Referer": "https://page.example"}
+
+
+def test_controller_raises_when_parse_required_without_parser_service() -> None:
+    controller = SpiderPluginController(ParseRequiredSpider(), plugin_name="红果短剧", search_enabled=True)
+    request = controller.build_request("/detail/1")
+
+    with pytest.raises(ValueError, match="当前插件未配置内置解析"):
+        assert request.playback_loader is not None
+        request.playback_loader(request.playlist[0])
 
 
 def test_controller_resolves_supported_drive_links_via_backend_detail_loader() -> None:
