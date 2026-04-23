@@ -466,7 +466,11 @@ def test_app_coordinator_passes_loaded_spider_plugins_into_main_window(qtbot, mo
         )
 
     monkeypatch.setattr(app_module, "ApiClient", api_factory)
-    monkeypatch.setattr(app_module, "SpiderPluginManager", lambda repository, loader: FakePluginManager())
+    monkeypatch.setattr(
+        app_module,
+        "SpiderPluginManager",
+        lambda repository, loader, playback_history_repository: FakePluginManager(),
+    )
     monkeypatch.setattr(app_module, "SpiderPluginRepository", lambda db_path: object())
     monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
 

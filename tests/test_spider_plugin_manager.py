@@ -49,6 +49,34 @@ class FakeSpider:
         }
 
 
+class ParseRequiredSpider(FakeSpider):
+    def detailContent(self, ids):
+        return {
+            "list": [
+                {
+                    "vod_id": ids[0],
+                    "vod_name": "红果短剧",
+                    "vod_play_from": "备用线",
+                    "vod_play_url": "第1集$/play/1",
+                }
+            ]
+        }
+
+    def playerContent(self, flag, id, vipFlags):
+        return {"parse": 1, "url": f"https://page.example/{id}"}
+
+
+class ParseLoader(FakeLoader):
+    def load(self, config: SpiderPluginConfig, force_refresh: bool = False) -> LoadedSpiderPlugin:
+        loaded = super().load(config, force_refresh=force_refresh)
+        return LoadedSpiderPlugin(
+            config=loaded.config,
+            spider=ParseRequiredSpider(),
+            plugin_name="红果短剧",
+            search_enabled=False,
+        )
+
+
 class HistoryLoader(FakeLoader):
     def load(self, config: SpiderPluginConfig, force_refresh: bool = False) -> LoadedSpiderPlugin:
         loaded = super().load(config, force_refresh=force_refresh)
@@ -157,3 +185,35 @@ def test_manager_set_plugin_config_persists_raw_text_and_survives_other_updates(
 
     assert saved.display_name == "红果短剧新版"
     assert saved.config_text == "token=abc\ncookie = 1\n"
+
+
+def test_manager_load_enabled_plugins_wires_built_in_parser_service(tmp_path: Path) -> None:
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧")
+
+    class FakeParserService:
+        def resolve(self, flag: str, url: str, preferred_key: str = ""):
+            return type(
+                "Result",
+                (),
+                {
+                    "parser_key": "jx2",
+                    "parser_label": "jx2",
+                    "url": "https://media.example/resolved.m3u8",
+                    "headers": {"Referer": "https://page.example"},
+                },
+            )()
+
+    manager = SpiderPluginManager(repository, ParseLoader())
+    manager._playback_parser_service = FakeParserService()
+    manager._preferred_parse_key_loader = lambda: "jx1"
+
+    definitions = manager.load_enabled_plugins()
+    request = definitions[0].controller.build_request("detail-1")
+
+    assert request.playback_loader is not None
+    item = request.playlist[0]
+    request.playback_loader(item)
+
+    assert item.url == "https://media.example/resolved.m3u8"
+    assert item.headers == {"Referer": "https://page.example"}
