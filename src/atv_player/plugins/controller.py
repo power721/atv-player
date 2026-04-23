@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 
 def _looks_like_media_url(value: str) -> bool:
     candidate = value.strip().lower()
-    return candidate.startswith(("http://", "https://", "rtmp://", "rtsp://")) or any(
-        candidate.endswith(ext) or f"{ext}?" in candidate for ext in (".m3u8", ".mp4", ".flv")
-    )
+    if candidate.startswith(("rtmp://", "rtsp://")):
+        return True
+    return any(candidate.endswith(ext) or f"{ext}?" in candidate for ext in (".m3u8", ".mp4", ".flv"))
 
 
 def _normalize_headers(raw_headers) -> dict[str, str]:

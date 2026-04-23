@@ -95,6 +95,21 @@ class ParseRequiredSpider(FakeSpider):
         return {"parse": 1, "url": f"https://page.example{id}"}
 
 
+class HtmlPageSpider(FakeSpider):
+    def detailContent(self, ids):
+        return {
+            "list": [
+                {
+                    "vod_id": ids[0],
+                    "vod_name": "吞噬星空",
+                    "vod_pic": "poster-detail",
+                    "vod_play_from": "qq",
+                    "vod_play_url": "吞噬星空_01$https://v.qq.com/x/cover/324olz7ilvo2j5f/i00350r6rf4.html",
+                }
+            ]
+        }
+
+
 def test_controller_load_categories_prepends_home_when_home_list_exists() -> None:
     controller = SpiderPluginController(FakeSpider(), plugin_name="红果短剧", search_enabled=True)
 
@@ -154,6 +169,17 @@ def test_controller_build_request_defers_player_content_until_episode_load() -> 
 
     assert first.url == "https://stream.example/play/1.m3u8"
     assert first.headers == {"Referer": "https://site.example"}
+
+
+def test_controller_build_request_keeps_html_page_urls_for_later_resolution() -> None:
+    controller = SpiderPluginController(HtmlPageSpider(), plugin_name="吞噬星空", search_enabled=True)
+
+    request = controller.build_request("/detail/qq-1")
+    first = request.playlist[0]
+
+    assert first.url == ""
+    assert first.vod_id == "https://v.qq.com/x/cover/324olz7ilvo2j5f/i00350r6rf4.html"
+    assert first.play_source == "qq"
 
 
 def test_controller_parses_json_string_headers_from_player_content() -> None:
