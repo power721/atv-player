@@ -85,7 +85,10 @@ _DRIVE_PROVIDER_LABELS = {
 
 def _looks_like_drive_share_link(value: str) -> bool:
     candidate = value.strip()
-    if not candidate.lower().startswith(("http://", "https://")):
+    url = candidate.lower()
+    if not url.startswith(("http://", "https://")):
+        return False
+    if url.endswith((".m3u8", ".mkv", ".mp4", ".flv")):
         return False
     hostname = (urlparse(candidate).hostname or "").lower()
     return any(hostname == domain or hostname.endswith(f".{domain}") for domain in _SUPPORTED_DRIVE_DOMAINS)
