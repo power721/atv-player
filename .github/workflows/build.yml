@@ -177,9 +177,8 @@ jobs:
           to: ${{ secrets.CHANNEL_ID }}
           token: ${{ secrets.BOT_TOKEN }}
           message: |
-            ${{ github.actor }} created commit:
-            Commit message: ${{ github.event.commits[0].message }}
-
-            Repository: ${{ github.repository }}
-
-            See changes: https://github.com/${{ github.repository }}/commit/${{github.sha}}
+            atv-player 发布新版本
+            版本: ${{ github.ref_name }}
+            仓库: ${{ github.repository }}
+            发布人: ${{ github.actor }}
+            Release: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }}

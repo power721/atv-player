@@ -313,6 +313,32 @@ class SpiderPluginController:
             raise ValueError(str(exc)) from exc
         parse_required = int(payload.get("parse") or 0) == 1
         url = str(payload.get("url") or "").strip()
+        if _looks_like_drive_share_link(url):
+            if self._drive_detail_loader is None:
+                raise ValueError("当前插件未配置网盘解析")
+            try:
+                payload = self._drive_detail_loader(url)
+                detail = _map_vod_item(payload["list"][0])
+            except (KeyError, IndexError) as exc:
+                logger.exception(
+                    "Spider plugin drive detail failed plugin=%s source=%s",
+                    self._plugin_name,
+                    item.vod_id,
+                )
+                raise ValueError(f"没有可播放的项目: {item.title or item.vod_id}") from exc
+            replacement = self._build_drive_replacement_playlist(detail, item.play_source)
+            if not replacement:
+                raise ValueError(f"没有可播放的项目: {detail.vod_name or item.title}")
+            logger.info(
+                "Spider plugin resolved drive playlist plugin=%s source=%s items=%s",
+                self._plugin_name,
+                item.vod_id,
+                len(replacement),
+            )
+            return PlaybackLoadResult(
+                replacement_playlist=replacement,
+                replacement_start_index=self._resolve_replacement_start_index(item.path or detail.vod_id, replacement),
+            )
         if parse_required:
             if self._playback_parser_service is None:
                 raise ValueError("当前插件未配置内置解析")
