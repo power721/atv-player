@@ -19,6 +19,7 @@ from atv_player.plugins.spider_crypto.errors import (
     SecSpiderKeyError,
     SecSpiderSignatureError,
 )
+from atv_player.plugins.spider_crypto.keyring import load_default_keyring
 from atv_player.plugins.spider_crypto.package import SecSpiderPackage
 from atv_player.plugins.spider_crypto.runtime import SecSpiderRuntime
 
@@ -39,6 +40,7 @@ class SpiderPluginLoader:
         self._cache_dir = Path(cache_dir)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._get = get
+        self._keyring = keyring
         self._runtime = SecSpiderRuntime(keyring) if keyring is not None else None
 
     def load(self, config: SpiderPluginConfig, force_refresh: bool = False) -> LoadedSpiderPlugin:
@@ -124,7 +126,7 @@ class SpiderPluginLoader:
 
     def _load_secspider_module(self, module_name: str, source_path: Path):
         if self._runtime is None:
-            raise SecSpiderKeyError("missing key material for encrypted spider loading")
+            self._runtime = SecSpiderRuntime(self._keyring or load_default_keyring())
         package = SecSpiderPackage.parse(source_path.read_text(encoding="utf-8"))
         module = self._runtime.load_module(package, module_name)
         sys.modules.pop(module_name, None)
