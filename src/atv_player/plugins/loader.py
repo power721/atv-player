@@ -12,6 +12,15 @@ import httpx
 from atv_player.models import SpiderPluginConfig
 import atv_player.plugins.compat.base.spider as compat_spider_module
 from atv_player.plugins.compat.base.spider import Spider as CompatSpider
+from atv_player.plugins.spider_crypto.errors import (
+    SecSpiderDecryptError,
+    SecSpiderFormatError,
+    SecSpiderHashError,
+    SecSpiderKeyError,
+    SecSpiderSignatureError,
+)
+from atv_player.plugins.spider_crypto.package import SecSpiderPackage
+from atv_player.plugins.spider_crypto.runtime import SecSpiderRuntime
 
 
 logger = logging.getLogger(__name__)
@@ -26,26 +35,35 @@ class LoadedSpiderPlugin:
 
 
 class SpiderPluginLoader:
-    def __init__(self, cache_dir: Path, get=httpx.get) -> None:
+    def __init__(self, cache_dir: Path, get=httpx.get, keyring=None) -> None:
         self._cache_dir = Path(cache_dir)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._get = get
+        self._runtime = SecSpiderRuntime(keyring) if keyring is not None else None
 
     def load(self, config: SpiderPluginConfig, force_refresh: bool = False) -> LoadedSpiderPlugin:
         compat_spider_module.set_cache_root(self._cache_dir / "spider-cache")
         self._install_compat_modules()
         source_path = self._resolve_source_path(config, force_refresh=force_refresh)
         module_name = f"spider_plugin_{config.id}_{source_path.stem}"
-        spec = importlib.util.spec_from_file_location(module_name, source_path)
-        if spec is None or spec.loader is None:
-            raise ValueError(f"无法加载插件文件: {source_path}")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules.pop(module_name, None)
-        sys.modules[module_name] = module
         try:
-            spec.loader.exec_module(module)
+            package_format = self._detect_package_format(source_path)
+            if package_format == "secspider/1":
+                module = self._load_secspider_module(module_name, source_path)
+            else:
+                module = self._load_plain_module(module_name, source_path)
         except ModuleNotFoundError as exc:
             raise ValueError(f"缺少依赖: {exc.name}") from exc
+        except SecSpiderFormatError as exc:
+            raise ValueError("插件格式不支持") from exc
+        except SecSpiderSignatureError as exc:
+            raise ValueError("插件签名校验失败") from exc
+        except SecSpiderKeyError as exc:
+            raise ValueError("插件密钥不可用") from exc
+        except SecSpiderDecryptError as exc:
+            raise ValueError("插件解密失败") from exc
+        except SecSpiderHashError as exc:
+            raise ValueError("插件源码校验失败") from exc
         spider_cls = getattr(module, "Spider", None)
         if spider_cls is None:
             raise ValueError("缺少 Spider 类")
@@ -86,6 +104,32 @@ class SpiderPluginLoader:
         setattr(base_package, "spider", spider_module)
         sys.modules["base"] = base_package
         sys.modules["base.spider"] = spider_module
+
+    def _detect_package_format(self, source_path: Path) -> str:
+        for raw_line in source_path.read_text(encoding="utf-8").splitlines()[:16]:
+            line = raw_line.strip()
+            if line.startswith("//@format:"):
+                return line.removeprefix("//@format:")
+        return "plain"
+
+    def _load_plain_module(self, module_name: str, source_path: Path):
+        spec = importlib.util.spec_from_file_location(module_name, source_path)
+        if spec is None or spec.loader is None:
+            raise ValueError(f"无法加载插件文件: {source_path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules.pop(module_name, None)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    def _load_secspider_module(self, module_name: str, source_path: Path):
+        if self._runtime is None:
+            raise SecSpiderKeyError("missing key material for encrypted spider loading")
+        package = SecSpiderPackage.parse(source_path.read_text(encoding="utf-8"))
+        module = self._runtime.load_module(package, module_name)
+        sys.modules.pop(module_name, None)
+        sys.modules[module_name] = module
+        return module
 
     def _resolve_source_path(self, config: SpiderPluginConfig, force_refresh: bool) -> Path:
         if config.source_type == "local":
