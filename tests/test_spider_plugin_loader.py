@@ -6,6 +6,7 @@ import pytest
 
 from atv_player.models import SpiderPluginConfig
 from atv_player.plugins.loader import SpiderPluginLoader
+from tests.secspider_fixtures import build_secspider_package
 
 PLUGIN_SOURCE = """
 from base.spider import Spider
@@ -255,3 +256,102 @@ def test_loader_logs_loaded_plugin(tmp_path: Path, caplog) -> None:
     assert loaded.plugin_name == "红果短剧"
     assert "Loaded spider plugin" in caplog.text
     assert "红果短剧" in caplog.text
+
+
+def test_loader_loads_local_secspider_plugin(tmp_path: Path) -> None:
+    package_text, keyring = build_secspider_package(
+        """
+from base.spider import Spider
+
+class Spider(Spider):
+    def init(self, extend=""):
+        self.extend = extend
+
+    def getName(self):
+        return f"加密:{self.extend}"
+""",
+        name="红果短剧",
+    )
+    plugin_path = tmp_path / "encrypted_plugin.py"
+    plugin_path.write_text(package_text, encoding="utf-8")
+    loader = SpiderPluginLoader(cache_dir=tmp_path / "cache", keyring=keyring)
+    config = SpiderPluginConfig(
+        id=41,
+        source_type="local",
+        source_value=str(plugin_path),
+        display_name="",
+        enabled=True,
+        sort_order=0,
+        config_text="site=https://example.com",
+    )
+
+    loaded = loader.load(config)
+
+    assert loaded.plugin_name == "加密:site=https://example.com"
+
+
+def test_loader_loads_remote_secspider_plugin_and_persists_cache(tmp_path: Path) -> None:
+    package_text, keyring = build_secspider_package(
+        """
+from base.spider import Spider
+
+class Spider(Spider):
+    def getName(self):
+        return "远程加密"
+""",
+        name="远程加密",
+    )
+
+    def fake_get(url: str, timeout: float = 15.0, follow_redirects: bool = False) -> httpx.Response:
+        return httpx.Response(200, text=package_text)
+
+    loader = SpiderPluginLoader(cache_dir=tmp_path / "cache", get=fake_get, keyring=keyring)
+    config = SpiderPluginConfig(
+        id=42,
+        source_type="remote",
+        source_value="https://example.com/encrypted.py",
+        display_name="",
+        enabled=True,
+        sort_order=0,
+    )
+
+    loaded = loader.load(config, force_refresh=True)
+
+    assert loaded.plugin_name == "远程加密"
+    assert Path(loaded.config.cached_file_path).read_text(encoding="utf-8").startswith("// ignore")
+
+
+def test_loader_reports_secspider_signature_failure(tmp_path: Path) -> None:
+    package_text, keyring = build_secspider_package("class Spider:\n    pass\n")
+    plugin_path = tmp_path / "broken_encrypted.py"
+    plugin_path.write_text(package_text.replace("payload.base64:", "payload.base64:Z", 1), encoding="utf-8")
+    loader = SpiderPluginLoader(cache_dir=tmp_path / "cache", keyring=keyring)
+    config = SpiderPluginConfig(
+        id=43,
+        source_type="local",
+        source_value=str(plugin_path),
+        display_name="",
+        enabled=True,
+        sort_order=0,
+    )
+
+    with pytest.raises(ValueError, match="插件签名校验失败"):
+        loader.load(config)
+
+
+def test_loader_reports_missing_spider_class_after_secspider_decrypt(tmp_path: Path) -> None:
+    package_text, keyring = build_secspider_package("class NotSpider:\n    pass\n")
+    plugin_path = tmp_path / "missing_spider.py"
+    plugin_path.write_text(package_text, encoding="utf-8")
+    loader = SpiderPluginLoader(cache_dir=tmp_path / "cache", keyring=keyring)
+    config = SpiderPluginConfig(
+        id=44,
+        source_type="local",
+        source_value=str(plugin_path),
+        display_name="",
+        enabled=True,
+        sort_order=0,
+    )
+
+    with pytest.raises(ValueError, match="缺少 Spider 类"):
+        loader.load(config)
