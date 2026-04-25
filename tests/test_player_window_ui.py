@@ -200,7 +200,7 @@ def test_player_window_rewrites_remote_m3u8_to_local_proxy_url(qtbot) -> None:
 
         def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
             self.calls.append((url, dict(headers or {})))
-            return "http://127.0.0.1:2323/m3u?token=proxy-1"
+            return "http://127.0.0.1:2323/m3u?v=proxy-1"
 
     session = PlayerSession(
         vod=VodItem(vod_id="movie-1", vod_name="Movie"),
@@ -222,7 +222,7 @@ def test_player_window_rewrites_remote_m3u8_to_local_proxy_url(qtbot) -> None:
     window.video = video
 
     window.open_session(session)
-    qtbot.waitUntil(lambda: video.load_calls == [("http://127.0.0.1:2323/m3u?token=proxy-1", 0)])
+    qtbot.waitUntil(lambda: video.load_calls == [("http://127.0.0.1:2323/m3u?v=proxy-1", 0)])
 
     assert filter_service.calls == [
         (
@@ -267,7 +267,7 @@ def test_player_window_rewrites_resolved_m3u8_after_detail_lookup(qtbot) -> None
 
     class FakeM3U8AdFilter:
         def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
-            return "http://127.0.0.1:2323/m3u?token=resolved-1"
+            return "http://127.0.0.1:2323/m3u?v=resolved-1"
 
     session = PlayerSession(
         vod=VodItem(vod_id="movie-1", vod_name="Movie"),
@@ -283,7 +283,7 @@ def test_player_window_rewrites_resolved_m3u8_after_detail_lookup(qtbot) -> None
     window.video = video
 
     window.open_session(session)
-    qtbot.waitUntil(lambda: video.load_calls == [("http://127.0.0.1:2323/m3u?token=resolved-1", 0)])
+    qtbot.waitUntil(lambda: video.load_calls == [("http://127.0.0.1:2323/m3u?v=resolved-1", 0)])
 
 
 def test_player_window_uses_detail_container_with_metadata_and_log_views(qtbot) -> None:

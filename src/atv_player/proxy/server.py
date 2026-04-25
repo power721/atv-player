@@ -58,6 +58,13 @@ class LocalHlsProxyServer:
         token = self._registry.create_session(url, dict(headers or {}))
         return f"http://{self.host}:{self.port}/m3u?v={quote(token)}"
 
+    @staticmethod
+    def _query_token(query: dict[str, list[str]]) -> str:
+        values = query.get("token") or query.get("v")
+        if not values:
+            raise KeyError("token")
+        return values[0]
+
     def handle_request(self, method: str, path: str) -> tuple[int, list[tuple[str, str]], bytes]:
         parsed = urlparse(path)
         query = parse_qs(parsed.query)
@@ -65,7 +72,7 @@ class LocalHlsProxyServer:
             if method != "GET":
                 return 405, [], b"method not allowed"
             if parsed.path == "/m3u":
-                token = query["v"][0]
+                token = self._query_token(query)
                 session = self._registry.get(token)
                 if session is None:
                     return 404, [], b"missing proxy session"
@@ -97,7 +104,7 @@ class LocalHlsProxyServer:
                 session.cached_playlist_text = rewritten.text
                 return 200, [("Content-Type", "application/vnd.apple.mpegurl")], rewritten.text.encode("utf-8")
             if parsed.path == "/seg":
-                token = query["v"][0]
+                token = self._query_token(query)
                 session = self._registry.get(token)
                 if session is None:
                     return 404, [], b"missing proxy session"
@@ -105,7 +112,7 @@ class LocalHlsProxyServer:
                 payload = self._segment_proxy.fetch_segment(token, index)
                 return 200, [("Content-Type", "video/MP2T")], payload
             if parsed.path == "/asset":
-                token = query["v"][0]
+                token = self._query_token(query)
                 session = self._registry.get(token)
                 if session is None:
                     return 404, [], b"missing proxy session"

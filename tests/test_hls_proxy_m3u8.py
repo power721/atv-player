@@ -27,8 +27,8 @@ main-0003.ts
         proxy_base_url="http://127.0.0.1:2323",
     )
 
-    assert 'URI="http://127.0.0.1:2323/asset?token=' in rewritten.text
-    assert "http://127.0.0.1:2323/seg?token=" in rewritten.text
+    assert 'URI="http://127.0.0.1:2323/asset?v=' in rewritten.text
+    assert "http://127.0.0.1:2323/seg?v=" in rewritten.text
     assert "ad-0002.ts" not in rewritten.text
     session = registry.get(token)
     assert [segment.url for segment in session.segments] == [
@@ -56,7 +56,7 @@ video/720.m3u8
         proxy_base_url="http://127.0.0.1:2323",
     )
 
-    assert "http://127.0.0.1:2323/m3u?token=" in rewritten.text
+    assert "http://127.0.0.1:2323/m3u?v=" in rewritten.text
     assert rewritten.is_master is True
 
 
@@ -122,7 +122,7 @@ live-0002.ts
         proxy_base_url="http://127.0.0.1:2323",
     )
 
-    assert rewritten.text.count("http://127.0.0.1:2323/seg?token=") == 2
+    assert rewritten.text.count("http://127.0.0.1:2323/seg?v=") == 2
     session = registry.get(token)
     assert [segment.url for segment in session.segments] == [
         "https://media.example/path/live-0001.ts",

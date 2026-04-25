@@ -266,7 +266,7 @@ def test_m3u8_ad_filter_prepare_returns_proxy_url_without_fetching_origin() -> N
 
         def create_playlist_url(self, url: str, headers: dict[str, str] | None = None) -> str:
             self.calls.append((url, dict(headers or {})))
-            return "http://127.0.0.1:2323/m3u?token=test-token"
+            return "http://127.0.0.1:2323/m3u?v=test-token"
 
         def close(self) -> None:
             return None
@@ -279,7 +279,7 @@ def test_m3u8_ad_filter_prepare_returns_proxy_url_without_fetching_origin() -> N
         {"Referer": "https://site.example"},
     )
 
-    assert prepared == "http://127.0.0.1:2323/m3u?token=test-token"
+    assert prepared == "http://127.0.0.1:2323/m3u?v=test-token"
     assert server.started is True
     assert server.calls == [
         (
@@ -299,7 +299,7 @@ def test_m3u8_ad_filter_prepare_returns_proxy_url_for_master_playlist_without_in
 
         def create_playlist_url(self, url: str, headers: dict[str, str] | None = None) -> str:
             self.calls.append((url, dict(headers or {})))
-            return "http://127.0.0.1:2323/m3u?token=master-token"
+            return "http://127.0.0.1:2323/m3u?v=master-token"
 
         def close(self) -> None:
             return None
@@ -309,7 +309,7 @@ def test_m3u8_ad_filter_prepare_returns_proxy_url_for_master_playlist_without_in
 
     prepared = ad_filter.prepare("https://media.example/master.m3u8")
 
-    assert prepared == "http://127.0.0.1:2323/m3u?token=master-token"
+    assert prepared == "http://127.0.0.1:2323/m3u?v=master-token"
     assert server.calls == [("https://media.example/master.m3u8", {})]
 
 

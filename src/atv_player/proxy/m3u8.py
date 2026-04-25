@@ -37,7 +37,7 @@ def rewrite_playlist(
                 continue
             child_url = urljoin(playlist_url, line)
             child_token = session_registry.create_session(child_url, session.headers)
-            output.append(f"{proxy_base_url}/m3u?token={quote(child_token)}")
+            output.append(f"{proxy_base_url}/m3u?v={quote(child_token)}")
         return RewrittenPlaylist(text="\n".join(output) + "\n", is_master=True)
 
     output: list[str] = []
@@ -60,7 +60,7 @@ def rewrite_playlist(
         new_segments.append(
             PlaylistSegment(index=segment_index, url=absolute_url, duration=pending_duration)
         )
-        output.append(f"{proxy_base_url}/seg?token={quote(token)}&i={segment_index}")
+        output.append(f"{proxy_base_url}/seg?v={quote(token)}&i={segment_index}")
         segment_index += 1
         pending_duration = None
     session.segments = new_segments
@@ -70,6 +70,6 @@ def rewrite_playlist(
 def _rewrite_tag_uris(line: str, token: str, playlist_url: str, proxy_base_url: str) -> str:
     def repl(match: re.Match[str]) -> str:
         absolute_url = urljoin(playlist_url, match.group(1))
-        return f'URI="{proxy_base_url}/asset?token={quote(token)}&url={quote(absolute_url, safe="")}"'
+        return f'URI="{proxy_base_url}/asset?v={quote(token)}&url={quote(absolute_url, safe="")}"'
 
     return _URI_ATTR_RE.sub(repl, line)
