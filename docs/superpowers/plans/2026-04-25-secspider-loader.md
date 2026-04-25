@@ -871,3 +871,7 @@ The host-side loader is complete. The remaining builder/publishing work should b
 git add docs/superpowers/plans/2026-04-25-secspider-loader.md
 git commit -m "docs: note secspider builder follow-up"
 ```
+
+## Follow-up
+
+The host-side loader is complete. The remaining builder/publishing work should be implemented in a separate private tool or repo so signing keys and release automation stay outside the public app tree.
