@@ -1,5 +1,7 @@
+from io import BytesIO
 from pathlib import Path
 
+import pytest
 import atv_player.ui.poster_loader as poster_loader_module
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QImage
@@ -30,6 +32,22 @@ def _png_bytes(width: int = 20, height: int = 40) -> bytes:
     qbuffer.open(QIODeviceBase.OpenModeFlag.WriteOnly)
     png.save(qbuffer, "PNG")
     return bytes(data)
+
+
+def _sample_image(width: int = 20, height: int = 40) -> QImage:
+    image = QImage()
+    image.loadFromData(_png_bytes(width, height))
+    return image
+
+
+def _heif_bytes(width: int = 20, height: int = 40) -> bytes:
+    image_module = pytest.importorskip("PIL.Image")
+    pillow_heif = pytest.importorskip("pillow_heif")
+    pillow_heif.register_heif_opener()
+
+    encoded = BytesIO()
+    image_module.new("RGB", (width, height), (0, 255, 0)).save(encoded, format="HEIF")
+    return encoded.getvalue()
 
 
 def test_normalize_poster_url_upgrades_douban_ratio_path() -> None:
@@ -222,6 +240,95 @@ def test_load_remote_poster_image_returns_image_when_cache_write_fails(monkeypat
 
     assert loaded is not None
     assert loaded.isNull() is False
+
+
+def test_load_remote_poster_image_uses_fallback_decoder_when_qt_cannot_decode(monkeypatch, tmp_path) -> None:
+    cache_dir = tmp_path / "posters"
+    monkeypatch.setattr(poster_loader_module, "poster_cache_dir", lambda: cache_dir)
+    fallback_image = _sample_image()
+
+    def fake_get(
+        url: str,
+        headers: dict[str, str],
+        timeout: float,
+        follow_redirects: bool = False,
+    ) -> FakeResponse:
+        return FakeResponse(b"fake-heic-bytes")
+
+    monkeypatch.setattr(
+        poster_loader_module,
+        "_decode_image_fallback_from_bytes",
+        lambda image_bytes: fallback_image if image_bytes == b"fake-heic-bytes" else None,
+        raising=False,
+    )
+
+    loaded = load_remote_poster_image(
+        "https://img.example.com/poster.heic",
+        QSize(90, 130),
+        get=fake_get,
+    )
+
+    assert loaded is not None
+    assert loaded.isNull() is False
+    assert loaded.width() <= 90
+    assert loaded.height() <= 130
+
+
+def test_load_local_poster_image_uses_fallback_decoder_when_qt_cannot_decode(tmp_path, monkeypatch) -> None:
+    poster_path = tmp_path / "poster.heic"
+    poster_path.write_bytes(b"fake-heic-bytes")
+    fallback_image = _sample_image()
+
+    monkeypatch.setattr(
+        poster_loader_module,
+        "_decode_image_fallback_from_bytes",
+        lambda image_bytes: fallback_image if image_bytes == b"fake-heic-bytes" else None,
+        raising=False,
+    )
+
+    loaded = poster_loader_module.load_local_poster_image(str(poster_path), QSize(90, 130))
+
+    assert loaded is not None
+    assert loaded.isNull() is False
+    assert loaded.width() <= 90
+    assert loaded.height() <= 130
+
+
+def test_load_remote_poster_image_decodes_real_heif_bytes(monkeypatch, tmp_path) -> None:
+    cache_dir = tmp_path / "posters"
+    monkeypatch.setattr(poster_loader_module, "poster_cache_dir", lambda: cache_dir)
+    poster_bytes = _heif_bytes()
+
+    def fake_get(
+        url: str,
+        headers: dict[str, str],
+        timeout: float,
+        follow_redirects: bool = False,
+    ) -> FakeResponse:
+        return FakeResponse(poster_bytes)
+
+    loaded = load_remote_poster_image(
+        "https://img.example.com/poster.heic",
+        QSize(90, 130),
+        get=fake_get,
+    )
+
+    assert loaded is not None
+    assert loaded.isNull() is False
+    assert loaded.width() <= 90
+    assert loaded.height() <= 130
+
+
+def test_load_local_poster_image_decodes_real_heif_file(tmp_path) -> None:
+    poster_path = tmp_path / "poster.heic"
+    poster_path.write_bytes(_heif_bytes())
+
+    loaded = poster_loader_module.load_local_poster_image(str(poster_path), QSize(90, 130))
+
+    assert loaded is not None
+    assert loaded.isNull() is False
+    assert loaded.width() <= 90
+    assert loaded.height() <= 130
 
 
 def test_poster_cache_dir_uses_shared_cache_helper(monkeypatch, tmp_path) -> None:

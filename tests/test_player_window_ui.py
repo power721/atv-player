@@ -713,7 +713,12 @@ def test_player_window_renders_remote_poster_via_direct_request_headers(qtbot, m
         def raise_for_status(self) -> None:
             return None
 
-    def fake_get(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+    def fake_get(
+        url: str,
+        headers: dict[str, str],
+        timeout: float,
+        follow_redirects: bool = False,
+    ) -> FakeResponse:
         requests.append((url, headers, timeout))
         return FakeResponse(poster_bytes)
 
@@ -781,7 +786,12 @@ def test_player_window_uses_short_timeout_for_remote_poster_requests(qtbot, monk
         def raise_for_status(self) -> None:
             return None
 
-    def fake_get(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+    def fake_get(
+        url: str,
+        headers: dict[str, str],
+        timeout: float,
+        follow_redirects: bool = False,
+    ) -> FakeResponse:
         requested_timeouts.append(timeout)
         return FakeResponse()
 
@@ -836,7 +846,12 @@ def test_player_window_uses_youtube_referer_for_ytimg_posters(qtbot, monkeypatch
         def raise_for_status(self) -> None:
             return None
 
-    def fake_get(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+    def fake_get(
+        url: str,
+        headers: dict[str, str],
+        timeout: float,
+        follow_redirects: bool = False,
+    ) -> FakeResponse:
         requested_headers.append(headers)
         return FakeResponse()
 
@@ -892,7 +907,12 @@ def test_player_window_uses_netease_referer_for_netease_posters(qtbot, monkeypat
         def raise_for_status(self) -> None:
             return None
 
-    def fake_get(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+    def fake_get(
+        url: str,
+        headers: dict[str, str],
+        timeout: float,
+        follow_redirects: bool = False,
+    ) -> FakeResponse:
         requested_headers.append(headers)
         return FakeResponse()
 

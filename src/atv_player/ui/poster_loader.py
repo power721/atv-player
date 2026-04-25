@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from io import BytesIO
 from hashlib import sha256
 from pathlib import Path
 
@@ -8,6 +9,20 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QImage
 
 from atv_player.paths import app_cache_dir
+
+try:
+    from PIL import Image, ImageOps, UnidentifiedImageError
+except ImportError:  # pragma: no cover - exercised when optional decoder deps are absent.
+    Image = None
+    ImageOps = None
+    UnidentifiedImageError = OSError
+
+try:
+    from pillow_heif import register_heif_opener
+except ImportError:  # pragma: no cover - exercised when optional decoder deps are absent.
+    register_heif_opener = None
+else:
+    register_heif_opener()
 
 POSTER_REQUEST_TIMEOUT_SECONDS = 10.0
 POSTER_USER_AGENT = (
@@ -53,10 +68,40 @@ def _write_poster_cache_bytes(cache_path: Path, image_bytes: bytes) -> None:
     cache_path.write_bytes(image_bytes)
 
 
-def _load_scaled_image_from_bytes(image_bytes: bytes, target_size: QSize) -> QImage | None:
+def _decode_image_fallback_from_bytes(image_bytes: bytes) -> QImage | None:
+    if Image is None or ImageOps is None:
+        return None
+
+    try:
+        with Image.open(BytesIO(image_bytes)) as pil_image:
+            normalized = ImageOps.exif_transpose(pil_image)
+            has_alpha = "A" in normalized.getbands()
+            converted = normalized.convert("RGBA" if has_alpha else "RGB")
+            encoded = BytesIO()
+            converted.save(encoded, format="PNG")
+    except (OSError, UnidentifiedImageError, ValueError):
+        return None
+
+    image = QImage()
+    image.loadFromData(encoded.getvalue())
+    if image.isNull():
+        return None
+    return image
+
+
+def _decode_image_from_bytes(image_bytes: bytes) -> QImage | None:
     image = QImage()
     image.loadFromData(image_bytes)
     if image.isNull():
+        image = _decode_image_fallback_from_bytes(image_bytes)
+    if image is None or image.isNull():
+        return None
+    return image
+
+
+def _load_scaled_image_from_bytes(image_bytes: bytes, target_size: QSize) -> QImage | None:
+    image = _decode_image_from_bytes(image_bytes)
+    if image is None:
         return None
     return image.scaled(
         target_size,
@@ -79,9 +124,13 @@ def load_local_poster_image(source: str, target_size: QSize) -> QImage | None:
     source_path = Path(source)
     if not source_path.is_file():
         return None
+
     image = QImage(str(source_path))
     if image.isNull():
-        return None
+        try:
+            return _load_scaled_image_from_bytes(source_path.read_bytes(), target_size)
+        except OSError:
+            return None
     return image.scaled(
         target_size,
         Qt.AspectRatioMode.KeepAspectRatio,
