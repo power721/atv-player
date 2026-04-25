@@ -19,12 +19,13 @@ def repair_segment_bytes(data: bytes) -> bytes:
 
 
 def _strip_png_prefix(data: bytes) -> bytes:
-    if not data.startswith(PNG_SIGNATURE):
-        return data
-    png_end_index = data.find(PNG_END)
-    if png_end_index < 0:
-        return data
-    return data[png_end_index + len(PNG_END) :]
+    stripped = data
+    while stripped.startswith(PNG_SIGNATURE):
+        png_end_index = stripped.find(PNG_END)
+        if png_end_index < 0:
+            return data
+        stripped = stripped[png_end_index + len(PNG_END) :]
+    return stripped
 
 
 def _align_ts_packets(data: bytes) -> bytes:

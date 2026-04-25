@@ -55,6 +55,25 @@ class SegmentProxy:
             self.schedule_prefetch(token, index)
         return repaired
 
+    def fetch_media(self, token: str) -> bytes:
+        session = self._session_registry.get(token)
+        if session is None:
+            raise ValueError("missing proxy session")
+        cache_key = self._segment_cache_key(session.playlist_url, session.headers)
+        cached = self._cache.get_segment(cache_key)
+        if cached is not None:
+            return cached
+        response = self._get(
+            session.playlist_url,
+            headers=dict(session.headers),
+            timeout=10.0,
+            follow_redirects=True,
+        )
+        response.raise_for_status()
+        repaired = repair_segment_bytes(bytes(response.content))
+        self._cache.set_segment(cache_key, repaired)
+        return repaired
+
     def fetch_asset(self, token: str, url: str) -> bytes:
         session = self._session_registry.get(token)
         if session is None:

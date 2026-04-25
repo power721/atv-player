@@ -156,7 +156,7 @@ class PluginManagerDialog(QDialog):
         return value if accepted else None
 
     def _pick_local_plugin_path(self) -> str:
-        path, _ = QFileDialog.getOpenFileName(self, "选择 Python 插件", "", "Python Files (*.py)")
+        path, _ = QFileDialog.getOpenFileName(self, "选择 Python 插件", "", "Plugin Files (*.py *.txt)")
         return path.strip()
 
     def _prompt_remote_url(self) -> str:

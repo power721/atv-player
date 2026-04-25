@@ -18,6 +18,25 @@ def test_repair_segment_bytes_strips_png_preamble_and_returns_ts_sync() -> None:
     assert len(repaired) == 376
 
 
+def test_repair_segment_bytes_strips_multiple_png_preambles_before_ts_payload() -> None:
+    png_then_ts = (
+        b"\x89PNG\r\n\x1a\n"
+        b"\x00\x00\x00\rIHDR"
+        + b"\x00" * 32
+        + b"IEND\xaeB`\x82"
+        + b"\x89PNG\r\n\x1a\n"
+        b"\x00\x00\x00\rIHDR"
+        + b"\x00" * 32
+        + b"IEND\xaeB`\x82"
+        + (b"\x47" + b"\x00" * 187) * 2
+    )
+
+    repaired = repair_segment_bytes(png_then_ts)
+
+    assert repaired.startswith(b"\x47")
+    assert len(repaired) == 376
+
+
 def test_repair_segment_bytes_preserves_plain_ts_payload() -> None:
     plain_ts = (b"\x47" + b"\x01" * 187) * 3
 

@@ -17,6 +17,7 @@ _AD_MARKERS = ("/adjump/", "/video/adjump/")
 _PLAYLIST_TIMEOUT_SECONDS = 10.0
 _URI_ATTRIBUTE_RE = re.compile(r'URI="([^"]+)"')
 _MAX_NESTED_PLAYLIST_DEPTH = 3
+_DISGUISED_MEDIA_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
 
 
 @dataclass(slots=True, frozen=True)
@@ -119,6 +120,29 @@ def _is_remote_m3u8_url(url: str) -> bool:
         return "." in hostname
 
 
+def _is_disguised_media_url(url: str) -> bool:
+    candidate = url.lower().split("#", 1)[0]
+    return any(candidate.endswith(ext) or f"{ext}?" in candidate for ext in _DISGUISED_MEDIA_SUFFIXES)
+
+
+def _is_remote_proxy_candidate_url(url: str) -> bool:
+    parsed = urlparse(url)
+    hostname = parsed.hostname or ""
+    if parsed.scheme not in {"http", "https"} or not hostname:
+        return False
+    if _is_remote_m3u8_url(url):
+        return True
+    if not _is_disguised_media_url(url):
+        return False
+    if hostname == "localhost":
+        return True
+    try:
+        ip_address(hostname)
+        return True
+    except ValueError:
+        return "." in hostname
+
+
 def _resolve_first_variant_url(text: str, playlist_url: str) -> str:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     for index, line in enumerate(lines):
@@ -146,12 +170,14 @@ class M3U8AdFilter:
         self._proxy_server = proxy_server or LocalHlsProxyServer(get=get)
 
     def should_prepare(self, url: str) -> bool:
-        return _is_remote_m3u8_url(url)
+        return _is_remote_proxy_candidate_url(url)
 
     def prepare(self, url: str, headers: dict[str, str] | None = None) -> str:
         if not self.should_prepare(url):
             return url
         self._proxy_server.start()
+        if _is_disguised_media_url(url):
+            return self._proxy_server.create_media_url(url, headers=dict(headers or {}))
         return self._proxy_server.create_playlist_url(url, headers=dict(headers or {}))
 
     def close(self) -> None:

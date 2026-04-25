@@ -34,6 +34,41 @@ def test_m3u8_ad_filter_leaves_non_m3u8_url_unchanged() -> None:
     assert ad_filter.should_prepare("https://media.example/video.mp4") is False
 
 
+def test_m3u8_ad_filter_treats_remote_png_media_url_as_proxy_candidate() -> None:
+    class FakeServer:
+        def __init__(self) -> None:
+            self.started = False
+            self.calls: list[tuple[str, dict[str, str]]] = []
+
+        def start(self) -> None:
+            self.started = True
+
+        def create_media_url(self, url: str, headers: dict[str, str] | None = None) -> str:
+            self.calls.append((url, dict(headers or {})))
+            return "http://127.0.0.1:2323/raw?v=test-token"
+
+        def close(self) -> None:
+            return None
+
+    server = FakeServer()
+    ad_filter = M3U8AdFilter(proxy_server=server)
+
+    prepared = ad_filter.prepare(
+        "https://media.example/path/disguised.png",
+        {"Referer": "https://site.example"},
+    )
+
+    assert ad_filter.should_prepare("https://media.example/path/disguised.png") is True
+    assert prepared == "http://127.0.0.1:2323/raw?v=test-token"
+    assert server.started is True
+    assert server.calls == [
+        (
+            "https://media.example/path/disguised.png",
+            {"Referer": "https://site.example"},
+        )
+    ]
+
+
 def test_local_hls_proxy_server_returns_404_for_missing_token() -> None:
     server = LocalHlsProxyServer()
 
@@ -42,6 +77,38 @@ def test_local_hls_proxy_server_returns_404_for_missing_token() -> None:
     assert status == 404
     assert headers == []
     assert body == b"missing proxy session"
+
+
+def test_local_hls_proxy_server_returns_repaired_bytes_for_direct_media_url() -> None:
+    class FakeResponse:
+        def __init__(self, content: bytes) -> None:
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        return FakeResponse(
+            b"\x89PNG\r\n\x1a\n"
+            b"\x00\x00\x00\rIHDR"
+            + b"\x00" * 32
+            + b"IEND\xaeB`\x82"
+            + b"\x89PNG\r\n\x1a\n"
+            b"\x00\x00\x00\rIHDR"
+            + b"\x00" * 32
+            + b"IEND\xaeB`\x82"
+            + (b"\x47" + b"\x00" * 187) * 2
+        )
+
+    server = LocalHlsProxyServer(get=fake_get)
+    media_url = server.create_media_url("https://media.example/path/disguised.png", {})
+    token = media_url.rsplit("=", 1)[-1]
+
+    status, headers, body = server.handle_request("GET", f"/raw?v={token}")
+
+    assert status == 200
+    assert headers == [("Content-Type", "video/MP2T")]
+    assert body.startswith(b"\x47")
 
 
 def test_local_hls_proxy_server_returns_502_when_playlist_fetch_fails() -> None:

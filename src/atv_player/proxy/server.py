@@ -58,6 +58,10 @@ class LocalHlsProxyServer:
         token = self._registry.create_session(url, dict(headers or {}))
         return f"http://{self.host}:{self.port}/m3u?v={quote(token)}"
 
+    def create_media_url(self, url: str, headers: dict[str, str] | None = None) -> str:
+        token = self._registry.create_session(url, dict(headers or {}))
+        return f"http://{self.host}:{self.port}/raw?v={quote(token)}"
+
     @staticmethod
     def _query_token(query: dict[str, list[str]]) -> str:
         values = query.get("token") or query.get("v")
@@ -119,6 +123,13 @@ class LocalHlsProxyServer:
                 asset_url = query["url"][0]
                 payload = self._segment_proxy.fetch_asset(token, asset_url)
                 return 200, [], payload
+            if parsed.path == "/raw":
+                token = self._query_token(query)
+                session = self._registry.get(token)
+                if session is None:
+                    return 404, [], b"missing proxy session"
+                payload = self._segment_proxy.fetch_media(token)
+                return 200, [("Content-Type", "video/MP2T")], payload
         except Exception as exc:
             return 502, [], str(exc).encode("utf-8")
         return 404, [], b"not found"
