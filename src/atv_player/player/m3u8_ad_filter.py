@@ -12,12 +12,15 @@ import httpx
 
 from atv_player.paths import app_cache_dir
 from atv_player.proxy.server import LocalHlsProxyServer
+from atv_player.proxy.stripper import TS_PACKET_SIZE, repair_segment_bytes
+from atv_player.request_headers import normalize_media_request_headers
 
 _AD_MARKERS = ("/adjump/", "/video/adjump/")
 _PLAYLIST_TIMEOUT_SECONDS = 10.0
 _URI_ATTRIBUTE_RE = re.compile(r'URI="([^"]+)"')
 _MAX_NESTED_PLAYLIST_DEPTH = 3
 _DISGUISED_MEDIA_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
+_PROBE_RANGE_HEADER = "bytes=0-2047"
 
 
 @dataclass(slots=True, frozen=True)
@@ -125,6 +128,21 @@ def _is_disguised_media_url(url: str) -> bool:
     return any(candidate.endswith(ext) or f"{ext}?" in candidate for ext in _DISGUISED_MEDIA_SUFFIXES)
 
 
+def _is_extensionless_remote_url(url: str) -> bool:
+    parsed = urlparse(url)
+    hostname = parsed.hostname or ""
+    path = parsed.path or ""
+    if parsed.scheme not in {"http", "https"} or not hostname or not path or path.endswith("/"):
+        return False
+    segment = path.rsplit("/", 1)[-1]
+    return bool(segment) and "." not in segment
+
+
+def _should_assume_disguised_media_on_probe_failure(url: str) -> bool:
+    hostname = (urlparse(url).hostname or "").lower()
+    return hostname.endswith("xhscdn.com")
+
+
 def _is_remote_proxy_candidate_url(url: str) -> bool:
     parsed = urlparse(url)
     hostname = parsed.hostname or ""
@@ -132,7 +150,7 @@ def _is_remote_proxy_candidate_url(url: str) -> bool:
         return False
     if _is_remote_m3u8_url(url):
         return True
-    if not _is_disguised_media_url(url):
+    if not (_is_disguised_media_url(url) or _is_extensionless_remote_url(url)):
         return False
     if hostname == "localhost":
         return True
@@ -176,9 +194,36 @@ class M3U8AdFilter:
         if not self.should_prepare(url):
             return url
         self._proxy_server.start()
+        normalized_headers = normalize_media_request_headers(url, headers)
         if _is_disguised_media_url(url):
-            return self._proxy_server.create_media_url(url, headers=dict(headers or {}))
-        return self._proxy_server.create_playlist_url(url, headers=dict(headers or {}))
+            return self._proxy_server.create_media_url(url, headers=normalized_headers)
+        if _is_extensionless_remote_url(url):
+            probe_result = self._looks_like_disguised_ts(url, headers=normalized_headers)
+            if probe_result is True:
+                return self._proxy_server.create_media_url(url, headers=normalized_headers)
+            if probe_result is None and _should_assume_disguised_media_on_probe_failure(url):
+                return self._proxy_server.create_media_url(url, headers=normalized_headers)
+            return url
+        return self._proxy_server.create_playlist_url(url, headers=normalized_headers)
+
+    def _looks_like_disguised_ts(self, url: str, headers: dict[str, str]) -> bool | None:
+        probe_headers = dict(headers)
+        probe_headers["Range"] = _PROBE_RANGE_HEADER
+        try:
+            response = self._get(
+                url,
+                headers=probe_headers,
+                timeout=_PLAYLIST_TIMEOUT_SECONDS,
+                follow_redirects=True,
+            )
+            response.raise_for_status()
+        except Exception:
+            return None
+        payload = bytes(getattr(response, "content", b"") or b"")
+        repaired = repair_segment_bytes(payload)
+        if len(repaired) < TS_PACKET_SIZE * 2:
+            return False
+        return repaired[0] == 0x47 and repaired[TS_PACKET_SIZE] == 0x47
 
     def close(self) -> None:
         self._proxy_server.close()

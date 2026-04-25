@@ -11,6 +11,7 @@ import httpx
 from atv_player.proxy.m3u8 import rewrite_playlist
 from atv_player.proxy.segment import SegmentProxy
 from atv_player.proxy.session import ProxySessionRegistry
+from atv_player.request_headers import normalize_media_request_headers
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +56,11 @@ class LocalHlsProxyServer:
         self.port = self._preferred_port
 
     def create_playlist_url(self, url: str, headers: dict[str, str] | None = None) -> str:
-        token = self._registry.create_session(url, dict(headers or {}))
+        token = self._registry.create_session(url, normalize_media_request_headers(url, headers))
         return f"http://{self.host}:{self.port}/m3u?v={quote(token)}"
 
     def create_media_url(self, url: str, headers: dict[str, str] | None = None) -> str:
-        token = self._registry.create_session(url, dict(headers or {}))
+        token = self._registry.create_session(url, normalize_media_request_headers(url, headers))
         return f"http://{self.host}:{self.port}/raw?v={quote(token)}"
 
     @staticmethod

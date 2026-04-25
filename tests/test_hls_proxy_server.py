@@ -69,6 +69,188 @@ def test_m3u8_ad_filter_treats_remote_png_media_url_as_proxy_candidate() -> None
     ]
 
 
+def test_m3u8_ad_filter_proxies_extensionless_url_when_probe_looks_like_disguised_ts() -> None:
+    class FakeResponse:
+        def __init__(self, content: bytes) -> None:
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class FakeServer:
+        def __init__(self) -> None:
+            self.started = False
+            self.calls: list[tuple[str, dict[str, str]]] = []
+
+        def start(self) -> None:
+            self.started = True
+
+        def create_media_url(self, url: str, headers: dict[str, str] | None = None) -> str:
+            self.calls.append((url, dict(headers or {})))
+            return "http://127.0.0.1:2323/raw?v=extensionless-token"
+
+        def close(self) -> None:
+            return None
+
+    requests: list[tuple[str, dict[str, str]]] = []
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool) -> FakeResponse:
+        requests.append((url, headers))
+        return FakeResponse(
+            b"\x89PNG\r\n\x1a\n"
+            b"\x00\x00\x00\rIHDR"
+            + b"\x00" * 32
+            + b"IEND\xaeB`\x82"
+            + (b"\x47" + b"\x00" * 187) * 2
+        )
+
+    server = FakeServer()
+    ad_filter = M3U8AdFilter(proxy_server=server, get=fake_get)
+    url = "https://media.example/path/disguised"
+
+    prepared = ad_filter.prepare(url, {"Referer": "https://site.example"})
+
+    assert ad_filter.should_prepare(url) is True
+    assert prepared == "http://127.0.0.1:2323/raw?v=extensionless-token"
+    assert requests == [(url, {"Referer": "https://site.example", "Range": "bytes=0-2047"})]
+    assert server.calls == [(url, {"Referer": "https://site.example"})]
+
+
+def test_m3u8_ad_filter_keeps_extensionless_url_when_probe_is_not_disguised_ts() -> None:
+    class FakeResponse:
+        def __init__(self, content: bytes) -> None:
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            return None
+
+    requests: list[tuple[str, dict[str, str]]] = []
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool) -> FakeResponse:
+        requests.append((url, headers))
+        return FakeResponse(b"{\"ok\":true}")
+
+    ad_filter = M3U8AdFilter(get=fake_get)
+    url = "https://media.example/path/plain"
+
+    prepared = ad_filter.prepare(url, {"Referer": "https://site.example"})
+
+    assert ad_filter.should_prepare(url) is True
+    assert prepared == url
+    assert requests == [(url, {"Referer": "https://site.example", "Range": "bytes=0-2047"})]
+
+
+def test_m3u8_ad_filter_adds_default_xiaohongshu_headers_for_probe_and_proxy() -> None:
+    class FakeResponse:
+        def __init__(self, content: bytes) -> None:
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class FakeServer:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str]]] = []
+
+        def start(self) -> None:
+            return None
+
+        def create_media_url(self, url: str, headers: dict[str, str] | None = None) -> str:
+            self.calls.append((url, dict(headers or {})))
+            return "http://127.0.0.1:2323/raw?v=xhs-token"
+
+        def close(self) -> None:
+            return None
+
+    requests: list[tuple[str, dict[str, str]]] = []
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool) -> FakeResponse:
+        requests.append((url, headers))
+        return FakeResponse(
+            b"\x89PNG\r\n\x1a\n"
+            b"\x00\x00\x00\rIHDR"
+            + b"\x00" * 32
+            + b"IEND\xaeB`\x82"
+            + (b"\x47" + b"\x00" * 187) * 2
+        )
+
+    server = FakeServer()
+    ad_filter = M3U8AdFilter(proxy_server=server, get=fake_get)
+    url = "https://sns-open-qc.xhscdn.com/professionalpc/test-token"
+
+    prepared = ad_filter.prepare(url)
+
+    assert prepared == "http://127.0.0.1:2323/raw?v=xhs-token"
+    assert requests == [
+        (
+            url,
+            {
+                "Referer": "https://www.xiaohongshu.com/",
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+                "Range": "bytes=0-2047",
+            },
+        )
+    ]
+    assert server.calls == [
+        (
+            url,
+            {
+                "Referer": "https://www.xiaohongshu.com/",
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+            },
+        )
+    ]
+
+
+def test_m3u8_ad_filter_still_proxies_xiaohongshu_url_when_probe_fails() -> None:
+    class FakeServer:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, str]]] = []
+
+        def start(self) -> None:
+            return None
+
+        def create_media_url(self, url: str, headers: dict[str, str] | None = None) -> str:
+            self.calls.append((url, dict(headers or {})))
+            return "http://127.0.0.1:2323/raw?v=xhs-fallback-token"
+
+        def close(self) -> None:
+            return None
+
+    requests: list[tuple[str, dict[str, str]]] = []
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        requests.append((url, headers))
+        raise RuntimeError("403 Forbidden")
+
+    server = FakeServer()
+    ad_filter = M3U8AdFilter(proxy_server=server, get=fake_get)
+    url = "https://sns-open-qc.xhscdn.com/professionalpc/test-token"
+
+    prepared = ad_filter.prepare(url)
+
+    assert prepared == "http://127.0.0.1:2323/raw?v=xhs-fallback-token"
+    assert requests == [
+        (
+            url,
+            {
+                "Referer": "https://www.xiaohongshu.com/",
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+                "Range": "bytes=0-2047",
+            },
+        )
+    ]
+    assert server.calls == [
+        (
+            url,
+            {
+                "Referer": "https://www.xiaohongshu.com/",
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+            },
+        )
+    ]
+
+
 def test_local_hls_proxy_server_returns_404_for_missing_token() -> None:
     server = LocalHlsProxyServer()
 
@@ -109,6 +291,37 @@ def test_local_hls_proxy_server_returns_repaired_bytes_for_direct_media_url() ->
     assert status == 200
     assert headers == [("Content-Type", "video/MP2T")]
     assert body.startswith(b"\x47")
+
+
+def test_local_hls_proxy_server_uses_default_xiaohongshu_headers_for_direct_media_url() -> None:
+    seen_headers: list[dict[str, str]] = []
+
+    class FakeResponse:
+        def __init__(self, content: bytes) -> None:
+            self.content = content
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        seen_headers.append(headers)
+        return FakeResponse((b"\x47" + b"\x00" * 187) * 2)
+
+    server = LocalHlsProxyServer(get=fake_get)
+    media_url = server.create_media_url("https://sns-open-qc.xhscdn.com/professionalpc/test-token", {})
+    token = media_url.rsplit("=", 1)[-1]
+
+    status, headers, body = server.handle_request("GET", f"/raw?v={token}")
+
+    assert status == 200
+    assert headers == [("Content-Type", "video/MP2T")]
+    assert body.startswith(b"\x47")
+    assert seen_headers == [
+        {
+            "Referer": "https://www.xiaohongshu.com/",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+        }
+    ]
 
 
 def test_local_hls_proxy_server_returns_502_when_playlist_fetch_fails() -> None:
