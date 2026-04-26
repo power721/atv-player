@@ -63,3 +63,23 @@ def test_resolve_resume_index_prefers_matching_episode_url_over_stale_episode_nu
     )
 
     assert resolve_resume_index(history, playlist, clicked_index=0) == 0
+
+
+def test_resolve_resume_index_ignores_empty_basename_and_falls_back_to_episode() -> None:
+    playlist = [PlayItem(title=f"{index + 1}", url="") for index in range(77)]
+    history = HistoryRecord(
+        id=1,
+        key="abc",
+        vod_name="Movie",
+        vod_pic="",
+        vod_remarks="Ep18",
+        episode=17,
+        episode_url="https://media.example/segment/?token=a",
+        position=12000,
+        opening=0,
+        ending=0,
+        speed=1.0,
+        create_time=1,
+    )
+
+    assert resolve_resume_index(history, playlist, clicked_index=0) == 17

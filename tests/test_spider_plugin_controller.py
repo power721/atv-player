@@ -110,6 +110,21 @@ class HtmlPageSpider(FakeSpider):
         }
 
 
+class RemappedDetailIdSpider(FakeSpider):
+    def detailContent(self, ids):
+        return {
+            "list": [
+                {
+                    "vod_id": f"resolved:{ids[0]}",
+                    "vod_name": "改写详情 ID 的剧集",
+                    "vod_pic": "poster-detail",
+                    "vod_play_from": "备用线",
+                    "vod_play_url": "第1集$/play/1#第2集$/play/2",
+                }
+            ]
+        }
+
+
 def test_controller_load_categories_prepends_home_when_home_list_exists() -> None:
     controller = SpiderPluginController(FakeSpider(), plugin_name="红果短剧", search_enabled=True)
 
@@ -512,6 +527,30 @@ def test_controller_build_request_attaches_local_playback_history_callbacks() ->
 
     assert load_calls == ["/detail/1"]
     assert save_calls == [("/detail/1", {"position": 45000})]
+
+
+def test_controller_build_request_uses_requested_vod_id_for_local_history_callbacks() -> None:
+    load_calls: list[str] = []
+    save_calls: list[tuple[str, dict[str, object]]] = []
+    controller = SpiderPluginController(
+        RemappedDetailIdSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        playback_history_loader=lambda vod_id: load_calls.append(vod_id) or None,
+        playback_history_saver=lambda vod_id, payload: save_calls.append((vod_id, payload)),
+    )
+
+    request = controller.build_request("/detail/original")
+
+    assert request.source_vod_id == "/detail/original"
+    assert request.playback_history_loader is not None
+    assert request.playback_history_saver is not None
+
+    request.playback_history_loader()
+    request.playback_history_saver({"position": 45000})
+
+    assert load_calls == ["/detail/original"]
+    assert save_calls == [("/detail/original", {"position": 45000})]
 
 
 def test_controller_logs_search_failure(caplog) -> None:
