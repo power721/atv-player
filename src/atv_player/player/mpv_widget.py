@@ -65,7 +65,7 @@ class MpvWidget(QWidget):
 
             # 音频（核心）
             audio_spdif="no",
-            audio_device="pulse",
+            audio_device="auto",
             ad="ffmpeg",
 
             # 流媒体优化
