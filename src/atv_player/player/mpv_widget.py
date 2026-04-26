@@ -53,15 +53,32 @@ class MpvWidget(QWidget):
 
         return mpv.MPV(
             wid=str(int(self.winId())),
+
+            # 输入
             input_default_bindings=False,
             input_vo_keyboard=False,
-            hwdec="auto-copy",
+
+            # 视频
             vo="gpu",
             gpu_api="auto",
-            vd_lavc_dr=True,
+            hwdec="auto-safe",  # 比 auto-copy 更稳
+
+            # 音频（核心）
+            audio_spdif="no",
+            audio_device="pulse",
+            ad="ffmpeg",
+
+            # 流媒体优化
             cache=True,
             demuxer_max_bytes="500M",
             demuxer_readahead_secs=20,
+
+            # 音轨
+            alang="chi,eng,jpn",
+
+            # 日志
+            log_handler=print,
+            loglevel="warn",
         )
 
     def _ensure_player(self) -> None:
