@@ -144,6 +144,14 @@ class AppCoordinator(QObject):
             self._plugin_loader = None
             self._plugin_manager = _NullPluginManager()
 
+    def _close_api_client(self) -> None:
+        if self._api_client is None:
+            return
+        close_client = getattr(self._api_client, "close", None)
+        if callable(close_client):
+            close_client()
+        self._api_client = None
+
     def start(self) -> QWidget:
         config = self.repo.load_config()
         logger.info("App start view=%s", decide_start_view(config))
@@ -188,6 +196,7 @@ class AppCoordinator(QObject):
 
     def _show_login(self, error_message: str = "") -> LoginWindow:
         logger.info("Show login window has_error=%s", bool(error_message))
+        self._close_api_client()
         login_controller = LoginController(
             self.repo,
             lambda base_url: ApiClient(base_url),
@@ -202,6 +211,7 @@ class AppCoordinator(QObject):
         return self.login_window
 
     def _show_main(self):
+        self._close_api_client()
         self._api_client = self._build_api_client()
         config = self.repo.load_config()
         capabilities = self._load_capabilities(self._api_client)
@@ -370,8 +380,4 @@ class AppCoordinator(QObject):
         close_filter = getattr(self._m3u8_ad_filter, "close", None)
         if callable(close_filter):
             close_filter()
-        if self._api_client is not None:
-            close_client = getattr(self._api_client, "close", None)
-            if callable(close_client):
-                close_client()
-            self._api_client = None
+        self._close_api_client()

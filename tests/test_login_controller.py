@@ -79,3 +79,29 @@ def test_login_controller_clears_old_vod_token_after_login() -> None:
 
     assert result.token == "token-123"
     assert result.vod_token == ""
+
+
+def test_login_controller_closes_factory_created_api_client_after_login() -> None:
+    repo = FakeSettingsRepository()
+
+    class ClosableApiClient(FakeApiClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    created: list[ClosableApiClient] = []
+
+    def factory(_base_url: str) -> ClosableApiClient:
+        client = ClosableApiClient()
+        created.append(client)
+        return client
+
+    controller = LoginController(repo, factory)
+
+    controller.login("http://demo-server", "alice", "secret")
+
+    assert len(created) == 1
+    assert created[0].closed is True

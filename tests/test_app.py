@@ -2927,6 +2927,35 @@ def test_app_coordinator_logout_clears_tokens_and_shows_login(monkeypatch) -> No
     assert main_window.closed is True
 
 
+def test_app_coordinator_show_login_closes_active_api_client(monkeypatch) -> None:
+    class FakeRepo:
+        def load_config(self) -> AppConfig:
+            return AppConfig()
+
+    class FakeLoginWindow:
+        login_succeeded = type("SignalStub", (), {"connect": lambda self, cb: None})()
+
+        def __init__(self, controller) -> None:
+            self.controller = controller
+
+    class ClosableClient:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    coordinator = AppCoordinator(FakeRepo())
+    client = ClosableClient()
+    coordinator._api_client = client
+    monkeypatch.setattr(app_module, "LoginWindow", FakeLoginWindow)
+
+    coordinator._show_login()
+
+    assert client.closed is True
+    assert coordinator._api_client is None
+
+
 def test_main_window_open_player_hides_main_and_updates_last_active_state(qtbot, monkeypatch) -> None:
     created = {}
 
