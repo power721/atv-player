@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from typing import Any
 
@@ -51,35 +52,41 @@ class MpvWidget(QWidget):
     def _create_player(self):
         import mpv
 
-        return mpv.MPV(
+        common = dict(
             wid=str(int(self.winId())),
-
-            # 输入
+            vo="gpu",
+            hwdec="auto-safe",
+            audio_spdif="no",
+            ad="ffmpeg",
             input_default_bindings=False,
             input_vo_keyboard=False,
-
-            # 视频
-            vo="gpu",
-            gpu_api="auto",
-            hwdec="auto-safe",  # 比 auto-copy 更稳
-
-            # 音频（核心）
-            audio_spdif="no",
-            audio_device="auto",
-            ad="ffmpeg",
-
-            # 流媒体优化
             cache=True,
             demuxer_max_bytes="500M",
             demuxer_readahead_secs=20,
-
-            # 音轨
-            alang="chi,eng,jpn",
-
-            # 日志
             log_handler=print,
             loglevel="warn",
         )
+
+        if sys.platform.startswith("win"):
+            return mpv.MPV(
+                **common,
+                audio_device="auto",
+                audio_exclusive="no",
+            )
+
+        elif sys.platform == "darwin":
+            return mpv.MPV(
+                **common,
+                # macOS 👉 不指定最稳
+                # audio_device="auto" 也可以
+                audio_exclusive="no",
+            )
+
+        else:
+            return mpv.MPV(
+                **common,
+                audio_device="pulse",  # Linux关键
+            )
 
     def _ensure_player(self) -> None:
         if self._player is not None and not getattr(self._player, "core_shutdown", False):
@@ -225,11 +232,11 @@ class MpvWidget(QWidget):
         return default
 
     def load(
-        self,
-        url: str,
-        pause: bool = False,
-        start_seconds: int = 0,
-        headers: dict[str, str] | None = None,
+            self,
+            url: str,
+            pause: bool = False,
+            start_seconds: int = 0,
+            headers: dict[str, str] | None = None,
     ) -> None:
         self._ensure_player()
         player = self._player
