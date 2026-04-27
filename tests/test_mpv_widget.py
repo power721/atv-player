@@ -711,6 +711,39 @@ def test_mpv_widget_can_disable_or_select_a_specific_secondary_subtitle_track(qt
     assert player.secondary_sid == 12
 
 
+def test_mpv_widget_can_load_and_remove_external_secondary_subtitle(qtbot, tmp_path) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    subtitle_path = tmp_path / "danmaku.srt"
+    subtitle_path.write_text("1\n00:00:00,000 --> 00:00:01,000\nhello\n", encoding="utf-8")
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.command_calls: list[tuple[object, ...]] = []
+            self.track_list: list[dict[str, object]] = []
+            self.secondary_sid: object = "no"
+
+        def command(self, *args) -> None:
+            self.command_calls.append(args)
+            if args == ("sub-add", str(subtitle_path), "auto"):
+                self.track_list.append({"id": 99, "type": "sub", "external": True})
+            elif args == ("sub-remove", 99):
+                self.track_list = [track for track in self.track_list if track.get("id") != 99]
+
+    player = FakePlayer()
+    widget._player = player
+
+    track_id = widget.load_external_subtitle(str(subtitle_path), select_for_secondary=True)
+    widget.remove_subtitle_track(track_id)
+
+    assert track_id == 99
+    assert player.secondary_sid == "no"
+    assert player.command_calls == [
+        ("sub-add", str(subtitle_path), "auto"),
+        ("sub-remove", 99),
+    ]
+
+
 def test_mpv_widget_reads_and_writes_primary_subtitle_position(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)

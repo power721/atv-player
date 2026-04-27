@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import queue
+import tempfile
 import threading
 import time
 from collections.abc import Callable
@@ -42,6 +43,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from atv_player.danmaku.subtitle import render_danmaku_srt
 from atv_player.models import PlaybackLoadResult, VodItem
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
@@ -195,6 +197,7 @@ class PlayerWindow(QWidget):
     _POSTER_SIZE = QSize(180, 260)
     _POSTER_REQUEST_TIMEOUT_SECONDS = 10.0
     _DEFAULT_MAIN_SPLITTER_SIZES = [960, 320]
+    _DANMAKU_SECONDARY_POSITION = 10
     _SUBTITLE_POSITION_PRESETS = {
         "顶部": 10,
         "偏上": 30,
@@ -245,6 +248,11 @@ class PlayerWindow(QWidget):
         self._last_video_context_menu_request_global_pos: tuple[int, int] | None = None
         self._video_surface_ready = False
         self._auto_advance_locked = False
+        self._danmaku_track_id: int | None = None
+        self._danmaku_temp_path: Path | None = None
+        self._danmaku_active = False
+        self._danmaku_line_count = 1
+        self._danmaku_restore_secondary_position: int | None = None
         self.help_dialog: ShortcutHelpDialog | None = None
         self._poster_load_signals = _PosterLoadSignals(self)
         self._poster_load_signals.loaded.connect(self._handle_poster_load_finished)
@@ -317,6 +325,8 @@ class PlayerWindow(QWidget):
         self.subtitle_combo = QComboBox()
         self.subtitle_combo.addItem("自动选择", ("auto", None))
         self.subtitle_combo.setEnabled(False)
+        self.danmaku_combo = QComboBox()
+        self._reset_danmaku_combo()
         self._audio_tracks: list[AudioTrack] = []
         self._audio_preference = AudioPreference()
         self.audio_combo = QComboBox()
@@ -418,6 +428,7 @@ class PlayerWindow(QWidget):
         control_group_layout.addWidget(self.fullscreen_button)
         control_group_layout.addWidget(self.speed_combo)
         control_group_layout.addWidget(self.subtitle_combo)
+        control_group_layout.addWidget(self.danmaku_combo)
         control_group_layout.addWidget(self.audio_combo)
         control_group_layout.addWidget(self.parse_combo)
         control_group_layout.addWidget(self.opening_spin)
@@ -480,6 +491,7 @@ class PlayerWindow(QWidget):
         self.fullscreen_button.clicked.connect(self.toggle_fullscreen)
         self.speed_combo.currentTextChanged.connect(self._change_speed)
         self.subtitle_combo.currentIndexChanged.connect(self._change_subtitle_selection)
+        self.danmaku_combo.currentIndexChanged.connect(self._change_danmaku_selection)
         self.audio_combo.currentIndexChanged.connect(self._change_audio_selection)
         self.parse_combo.currentIndexChanged.connect(self._change_parse_selection)
         self.opening_spin.valueChanged.connect(self._change_opening_seconds)
@@ -730,6 +742,7 @@ class PlayerWindow(QWidget):
         self._render_playlist_items()
         self.progress.setValue(0)
         self._reset_subtitle_combo()
+        self._reset_danmaku_combo()
         self._reset_audio_combo()
         try:
             self._play_item_at_index(self.current_index, start_position_seconds=session.start_position_seconds, pause=start_paused)
@@ -827,6 +840,7 @@ class PlayerWindow(QWidget):
         self._apply_muted_state()
         self._refresh_subtitle_state()
         self._refresh_audio_state()
+        self._configure_danmaku_for_current_item()
 
     def _load_current_item(
         self,
@@ -839,6 +853,8 @@ class PlayerWindow(QWidget):
             return
         self._invalidate_play_item_resolution()
         self._clear_manual_subtitle_switch_refresh()
+        self._clear_active_danmaku()
+        self._reset_danmaku_combo()
         if not self._prepare_current_play_item(
             previous_index=self.current_index if previous_index is None else previous_index,
             start_position_seconds=start_position_seconds,
@@ -1397,6 +1413,15 @@ class PlayerWindow(QWidget):
         self.subtitle_combo.setEnabled(False)
         self.subtitle_combo.blockSignals(False)
 
+    def _reset_danmaku_combo(self, *, enabled: bool = False, current_index: int = 0) -> None:
+        self.danmaku_combo.blockSignals(True)
+        self.danmaku_combo.clear()
+        for label in ("弹幕", "关闭", "1行", "2行", "3行", "4行", "5行"):
+            self.danmaku_combo.addItem(label)
+        self.danmaku_combo.setCurrentIndex(current_index)
+        self.danmaku_combo.setEnabled(enabled)
+        self.danmaku_combo.blockSignals(False)
+
     def _reset_audio_combo(self) -> None:
         self.audio_combo.blockSignals(True)
         self.audio_combo.clear()
@@ -1627,6 +1652,97 @@ class PlayerWindow(QWidget):
             return
         self.video.apply_secondary_subtitle_mode("track", track_id=matched_track.id)
 
+    def _current_play_item_danmaku_xml(self) -> str:
+        if self.session is None or not self.session.playlist:
+            return ""
+        return self.session.playlist[self.current_index].danmaku_xml
+
+    def _cleanup_danmaku_temp_file(self) -> None:
+        if self._danmaku_temp_path is None:
+            return
+        try:
+            self._danmaku_temp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        self._danmaku_temp_path = None
+
+    def _restore_secondary_subtitle_position_after_danmaku(self) -> None:
+        if self._danmaku_restore_secondary_position is None:
+            return
+        if not hasattr(self.video, "set_secondary_subtitle_position"):
+            self._danmaku_restore_secondary_position = None
+            return
+        try:
+            self.video.set_secondary_subtitle_position(self._danmaku_restore_secondary_position)
+        except Exception as exc:
+            self._append_log(f"次字幕位置恢复失败: {exc}")
+        finally:
+            self._danmaku_restore_secondary_position = None
+
+    def _clear_active_danmaku(self, *, restore_position: bool = True) -> None:
+        if self._danmaku_track_id is not None and hasattr(self.video, "remove_subtitle_track"):
+            try:
+                self.video.remove_subtitle_track(self._danmaku_track_id)
+            except Exception as exc:
+                self._append_log(f"弹幕关闭失败: {exc}")
+        self._danmaku_track_id = None
+        self._danmaku_active = False
+        if restore_position:
+            self._restore_secondary_subtitle_position_after_danmaku()
+        self._cleanup_danmaku_temp_file()
+
+    def _write_danmaku_subtitle_file(self, xml_text: str, line_count: int) -> Path | None:
+        subtitle_text = render_danmaku_srt(xml_text, line_count=line_count)
+        if not subtitle_text:
+            return None
+        self._cleanup_danmaku_temp_file()
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".srt", delete=False) as handle:
+            handle.write(subtitle_text)
+            temp_path = Path(handle.name)
+        self._danmaku_temp_path = temp_path
+        return temp_path
+
+    def _apply_danmaku_secondary_position(self) -> None:
+        if not hasattr(self.video, "set_secondary_subtitle_position"):
+            return
+        try:
+            self.video.set_secondary_subtitle_position(self._DANMAKU_SECONDARY_POSITION)
+        except Exception as exc:
+            self._append_log(f"弹幕位置设置失败: {exc}")
+
+    def _enable_danmaku(self, line_count: int) -> None:
+        xml_text = self._current_play_item_danmaku_xml()
+        if not xml_text:
+            return
+        subtitle_path = self._write_danmaku_subtitle_file(xml_text, line_count)
+        if subtitle_path is None:
+            raise ValueError("弹幕为空")
+        if self._danmaku_restore_secondary_position is None:
+            self._danmaku_restore_secondary_position = self._secondary_subtitle_position
+        self._clear_active_danmaku(restore_position=False)
+        if not hasattr(self.video, "load_external_subtitle"):
+            raise RuntimeError("播放器不支持外挂弹幕")
+        track_id = self.video.load_external_subtitle(str(subtitle_path), select_for_secondary=True)
+        if track_id is None:
+            raise RuntimeError("播放器未返回弹幕轨道")
+        self._danmaku_track_id = track_id
+        self._danmaku_active = True
+        self._danmaku_line_count = line_count
+        self._apply_danmaku_secondary_position()
+
+    def _configure_danmaku_for_current_item(self) -> None:
+        xml_text = self._current_play_item_danmaku_xml()
+        if not xml_text:
+            self._reset_danmaku_combo()
+            return
+        self._reset_danmaku_combo(enabled=True, current_index=0)
+        try:
+            self._enable_danmaku(1)
+        except Exception as exc:
+            self._append_log(f"弹幕加载失败: {exc}")
+            self._clear_active_danmaku()
+            self._reset_danmaku_combo(enabled=True, current_index=1)
+
     def _refresh_subtitle_state(self) -> None:
         if not hasattr(self.video, "subtitle_tracks") or not hasattr(self.video, "apply_subtitle_mode"):
             self._subtitle_tracks = []
@@ -1691,7 +1807,9 @@ class PlayerWindow(QWidget):
             self._subtitle_preference = SubtitlePreference()
             self._reset_subtitle_combo()
             self._append_log(f"字幕切换失败: {exc}")
-        if hasattr(self.video, "apply_secondary_subtitle_mode"):
+        if self._danmaku_active:
+            self._apply_danmaku_secondary_position()
+        elif hasattr(self.video, "apply_secondary_subtitle_mode"):
             try:
                 self._apply_secondary_subtitle_preference()
             except Exception as exc:
@@ -1702,7 +1820,11 @@ class PlayerWindow(QWidget):
                 self.video.set_subtitle_position(self._main_subtitle_position)
             except Exception as exc:
                 self._append_log(f"主字幕位置设置失败: {exc}")
-        if self._secondary_subtitle_position_supported and hasattr(self.video, "set_secondary_subtitle_position"):
+        if (
+            not self._danmaku_active
+            and self._secondary_subtitle_position_supported
+            and hasattr(self.video, "set_secondary_subtitle_position")
+        ):
             try:
                 self.video.set_secondary_subtitle_position(self._secondary_subtitle_position)
             except Exception as exc:
@@ -1712,7 +1834,11 @@ class PlayerWindow(QWidget):
                 self.video.set_subtitle_scale(self._main_subtitle_scale)
             except Exception as exc:
                 self._append_log(f"主字幕大小设置失败: {exc}")
-        if self._secondary_subtitle_scale_supported and hasattr(self.video, "set_secondary_subtitle_scale"):
+        if (
+            not self._danmaku_active
+            and self._secondary_subtitle_scale_supported
+            and hasattr(self.video, "set_secondary_subtitle_scale")
+        ):
             try:
                 self.video.set_secondary_subtitle_scale(self._secondary_subtitle_scale)
             except Exception as exc:
@@ -1769,6 +1895,20 @@ class PlayerWindow(QWidget):
         self._remember_track_preference(track)
         self._mark_manual_subtitle_switch_refresh()
         self.video.apply_subtitle_mode("track", track_id=track_id)
+
+    def _change_danmaku_selection(self, index: int) -> None:
+        if index < 0 or not self._current_play_item_danmaku_xml():
+            return
+        if index == 1:
+            self._clear_active_danmaku()
+            return
+        line_count = 1 if index == 0 else index - 1
+        try:
+            self._enable_danmaku(line_count)
+        except Exception as exc:
+            self._append_log(f"弹幕切换失败: {exc}")
+            self._clear_active_danmaku()
+            self._reset_danmaku_combo(enabled=True, current_index=1)
 
     def _change_audio_selection(self, index: int) -> None:
         if index < 0:
@@ -2416,6 +2556,7 @@ class PlayerWindow(QWidget):
             self._video_surface_ready = False
             self._close_help_dialog()
             self._close_video_context_menu()
+            self._clear_active_danmaku()
             self.report_progress(force_remote_report=True)
             self._stop_current_playback()
             self.session = None

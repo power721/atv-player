@@ -532,6 +532,50 @@ class MpvWidget(QWidget):
                 return None
             raise
 
+    def _subtitle_track_ids(self) -> set[int]:
+        if self._player is None:
+            return set()
+        raw_tracks = getattr(self._player, "track_list", [])
+        track_ids: set[int] = set()
+        for raw_track in raw_tracks:
+            if raw_track.get("type") != "sub":
+                continue
+            try:
+                track_ids.add(int(raw_track["id"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+        return track_ids
+
+    def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+        if self._player is None:
+            return None
+        before_ids = self._subtitle_track_ids()
+        try:
+            self._player.command("sub-add", path, "auto")
+            after_ids = self._subtitle_track_ids()
+            new_ids = sorted(after_ids - before_ids)
+            track_id = new_ids[-1] if new_ids else None
+            if select_for_secondary and track_id is not None:
+                self.apply_secondary_subtitle_mode("track", track_id=track_id)
+            return track_id
+        except Exception:
+            if getattr(self._player, "core_shutdown", False):
+                return None
+            raise
+
+    def remove_subtitle_track(self, track_id: int | None) -> None:
+        if self._player is None or track_id is None:
+            return
+        try:
+            current_secondary_sid = self._player_property("secondary-sid", None)
+            if str(current_secondary_sid) == str(track_id):
+                self.apply_secondary_subtitle_mode("off")
+            self._player.command("sub-remove", track_id)
+        except Exception:
+            if getattr(self._player, "core_shutdown", False):
+                return
+            raise
+
     def subtitle_position(self) -> int:
         value = self._player_property("sub-pos", 50)
         return self._int_property_value(value, 50)
