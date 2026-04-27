@@ -164,11 +164,11 @@ def test_build_request_disables_remote_history_and_exposes_local_jellyfin_histor
     assert first_item.url == "http://j/1.mp4"
     assert first_item.headers == {"User-Agent": "Jellyfin"}
     assert api.playback_source_calls == ["1-3458"]
-    assert api.playback_progress_calls == []
+    assert api.playback_progress_calls == [("1-3458", 2000)]
     assert api.playback_stop_calls == ["1-3458"]
 
 
-def test_jellyfin_progress_reporter_reports_when_playing() -> None:
+def test_jellyfin_progress_reporter_reports_when_called_for_paused_final_update() -> None:
     from atv_player.controllers.jellyfin_controller import JellyfinController
 
     api = FakeApiClient()
@@ -178,7 +178,7 @@ def test_jellyfin_progress_reporter_reports_when_playing() -> None:
     controller.report_playback_progress(item, 2000, False)
     controller.report_playback_progress(item, 2000, True)
 
-    assert api.playback_progress_calls == [("1-3458", 2000)]
+    assert api.playback_progress_calls == [("1-3458", 2000), ("1-3458", 2000)]
 
 
 def test_build_request_single_video_uses_detail_vod_id_as_playlist_item_id() -> None:

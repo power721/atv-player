@@ -149,12 +149,13 @@ class PlayerController:
         opening_seconds: int,
         ending_seconds: int,
         paused: bool,
+        force_remote_report: bool = False,
     ) -> None:
         if not (0 <= current_index < len(session.playlist)):
             return
         current_item = session.playlist[current_index]
         position_ms = position_seconds * 1000
-        if session.playback_progress_reporter is not None:
+        if session.playback_progress_reporter is not None and (not paused or force_remote_report):
             session.playback_progress_reporter(current_item, position_ms, paused)
         logger.info(
             "Report playback progress vod_id=%s index=%s position_ms=%s paused=%s",

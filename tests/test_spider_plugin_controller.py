@@ -186,6 +186,19 @@ def test_controller_build_request_defers_player_content_until_episode_load() -> 
     assert first.headers == {"Referer": "https://site.example"}
 
 
+def test_controller_does_not_print_payloads_during_build_and_playback_resolution(capsys) -> None:
+    controller = SpiderPluginController(FakeSpider(), plugin_name="红果短剧", search_enabled=True)
+
+    request = controller.build_request("/detail/1")
+    first = request.playlist[0]
+    assert request.playback_loader is not None
+
+    request.playback_loader(first)
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+
+
 def test_controller_build_request_keeps_html_page_urls_for_later_resolution() -> None:
     controller = SpiderPluginController(HtmlPageSpider(), plugin_name="吞噬星空", search_enabled=True)
 

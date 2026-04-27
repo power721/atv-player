@@ -391,12 +391,13 @@ class SpiderPluginController:
             len(playlists),
         )
         playlist = playlists[0]
+        source_vod_id = vod_id or detail.vod_id
         history_loader = None
         history_saver = None
         if self._playback_history_loader is not None:
-            history_loader = lambda source_vod_id=detail.vod_id: self._playback_history_loader(source_vod_id)
+            history_loader = lambda source_vod_id=source_vod_id: self._playback_history_loader(source_vod_id)
         if self._playback_history_saver is not None:
-            history_saver = lambda payload, source_vod_id=detail.vod_id: self._playback_history_saver(
+            history_saver = lambda payload, source_vod_id=source_vod_id: self._playback_history_saver(
                 source_vod_id,
                 payload,
             )
@@ -408,7 +409,7 @@ class SpiderPluginController:
             clicked_index=0,
             source_kind="plugin",
             source_mode="detail",
-            source_vod_id=detail.vod_id,
+            source_vod_id=source_vod_id,
             use_local_history=False,
             playback_loader=self._resolve_play_item,
             playback_history_loader=history_loader,

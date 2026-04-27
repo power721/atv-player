@@ -97,7 +97,7 @@ class JellyfinController:
         item.headers = {str(key): str(value) for key, value in headers.items()}
 
     def report_playback_progress(self, item: PlayItem, position_ms: int, paused: bool) -> None:
-        if not item.vod_id or paused:
+        if not item.vod_id:
             return
         self._api_client.report_jellyfin_playback_progress(item.vod_id, position_ms)
 

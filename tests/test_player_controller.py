@@ -502,6 +502,72 @@ def test_player_controller_reports_progress_to_plugin_local_saver_without_api_hi
     assert isinstance(saved_payloads[0]["createTime"], int)
 
 
+def test_player_controller_skips_remote_progress_reporter_for_paused_periodic_updates() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="emby-1", vod_name="Emby Movie", vod_pic="poster")
+    playlist = [PlayItem(title="Episode 1", url="https://media.example/1.m3u8", vod_id="1-3458")]
+    remote_calls: list[tuple[str, int, bool]] = []
+    saved_payloads: list[dict[str, object]] = []
+
+    session = controller.create_session(
+        vod,
+        playlist,
+        clicked_index=0,
+        use_local_history=False,
+        playback_progress_reporter=lambda item, position_ms, paused: remote_calls.append(
+            (item.vod_id, position_ms, paused)
+        ),
+        playback_history_saver=lambda payload: saved_payloads.append(payload),
+    )
+
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=45,
+        speed=1.0,
+        opening_seconds=5,
+        ending_seconds=10,
+        paused=True,
+    )
+
+    assert remote_calls == []
+    assert saved_payloads[0]["position"] == 45000
+    assert saved_payloads[0]["opening"] == 5000
+    assert saved_payloads[0]["ending"] == 10000
+
+
+def test_player_controller_forces_remote_progress_reporter_for_paused_final_update() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="emby-1", vod_name="Emby Movie", vod_pic="poster")
+    playlist = [PlayItem(title="Episode 1", url="https://media.example/1.m3u8", vod_id="1-3458")]
+    remote_calls: list[tuple[str, int, bool]] = []
+
+    session = controller.create_session(
+        vod,
+        playlist,
+        clicked_index=0,
+        use_local_history=False,
+        playback_progress_reporter=lambda item, position_ms, paused: remote_calls.append(
+            (item.vod_id, position_ms, paused)
+        ),
+    )
+
+    controller.report_progress(
+        session,
+        current_index=0,
+        position_seconds=45,
+        speed=1.0,
+        opening_seconds=5,
+        ending_seconds=10,
+        paused=True,
+        force_remote_report=True,
+    )
+
+    assert remote_calls == [("1-3458", 45000, True)]
+
+
 def test_player_controller_reports_selected_playlist_index_to_plugin_local_saver() -> None:
     api = FakeApiClient()
     controller = PlayerController(api)
@@ -567,7 +633,7 @@ def test_player_controller_reports_progress_via_session_hook_without_saving_hist
     assert api.saved_payloads == []
 
 
-def test_player_controller_forwards_paused_state_to_progress_reporter() -> None:
+def test_player_controller_forwards_paused_state_to_progress_reporter_when_forced() -> None:
     api = FakeApiClient()
     controller = PlayerController(api)
     vod = VodItem(vod_id="emby-1", vod_name="Emby Movie")
@@ -591,6 +657,7 @@ def test_player_controller_forwards_paused_state_to_progress_reporter() -> None:
         opening_seconds=0,
         ending_seconds=0,
         paused=True,
+        force_remote_report=True,
     )
 
     assert progress_calls == [("1-3458", 45000, True)]

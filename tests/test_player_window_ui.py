@@ -25,6 +25,7 @@ class FakePlayerController:
         opening_seconds: int,
         ending_seconds: int,
         paused: bool,
+        force_remote_report: bool = False,
     ) -> None:
         return None
 
@@ -38,6 +39,7 @@ class FakePlayerController:
 class RecordingPlayerController(FakePlayerController):
     def __init__(self) -> None:
         self.progress_calls: list[tuple[int, int, float, int, int, bool]] = []
+        self.force_remote_report_calls: list[bool] = []
         self.stop_calls: list[int] = []
 
     def report_progress(
@@ -49,8 +51,10 @@ class RecordingPlayerController(FakePlayerController):
         opening_seconds: int,
         ending_seconds: int,
         paused: bool,
+        force_remote_report: bool = False,
     ) -> None:
         self.progress_calls.append((current_index, position_seconds, speed, opening_seconds, ending_seconds, paused))
+        self.force_remote_report_calls.append(force_remote_report)
 
     def resolve_play_item_detail(self, session, play_item):
         if not play_item.vod_id or session.detail_resolver is None:
@@ -4708,6 +4712,7 @@ def test_player_window_play_next_reports_progress_and_stops_without_blocking_ui(
             opening_seconds: int,
             ending_seconds: int,
             paused: bool,
+            force_remote_report: bool = False,
         ) -> None:
             time.sleep(0.15)
             super().report_progress(
@@ -4718,6 +4723,7 @@ def test_player_window_play_next_reports_progress_and_stops_without_blocking_ui(
                 opening_seconds,
                 ending_seconds,
                 paused,
+                force_remote_report,
             )
 
         def stop_playback(self, session, current_index: int) -> None:
@@ -5170,6 +5176,7 @@ def test_player_window_quit_application_reports_progress_and_stop_without_blocki
             opening_seconds: int,
             ending_seconds: int,
             paused: bool,
+            force_remote_report: bool = False,
         ) -> None:
             time.sleep(0.15)
             super().report_progress(
@@ -5180,6 +5187,7 @@ def test_player_window_quit_application_reports_progress_and_stop_without_blocki
                 opening_seconds,
                 ending_seconds,
                 paused,
+                force_remote_report,
             )
 
         def stop_playback(self, session, current_index: int) -> None:
@@ -5206,6 +5214,22 @@ def test_player_window_quit_application_reports_progress_and_stop_without_blocki
     qtbot.waitUntil(
         lambda: controller.progress_calls == [(1, 30, 1.0, 0, 0, False)] and controller.stop_calls == [1]
     )
+
+
+def test_player_window_periodic_progress_does_not_force_remote_report(qtbot) -> None:
+    controller = RecordingPlayerController()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    window.open_session(make_player_session(start_index=1), start_paused=True)
+    controller.progress_calls.clear()
+    controller.force_remote_report_calls.clear()
+
+    window.report_progress()
+
+    qtbot.waitUntil(lambda: controller.progress_calls == [(1, 30, 1.0, 0, 0, True)])
+    assert controller.progress_calls == [(1, 30, 1.0, 0, 0, True)]
+    assert controller.force_remote_report_calls == [False]
 
 
 def test_player_window_quit_application_preserves_current_paused_state(qtbot, monkeypatch) -> None:
@@ -5504,6 +5528,7 @@ def test_player_window_return_to_main_reports_current_progress_and_stops_current
         lambda: controller.progress_calls == [(1, 30, 1.0, 0, 0, True)] and controller.stop_calls == [1]
     )
     assert controller.progress_calls == [(1, 30, 1.0, 0, 0, True)]
+    assert controller.force_remote_report_calls == [True]
     assert controller.stop_calls == [1]
 
 

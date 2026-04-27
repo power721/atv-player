@@ -1236,7 +1236,7 @@ class PlayerWindow(QWidget):
                 return
             self._append_log(f"恢复播放失败: {exc}")
 
-    def report_progress(self) -> None:
+    def report_progress(self, force_remote_report: bool = False) -> None:
         if self.session is None:
             return
         try:
@@ -1261,6 +1261,7 @@ class PlayerWindow(QWidget):
                     opening_seconds=opening_seconds,
                     ending_seconds=ending_seconds,
                     paused=paused,
+                    force_remote_report=force_remote_report,
                 )
 
             self._enqueue_controller_task("进度上报失败", report)
@@ -1309,7 +1310,7 @@ class PlayerWindow(QWidget):
         target_playlist = playlists[playlist_index]
         if not target_playlist:
             return
-        self.report_progress()
+        self.report_progress(force_remote_report=True)
         self._stop_current_playback()
         self._invalidate_play_item_resolution()
         self.session.playlist_index = playlist_index
@@ -1342,7 +1343,7 @@ class PlayerWindow(QWidget):
     def _replay_current_item(self) -> None:
         if self.session is None:
             return
-        self.report_progress()
+        self.report_progress(force_remote_report=True)
         self._stop_current_playback()
         self.is_playing = True
         self._update_play_button_icon()
@@ -2116,7 +2117,10 @@ class PlayerWindow(QWidget):
         self.volume_slider.setValue(value)
 
     def _speed_text(self, speed: float) -> str:
-        return f"{speed:.2f}".rstrip("0").rstrip(".") + "x"
+        text = f"{speed:.2f}".rstrip("0").rstrip(".")
+        if "." not in text:
+            text += ".0"
+        return text + "x"
 
     def _current_speed_index(self) -> int:
         speeds = [float(self.speed_combo.itemText(index).rstrip("x")) for index in range(self.speed_combo.count())]
@@ -2272,7 +2276,7 @@ class PlayerWindow(QWidget):
     def _quit_application(self) -> None:
         self._quit_requested = True
         self._invalidate_play_item_resolution()
-        self.report_progress()
+        self.report_progress(force_remote_report=True)
         self._stop_current_playback()
         if self.config is not None:
             self.config.last_active_window = "player"
@@ -2315,7 +2319,7 @@ class PlayerWindow(QWidget):
         except Exception:
             pass
         self.is_playing = False
-        self.report_progress()
+        self.report_progress(force_remote_report=True)
         self._stop_current_playback()
         self._refresh_window_title()
         self._restore_video_cursor()
@@ -2366,7 +2370,7 @@ class PlayerWindow(QWidget):
     def play_previous(self) -> None:
         if self.session is None or self.current_index <= 0:
             return
-        self.report_progress()
+        self.report_progress(force_remote_report=True)
         self._stop_current_playback()
         target_index = self.current_index - 1
         try:
@@ -2377,7 +2381,7 @@ class PlayerWindow(QWidget):
     def play_next(self) -> None:
         if self.session is None or self.current_index + 1 >= len(self.session.playlist):
             return
-        self.report_progress()
+        self.report_progress(force_remote_report=True)
         self._stop_current_playback()
         target_index = self.current_index + 1
         try:
@@ -2389,7 +2393,7 @@ class PlayerWindow(QWidget):
         if self.session is None:
             return
         if self.current_index + 1 >= len(self.session.playlist):
-            self.report_progress()
+            self.report_progress(force_remote_report=True)
             self._stop_current_playback()
             return
         self.play_next()
@@ -2398,7 +2402,7 @@ class PlayerWindow(QWidget):
         row = self.playlist.row(item)
         if row == self.current_index or self.session is None:
             return
-        self.report_progress()
+        self.report_progress(force_remote_report=True)
         self._stop_current_playback()
         try:
             self._play_item_at_index(row)
@@ -2412,7 +2416,7 @@ class PlayerWindow(QWidget):
             self._video_surface_ready = False
             self._close_help_dialog()
             self._close_video_context_menu()
-            self.report_progress()
+            self.report_progress(force_remote_report=True)
             self._stop_current_playback()
             self.session = None
         finally:
