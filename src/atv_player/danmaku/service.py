@@ -5,6 +5,7 @@ from dataclasses import replace
 from atv_player.danmaku.errors import DanmakuEmptyResultError, ProviderNotSupportedError
 from atv_player.danmaku.models import DanmakuSearchItem
 from atv_player.danmaku.providers.base import DanmakuProvider
+from atv_player.danmaku.providers.tencent import TencentDanmakuProvider
 from atv_player.danmaku.utils import build_xml, match_provider, normalize_name, should_filter_name, similarity_score
 
 
@@ -45,3 +46,10 @@ class DanmakuService:
                 raise DanmakuEmptyResultError(f"未找到弹幕: {page_url}")
             return build_xml(records)
         raise ProviderNotSupportedError(f"不支持的弹幕来源: {page_url}")
+
+
+def create_default_danmaku_service() -> DanmakuService:
+    providers = {
+        "tencent": TencentDanmakuProvider(),
+    }
+    return DanmakuService(providers, provider_order=["tencent", "youku", "iqiyi", "mgtv"])
