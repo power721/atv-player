@@ -217,3 +217,22 @@ def test_manager_load_enabled_plugins_wires_built_in_parser_service(tmp_path: Pa
 
     assert item.url == "https://media.example/resolved.m3u8"
     assert item.headers == {"Referer": "https://page.example"}
+
+
+def test_manager_load_enabled_plugins_wires_danmaku_service(tmp_path: Path) -> None:
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    repository.add_plugin("local", "/plugins/红果短剧.py", "红果短剧")
+
+    class FakeDanmakuService:
+        def search_danmu(self, name: str, reg_src: str = ""):
+            return []
+
+        def resolve_danmu(self, page_url: str) -> str:
+            return ""
+
+    manager = SpiderPluginManager(repository, FakeLoader())
+    manager._danmaku_service = FakeDanmakuService()
+
+    definitions = manager.load_enabled_plugins()
+
+    assert getattr(definitions[0].controller, "_danmaku_service", None) is manager._danmaku_service

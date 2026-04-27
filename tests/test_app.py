@@ -523,6 +523,29 @@ def test_app_coordinator_passes_playback_parser_service_into_main_window(qtbot, 
     assert captured["parser_service"] is not None
 
 
+def test_app_coordinator_wires_danmaku_service_into_plugin_manager(monkeypatch, tmp_path) -> None:
+    repo = app_module.SettingsRepository(tmp_path / "app.db")
+    repo.save_config(AppConfig(base_url="http://127.0.0.1:4567", token="token-123", vod_token="vod-123"))
+    captured = {"manager": None}
+
+    class FakePluginManager:
+        def __init__(self) -> None:
+            captured["manager"] = self
+
+    monkeypatch.setattr(
+        app_module,
+        "SpiderPluginManager",
+        lambda repository, loader, playback_history_repository: FakePluginManager(),
+    )
+    monkeypatch.setattr(app_module, "SpiderPluginRepository", lambda db_path: object())
+    monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
+    monkeypatch.setattr(app_module, "LocalPlaybackHistoryRepository", lambda db_path: object())
+
+    app_module.AppCoordinator(repo)
+
+    assert getattr(captured["manager"], "_danmaku_service", None) is not None
+
+
 def test_http_text_client_follows_redirects_for_live_source_text_requests() -> None:
     class FakeApiClient:
         def __init__(self) -> None:

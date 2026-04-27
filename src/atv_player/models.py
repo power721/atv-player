@@ -36,6 +36,8 @@ class PlayItem:
     vod_id: str = ""
     headers: dict[str, str] = field(default_factory=dict)
     play_source: str = ""
+    media_title: str = ""
+    danmaku_xml: str = ""
 
 
 @dataclass(slots=True)

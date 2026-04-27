@@ -41,6 +41,7 @@ class SpiderPluginManager:
         self._playback_history_repository = playback_history_repository
         self._playback_parser_service = None
         self._preferred_parse_key_loader = None
+        self._danmaku_service = None
 
     def list_plugins(self) -> list[SpiderPluginConfig]:
         return self._repository.list_plugins()
@@ -154,6 +155,7 @@ class SpiderPluginManager:
                 drive_detail_loader=drive_detail_loader,
                 playback_parser_service=self._playback_parser_service,
                 preferred_parse_key_loader=self._preferred_parse_key_loader,
+                danmaku_service=self._danmaku_service,
                 playback_history_loader=None
                 if self._playback_history_repository is None
                 else lambda vod_id, plugin_id=plugin.id: self._playback_history_repository.get_history(

@@ -9,6 +9,7 @@ from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QApplication, QWidget
 
 from atv_player.api import ApiClient, ApiError, UnauthorizedError
+from atv_player.danmaku.service import create_default_danmaku_service
 from atv_player.custom_live_service import CustomLiveService
 from atv_player.controllers.browse_controller import BrowseController
 from atv_player.controllers.douban_controller import DoubanController
@@ -118,6 +119,7 @@ class AppCoordinator(QObject):
         self._api_client: ApiClient | None = None
         self._m3u8_ad_filter = M3U8AdFilter()
         self._playback_parser_service = BuiltInPlaybackParserService()
+        self._danmaku_service = create_default_danmaku_service()
         if hasattr(repo, "database_path"):
             self._live_source_repository = LiveSourceRepository(repo.database_path)
             self._live_epg_repository = LiveEpgRepository(repo.database_path)
@@ -131,6 +133,7 @@ class AppCoordinator(QObject):
                 self._playback_history_repository,
             )
             setattr(self._plugin_manager, "_playback_parser_service", self._playback_parser_service)
+            setattr(self._plugin_manager, "_danmaku_service", self._danmaku_service)
             setattr(
                 self._plugin_manager,
                 "_preferred_parse_key_loader",

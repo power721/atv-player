@@ -123,6 +123,7 @@ class SpiderPluginController:
         playback_history_saver: Callable[[str, dict[str, object]], None] | None = None,
         playback_parser_service=None,
         preferred_parse_key_loader: Callable[[], str] | None = None,
+        danmaku_service=None,
     ) -> None:
         self._spider = spider
         self._plugin_name = plugin_name
@@ -132,6 +133,7 @@ class SpiderPluginController:
         self._playback_history_saver = playback_history_saver
         self._playback_parser_service = playback_parser_service
         self._preferred_parse_key_loader = preferred_parse_key_loader
+        self._danmaku_service = danmaku_service
         self._home_loaded = False
         self._home_categories: list[DoubanCategory] = []
         self._home_items: list[VodItem] = []
@@ -228,6 +230,7 @@ class SpiderPluginController:
                     PlayItem(
                         title=title.strip() or clean_value or f"选集 {len(playlist) + 1}",
                         url=clean_value if is_media_url else "",
+                        media_title=detail.vod_name,
                         path=detail.vod_id if is_drive_link else "",
                         vod_id="" if is_media_url else clean_value,
                         index=len(playlist),
@@ -244,6 +247,7 @@ class SpiderPluginController:
                 PlayItem(
                     title=item.title,
                     url=item.url,
+                    media_title=detail.vod_name,
                     path=item.path,
                     index=index,
                     size=item.size,
@@ -259,6 +263,7 @@ class SpiderPluginController:
             PlayItem(
                 title=item.title,
                 url=item.url,
+                media_title=detail.vod_name,
                 path=item.path,
                 index=index,
                 size=item.size,
@@ -269,6 +274,32 @@ class SpiderPluginController:
             for index, item in enumerate(playlist)
             if item.url and not _looks_like_drive_share_link(item.url)
         ]
+
+    def _maybe_resolve_danmaku(self, item: PlayItem, payload: dict, url: str) -> None:
+        if not payload.get("danmu") or self._danmaku_service is None:
+            return
+        search_name = " ".join(part for part in (item.media_title.strip(), item.title.strip()) if part).strip()
+        if not search_name:
+            return
+        reg_src = str(item.vod_id or url or "").strip()
+        try:
+            candidates = self._danmaku_service.search_danmu(search_name, reg_src)
+            if not candidates:
+                return
+            item.danmaku_xml = self._danmaku_service.resolve_danmu(candidates[0].url)
+            logger.info(
+                "Spider plugin resolved danmaku plugin=%s source=%s candidate=%s",
+                self._plugin_name,
+                item.vod_id,
+                candidates[0].url,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Spider plugin danmaku resolution failed plugin=%s source=%s error=%s",
+                self._plugin_name,
+                item.vod_id,
+                exc,
+            )
 
     def _resolve_replacement_start_index(self, vod_id: str, replacement: list[PlayItem]) -> int:
         if self._playback_history_loader is None or not replacement:
@@ -352,6 +383,7 @@ class SpiderPluginController:
             )
             item.url = result.url
             item.headers = dict(result.headers)
+            self._maybe_resolve_danmaku(item, payload, url)
             logger.info(
                 "Spider plugin resolved parse playback plugin=%s source=%s parser=%s",
                 self._plugin_name,
@@ -363,6 +395,7 @@ class SpiderPluginController:
             raise ValueError("插件未返回可播放地址")
         item.url = url
         item.headers = _normalize_headers(payload.get("header"))
+        self._maybe_resolve_danmaku(item, payload, url)
         logger.info(
             "Spider plugin resolved playback url plugin=%s source=%s play_source=%s",
             self._plugin_name,

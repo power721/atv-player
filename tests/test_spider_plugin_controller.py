@@ -3,6 +3,7 @@ import logging
 import pytest
 
 from atv_player.api import ApiError
+from atv_player.danmaku.models import DanmakuSearchItem
 from atv_player.plugins.controller import SpiderPluginController
 
 
@@ -110,6 +111,11 @@ class HtmlPageSpider(FakeSpider):
         }
 
 
+class DanmuEnabledSpider(FakeSpider):
+    def playerContent(self, flag, id, vipFlags):
+        return {"parse": 0, "danmu": True, "url": f"https://stream.example{id}.m3u8"}
+
+
 class RemappedDetailIdSpider(FakeSpider):
     def detailContent(self, ids):
         return {
@@ -167,6 +173,7 @@ def test_controller_build_request_exposes_grouped_route_playlists() -> None:
     assert first.url == ""
     assert first.play_source == "备用线"
     assert first.index == 0
+    assert first.media_title == "红果短剧"
     assert first.vod_id == "/play/1"
     assert second.url == "https://media.example/2.m3u8"
     assert third.play_source == "极速线"
@@ -268,6 +275,63 @@ def test_controller_raises_when_parse_required_without_parser_service() -> None:
     with pytest.raises(ValueError, match="当前插件未配置内置解析"):
         assert request.playback_loader is not None
         request.playback_loader(request.playlist[0])
+
+
+def test_controller_resolves_danmaku_when_player_content_marks_danmu_enabled() -> None:
+    calls: list[tuple[str, str]] = []
+
+    class FakeDanmakuService:
+        def search_danmu(self, name: str, reg_src: str = ""):
+            calls.append(("search", f"{name}|{reg_src}"))
+            return [DanmakuSearchItem(provider="tencent", name="红果短剧 第1集", url="https://v.qq.com/x/cover/demo.html")]
+
+        def resolve_danmu(self, page_url: str) -> str:
+            calls.append(("resolve", page_url))
+            return '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">hi</d></i>'
+
+    controller = SpiderPluginController(
+        DanmuEnabledSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+    )
+
+    request = controller.build_request("/detail/1")
+    first = request.playlist[0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+
+    assert first.url == "https://stream.example/play/1.m3u8"
+    assert first.danmaku_xml == '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">hi</d></i>'
+    assert calls == [
+        ("search", "红果短剧 第1集|/play/1"),
+        ("resolve", "https://v.qq.com/x/cover/demo.html"),
+    ]
+
+
+def test_controller_ignores_danmaku_resolution_failures_without_breaking_playback(caplog) -> None:
+    class FailingDanmakuService:
+        def search_danmu(self, name: str, reg_src: str = ""):
+            raise RuntimeError("danmu boom")
+
+    controller = SpiderPluginController(
+        DanmuEnabledSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        danmaku_service=FailingDanmakuService(),
+    )
+
+    request = controller.build_request("/detail/1")
+    first = request.playlist[0]
+
+    assert request.playback_loader is not None
+    with caplog.at_level(logging.WARNING):
+        request.playback_loader(first)
+
+    assert first.url == "https://stream.example/play/1.m3u8"
+    assert first.danmaku_xml == ""
+    assert "danmaku" in caplog.text.lower()
 
 
 def test_controller_resolves_supported_drive_links_via_backend_detail_loader() -> None:
