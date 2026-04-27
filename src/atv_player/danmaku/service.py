@@ -1,0 +1,47 @@
+from __future__ import annotations
+
+from dataclasses import replace
+
+from atv_player.danmaku.errors import DanmakuEmptyResultError, ProviderNotSupportedError
+from atv_player.danmaku.models import DanmakuSearchItem
+from atv_player.danmaku.providers.base import DanmakuProvider
+from atv_player.danmaku.utils import build_xml, match_provider, normalize_name, should_filter_name, similarity_score
+
+
+class DanmakuService:
+    def __init__(self, providers: dict[str, DanmakuProvider], provider_order: list[str]) -> None:
+        self._providers = dict(providers)
+        self._provider_order = list(provider_order)
+        self._provider_rank = {key: index for index, key in enumerate(self._provider_order)}
+
+    def _ordered_provider_keys(self, reg_src: str) -> list[str]:
+        matched = match_provider(reg_src)
+        if matched and matched in self._providers:
+            return [matched]
+        return [key for key in self._provider_order if key in self._providers]
+
+    def search_danmu(self, name: str, reg_src: str = "") -> list[DanmakuSearchItem]:
+        normalized = normalize_name(name)
+        results: list[DanmakuSearchItem] = []
+        for key in self._ordered_provider_keys(reg_src):
+            for item in self._providers[key].search(normalized):
+                if should_filter_name(normalized, item.name):
+                    continue
+                ratio = item.ratio or similarity_score(normalized, item.name)
+                simi = item.simi or ratio
+                results.append(replace(item, ratio=ratio, simi=simi))
+        return sorted(
+            results,
+            key=lambda item: (-item.ratio, -item.simi, self._provider_rank.get(item.provider, len(self._provider_order))),
+        )
+
+    def resolve_danmu(self, page_url: str) -> str:
+        for key in self._provider_order:
+            provider = self._providers.get(key)
+            if provider is None or not provider.supports(page_url):
+                continue
+            records = provider.resolve(page_url)
+            if not records:
+                raise DanmakuEmptyResultError(f"未找到弹幕: {page_url}")
+            return build_xml(records)
+        raise ProviderNotSupportedError(f"不支持的弹幕来源: {page_url}")
