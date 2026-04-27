@@ -620,10 +620,18 @@ class BrowsePage(QWidget):
         self.table.sortItems(column, self._sort_order)
 
     def _item_kind(self, item: VodItem) -> str:
+        if item.type == 0:
+            return "文件"
         if item.type == 1:
             return "文件夹"
         if item.type == 2:
             return "视频"
+        if item.type == 3:
+            return "音频"
+        if item.type == 4:
+            return "文本"
+        if item.type == 5:
+            return "图片"
         if item.type == 9:
             return "播放列表"
         return f"类型{item.type}"

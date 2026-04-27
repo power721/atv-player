@@ -8,7 +8,7 @@ from atv_player.models import DoubanCategory, OpenPlayerRequest, PlayItem, VodIt
 def _looks_like_media_url(value: str) -> bool:
     candidate = value.strip().lower()
     return candidate.startswith(("http://", "https://", "rtmp://", "rtsp://")) or any(
-        candidate.endswith(ext) or f"{ext}?" in candidate for ext in (".m3u8", ".mp4", ".flv")
+        candidate.endswith(ext) or f"{ext}?" in candidate for ext in (".m3u8", ".mkv", ".mp4", ".flv")
     )
 
 
