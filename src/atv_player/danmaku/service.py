@@ -4,9 +4,13 @@ from dataclasses import replace
 
 from atv_player.danmaku.errors import DanmakuEmptyResultError, ProviderNotSupportedError
 from atv_player.danmaku.models import DanmakuSearchItem
+from atv_player.danmaku.providers import (
+    IqiyiDanmakuProvider,
+    MgtvDanmakuProvider,
+    TencentDanmakuProvider,
+    YoukuDanmakuProvider,
+)
 from atv_player.danmaku.providers.base import DanmakuProvider
-from atv_player.danmaku.providers.tencent import TencentDanmakuProvider
-from atv_player.danmaku.providers.youku import YoukuDanmakuProvider
 from atv_player.danmaku.utils import build_xml, match_provider, normalize_name, should_filter_name, similarity_score
 
 
@@ -21,6 +25,10 @@ class DanmakuService:
         if matched and matched in self._providers:
             return [matched]
         return [key for key in self._provider_order if key in self._providers]
+
+    @property
+    def provider_order(self) -> list[str]:
+        return list(self._provider_order)
 
     def search_danmu(self, name: str, reg_src: str = "") -> list[DanmakuSearchItem]:
         normalized = normalize_name(name)
@@ -53,5 +61,7 @@ def create_default_danmaku_service() -> DanmakuService:
     providers = {
         "tencent": TencentDanmakuProvider(),
         "youku": YoukuDanmakuProvider(),
+        "iqiyi": IqiyiDanmakuProvider(),
+        "mgtv": MgtvDanmakuProvider(),
     }
     return DanmakuService(providers, provider_order=["tencent", "youku", "iqiyi", "mgtv"])

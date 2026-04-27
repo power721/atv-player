@@ -1,6 +1,8 @@
+import pytest
+
 from atv_player.danmaku.errors import ProviderNotSupportedError
 from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
-from atv_player.danmaku.service import DanmakuService
+from atv_player.danmaku.service import DanmakuService, create_default_danmaku_service
 
 
 class FakeProvider:
@@ -102,3 +104,30 @@ def test_resolve_danmu_raises_for_unknown_provider_url() -> None:
         pass
     else:
         raise AssertionError("Expected ProviderNotSupportedError")
+
+
+def test_default_service_has_fixed_provider_order() -> None:
+    service = create_default_danmaku_service()
+
+    assert service.provider_order == ["tencent", "youku", "iqiyi", "mgtv"]
+
+
+def test_default_service_raises_clear_error_for_iqiyi_resolution() -> None:
+    service = create_default_danmaku_service()
+
+    with pytest.raises(NotImplementedError, match="iQIYI.*brotli.*protobuf"):
+        service.resolve_danmu("https://www.iqiyi.com/v_demo.html")
+
+
+def test_default_service_raises_clear_error_for_mgtv_resolution() -> None:
+    service = create_default_danmaku_service()
+
+    with pytest.raises(NotImplementedError, match="MGTV.*signed"):
+        service.resolve_danmu("https://www.mgtv.com/b/demo/1.html")
+
+
+def test_default_service_still_rejects_unknown_urls() -> None:
+    service = create_default_danmaku_service()
+
+    with pytest.raises(ProviderNotSupportedError):
+        service.resolve_danmu("https://unknown.example/video/1")

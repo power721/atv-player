@@ -6,7 +6,7 @@ from atv_player.danmaku.errors import (
     ProviderNotSupportedError,
 )
 from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
-from atv_player.danmaku.service import DanmakuService
+from atv_player.danmaku.service import DanmakuService, create_default_danmaku_service
 from atv_player.danmaku.utils import build_xml, match_provider, normalize_name, should_filter_name
 
 __all__ = [
@@ -19,6 +19,7 @@ __all__ = [
     "DanmakuSearchItem",
     "ProviderNotSupportedError",
     "build_xml",
+    "create_default_danmaku_service",
     "match_provider",
     "normalize_name",
     "should_filter_name",
