@@ -10,6 +10,26 @@ class DummyResponse:
         self.encoding = ""
 
 
+class ClosableDummyResponse:
+    def __init__(self, payload: bytes = b"payload") -> None:
+        self.encoding = ""
+        self._payload = payload
+        self.content_reads = 0
+        self.close_calls = 0
+
+    @property
+    def content(self) -> bytes:
+        self.content_reads += 1
+        return self._payload
+
+    @property
+    def text(self) -> str:
+        return self.content.decode(self.encoding or "utf-8")
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+
 def test_compat_spider_fetch_uses_requests_and_forwards_request_options(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
     response = DummyResponse()
@@ -51,6 +71,24 @@ def test_compat_spider_fetch_uses_requests_and_forwards_request_options(monkeypa
             "allow_redirects": False,
         }
     ]
+
+
+def test_compat_spider_fetch_preloads_and_closes_response(monkeypatch) -> None:
+    response = ClosableDummyResponse()
+
+    monkeypatch.setattr(
+        compat_spider_module,
+        "requests",
+        types.SimpleNamespace(get=lambda url, **kwargs: response),
+        raising=False,
+    )
+
+    result = Spider().fetch("https://example.com/api", stream=True)
+
+    assert result is response
+    assert result.text == "payload"
+    assert response.content_reads >= 1
+    assert response.close_calls == 1
 
 
 def test_compat_spider_post_uses_requests_and_forwards_request_options(monkeypatch) -> None:
@@ -98,6 +136,24 @@ def test_compat_spider_post_uses_requests_and_forwards_request_options(monkeypat
             "allow_redirects": False,
         }
     ]
+
+
+def test_compat_spider_post_preloads_and_closes_response(monkeypatch) -> None:
+    response = ClosableDummyResponse()
+
+    monkeypatch.setattr(
+        compat_spider_module,
+        "requests",
+        types.SimpleNamespace(post=lambda url, **kwargs: response),
+        raising=False,
+    )
+
+    result = Spider().post("https://example.com/api", stream=True)
+
+    assert result is response
+    assert result.text == "payload"
+    assert response.content_reads >= 1
+    assert response.close_calls == 1
 
 
 def test_compat_spider_cache_round_trip_and_delete_use_local_files(tmp_path, monkeypatch) -> None:

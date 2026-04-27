@@ -4,6 +4,7 @@ import sqlite3
 from pathlib import Path
 
 from atv_player.models import LiveEpgConfig
+from atv_player.sqlite_utils import managed_connection
 
 
 class LiveEpgRepository:
@@ -12,8 +13,8 @@ class LiveEpgRepository:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
-    def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self._db_path)
+    def _connect(self):
+        return managed_connection(self._db_path)
 
     def _init_db(self) -> None:
         with self._connect() as conn:

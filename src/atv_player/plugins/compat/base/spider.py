@@ -24,6 +24,17 @@ def _cache_path(key: str) -> Path:
     return _CACHE_ROOT / f"{sha256(key.encode('utf-8')).hexdigest()}.cache"
 
 
+def _buffer_and_close_response(response):
+    try:
+        if hasattr(response, "content"):
+            _ = response.content
+    finally:
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
+    return response
+
+
 class Spider(metaclass=ABCMeta):
     def __init__(self) -> None:
         self.extend = ""
@@ -71,7 +82,7 @@ class Spider(metaclass=ABCMeta):
             allow_redirects=allow_redirects,
         )
         response.encoding = "utf-8"
-        return response
+        return _buffer_and_close_response(response)
 
     def post(
         self,
@@ -99,7 +110,7 @@ class Spider(metaclass=ABCMeta):
             allow_redirects=allow_redirects,
         )
         response.encoding = "utf-8"
-        return response
+        return _buffer_and_close_response(response)
 
     def regStr(self, reg, src, group=1):
         match = re.search(reg, src)

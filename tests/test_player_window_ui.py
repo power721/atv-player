@@ -3,7 +3,7 @@ import time
 
 import pytest
 from PySide6.QtCore import QByteArray, QEvent, QObject, QRect, Qt, Signal
-from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QImage, QKeyEvent, QMouseEvent, QPixmap, QWindow
+from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QIcon, QImage, QKeyEvent, QMouseEvent, QPixmap, QWindow
 from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QMenu, QTableWidget, QWidget
 from PySide6.QtWidgets import QSplitter, QToolTip
 from atv_player.controllers.player_controller import PlayerSession
@@ -158,6 +158,36 @@ def test_player_window_has_reasonable_default_size_and_horizontal_progress(qtbot
     assert window.bottom_layout.spacing() == 4
     assert window.opening_spin.prefix() == "片头 "
     assert window.ending_spin.prefix() == "片尾 "
+
+
+def test_player_window_icon_updates_use_cached_icon_loader(qtbot, monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_load_icon(path) -> QIcon:
+        calls.append(str(path))
+        return QIcon()
+
+    monkeypatch.setattr(player_window_module, "load_icon", fake_load_icon)
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    calls.clear()
+
+    window.is_playing = True
+    window._update_play_button_icon()
+    window.is_playing = False
+    window._update_play_button_icon()
+    window._is_muted = True
+    window._update_mute_button_icon()
+    window._is_muted = False
+    window._update_mute_button_icon()
+
+    assert calls == [
+        str(window._icons_dir / "pause.svg"),
+        str(window._icons_dir / "play.svg"),
+        str(window._icons_dir / "volume-off.svg"),
+        str(window._icons_dir / "volume-on.svg"),
+    ]
 
 
 def test_player_window_uses_splitters_for_resizable_panels(qtbot) -> None:

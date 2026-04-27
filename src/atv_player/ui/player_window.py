@@ -46,6 +46,7 @@ from atv_player.models import PlaybackLoadResult, VodItem
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
+from atv_player.ui.icon_cache import load_icon
 from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
 
@@ -526,7 +527,7 @@ class PlayerWindow(QWidget):
     def _create_icon_button(self, icon_name: str, tooltip: str, shortcut: str | None = None) -> QPushButton:
         button = QPushButton("")
         button.setToolTip(self._format_tooltip(tooltip, shortcut))
-        button.setIcon(QIcon(str(self._icons_dir / icon_name)))
+        button.setIcon(load_icon(self._icons_dir / icon_name))
         button.setIconSize(button.iconSize())
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setFixedHeight(28)
@@ -543,7 +544,7 @@ class PlayerWindow(QWidget):
 
     def _update_play_button_icon(self) -> None:
         icon_name = "pause.svg" if self.is_playing else "play.svg"
-        self.play_button.setIcon(QIcon(str(self._icons_dir / icon_name)))
+        self.play_button.setIcon(load_icon(self._icons_dir / icon_name))
 
     def _default_window_title(self) -> str:
         return "alist-tvbox 播放器"
@@ -600,7 +601,7 @@ class PlayerWindow(QWidget):
         self.playlist.setCurrentRow(self.current_index)
 
     def _set_button_icon(self, button: QPushButton, icon_name: str) -> None:
-        button.setIcon(QIcon(str(self._icons_dir / icon_name)))
+        button.setIcon(load_icon(self._icons_dir / icon_name))
 
     def _update_mute_button_icon(self) -> None:
         icon_name = "volume-off.svg" if self._is_muted else "volume-on.svg"

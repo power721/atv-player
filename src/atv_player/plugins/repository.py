@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 from atv_player.models import HistoryRecord, SpiderPluginConfig, SpiderPluginLogEntry
+from atv_player.sqlite_utils import managed_connection
 
 
 def _require_lastrowid(cursor: sqlite3.Cursor) -> int:
@@ -20,8 +21,8 @@ class SpiderPluginRepository:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
-    def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self._db_path)
+    def _connect(self):
+        return managed_connection(self._db_path)
 
     def _init_db(self) -> None:
         with self._connect() as conn:

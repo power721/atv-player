@@ -4,6 +4,7 @@ import sqlite3
 from pathlib import Path
 
 from atv_player.models import LiveSourceConfig, LiveSourceEntry
+from atv_player.sqlite_utils import managed_connection
 
 _DEFAULT_SOURCE_NAME = "咪咕"
 _DEFAULT_SOURCE_URL = "https://develop202.github.io/migu_video/interface.txt"
@@ -22,8 +23,8 @@ class LiveSourceRepository:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
-    def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self._db_path)
+    def _connect(self):
+        return managed_connection(self._db_path)
 
     def _init_db(self) -> None:
         with self._connect() as conn:

@@ -6,7 +6,6 @@ import logging
 from pathlib import Path
 
 from PySide6.QtCore import QObject
-from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QWidget
 
 from atv_player.api import ApiClient, ApiError, UnauthorizedError
@@ -34,6 +33,7 @@ from atv_player.storage import SettingsRepository
 from atv_player.time_utils import is_refresh_stale
 from atv_player.ui.login_window import LoginWindow
 from atv_player.ui.main_window import MainWindow
+from atv_player.ui.icon_cache import load_icon
 
 POSTER_CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 logger = logging.getLogger(__name__)
@@ -101,7 +101,7 @@ def purge_stale_poster_cache(now: float | None = None) -> None:
 def build_application() -> tuple[QApplication, SettingsRepository]:
     app = QApplication([])
     app.setApplicationName("atv-player")
-    app.setWindowIcon(QIcon(str(_app_icon_path())))
+    app.setWindowIcon(load_icon(_app_icon_path()))
     data_dir = app_data_dir()
     repo = SettingsRepository(data_dir / "app.db")
     purge_stale_poster_cache()
