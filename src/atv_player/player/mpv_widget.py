@@ -61,8 +61,13 @@ class MpvWidget(QWidget):
             input_default_bindings=False,
             input_vo_keyboard=False,
             cache=True,
-            demuxer_max_bytes="500M",
+            cache_pause_initial=True,
+            cache_pause_wait=3,
+            demuxer_max_bytes="512M",
+            demuxer_max_back_bytes="128M",
             demuxer_readahead_secs=20,
+            stream_buffer_size="4M",
+            network_timeout=15,
             log_handler=print,
             loglevel="warn",
         )
@@ -668,11 +673,11 @@ class MpvWidget(QWidget):
             if mode == "track" and track_id is not None:
                 self._player.aid = track_id
                 return track_id
-            preferred_tracks = [track for track in self.audio_tracks() if self._is_preferred_audio_track(track)]
-            if preferred_tracks:
-                preferred_track = max(preferred_tracks, key=self._preferred_audio_sort_key)
-                self._player.aid = preferred_track.id
-                return preferred_track.id
+            # preferred_tracks = [track for track in self.audio_tracks() if self._is_preferred_audio_track(track)]
+            # if preferred_tracks:
+            #     preferred_track = max(preferred_tracks, key=self._preferred_audio_sort_key)
+            #     self._player.aid = preferred_track.id
+            #     return preferred_track.id
             self._player.aid = "auto"
             return None
         except Exception:

@@ -115,6 +115,39 @@ def test_api_client_maps_history_record() -> None:
     assert history.speed == 1.25
 
 
+def test_api_client_maps_history_record_when_optional_fields_are_missing() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": 1,
+                "key": "1$101286$1",
+                "vodName": "Movie",
+                "episode": 0,
+                "episodeUrl": "https://media.example/1.m3u8",
+                "position": 90000,
+                "opening": 0,
+                "ending": 0,
+                "speed": 1.0,
+                "createTime": 123456,
+            },
+        )
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        transport=httpx.MockTransport(handler),
+    )
+
+    history = client.get_history("1$101286$1")
+
+    assert isinstance(history, HistoryRecord)
+    assert history.key == "1$101286$1"
+    assert history.vod_pic == ""
+    assert history.vod_remarks == ""
+    assert history.playlist_index == 0
+
+
 def test_api_client_fetches_vod_token_from_api_token() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"token": "vod-123,backup"})
