@@ -875,6 +875,126 @@ def test_mpv_widget_reports_secondary_subtitle_scale_unsupported_when_property_i
     assert widget.supports_secondary_subtitle_scale() is False
 
 
+def test_mpv_widget_reads_and_writes_primary_subtitle_ass_override(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.options = {"sub-ass-override": "scale"}
+
+        def __getitem__(self, key: str) -> object:
+            return self.options[key]
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    widget._player = FakePlayer()
+
+    assert widget.subtitle_ass_override() == "scale"
+
+    widget.set_subtitle_ass_override("no")
+
+    assert widget.subtitle_ass_override() == "no"
+
+
+def test_mpv_widget_normalizes_boolean_primary_subtitle_ass_override_values(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.options = {"sub-ass-override": True}
+
+        def __getitem__(self, key: str) -> object:
+            return self.options[key]
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    widget._player = FakePlayer()
+
+    assert widget.subtitle_ass_override() == "yes"
+
+    widget.set_subtitle_ass_override(widget.subtitle_ass_override())
+
+    assert widget.subtitle_ass_override() == "yes"
+
+
+def test_mpv_widget_reads_and_writes_secondary_subtitle_ass_override(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.options = {"secondary-sub-ass-override": "strip"}
+
+        def __getitem__(self, key: str) -> object:
+            return self.options[key]
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    widget._player = FakePlayer()
+
+    assert widget.secondary_subtitle_ass_override() == "strip"
+
+    widget.set_secondary_subtitle_ass_override("no")
+
+    assert widget.secondary_subtitle_ass_override() == "no"
+
+
+def test_mpv_widget_normalizes_boolean_secondary_subtitle_ass_override_values(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.options = {"secondary-sub-ass-override": False}
+
+        def __getitem__(self, key: str) -> object:
+            return self.options[key]
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    widget._player = FakePlayer()
+
+    assert widget.secondary_subtitle_ass_override() == "no"
+
+    widget.set_secondary_subtitle_ass_override(widget.secondary_subtitle_ass_override())
+
+    assert widget.secondary_subtitle_ass_override() == "no"
+
+
+def test_mpv_widget_reports_primary_subtitle_ass_override_unsupported_when_property_is_missing(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __getitem__(self, key: str) -> object:
+            raise RuntimeError(("mpv property does not exist", -8, (object(), b"options/sub-ass-override", b"scale")))
+
+    widget._player = FakePlayer()
+
+    assert widget.supports_subtitle_ass_override() is False
+
+
+def test_mpv_widget_reports_secondary_subtitle_ass_override_unsupported_when_property_is_missing(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __getitem__(self, key: str) -> object:
+            raise RuntimeError(
+                ("mpv property does not exist", -8, (object(), b"options/secondary-sub-ass-override", b"strip"))
+            )
+
+    widget._player = FakePlayer()
+
+    assert widget.supports_secondary_subtitle_ass_override() is False
+
+
 def test_mpv_widget_emits_audio_tracks_changed_when_mpv_track_list_updates(qtbot, monkeypatch) -> None:
     class FakePlayer:
         def __init__(self) -> None:

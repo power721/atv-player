@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import queue
-import tempfile
 import threading
 import time
 from collections.abc import Callable
@@ -43,7 +42,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from atv_player.danmaku.subtitle import render_danmaku_srt
+from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
 from atv_player.models import PlaybackLoadResult, VodItem
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
@@ -197,7 +196,7 @@ class PlayerWindow(QWidget):
     _POSTER_SIZE = QSize(180, 260)
     _POSTER_REQUEST_TIMEOUT_SECONDS = 10.0
     _DEFAULT_MAIN_SPLITTER_SIZES = [960, 320]
-    _DANMAKU_SECONDARY_POSITION = 10
+    _DANMAKU_SECONDARY_SCALE = 50
     _SUBTITLE_POSITION_PRESETS = {
         "顶部": 10,
         "偏上": 30,
@@ -252,7 +251,15 @@ class PlayerWindow(QWidget):
         self._danmaku_temp_path: Path | None = None
         self._danmaku_active = False
         self._danmaku_line_count = 1
+        self._danmaku_retry_attempts = 0
+        self._danmaku_loading_slot: str | None = None
+        self._danmaku_uses_secondary_slot: bool | None = None
+        self._danmaku_restore_ass_force_margins: str | None = None
+        self._danmaku_restore_main_ass_override: str | None = None
+        self._danmaku_restore_secondary_ass_override: str | None = None
+        self._danmaku_restore_main_scale: int | None = None
         self._danmaku_restore_secondary_position: int | None = None
+        self._danmaku_restore_secondary_scale: int | None = None
         self.help_dialog: ShortcutHelpDialog | None = None
         self._poster_load_signals = _PosterLoadSignals(self)
         self._poster_load_signals.loaded.connect(self._handle_poster_load_finished)
@@ -264,6 +271,12 @@ class PlayerWindow(QWidget):
         self._playback_prepare_signals.failed.connect(self._handle_playback_prepare_failed)
         self._background_task_signals = _BackgroundTaskSignals(self)
         self._background_task_signals.failed.connect(self._append_log)
+        self._danmaku_retry_timer = QTimer(self)
+        self._danmaku_retry_timer.setSingleShot(True)
+        self._danmaku_retry_timer.timeout.connect(self._retry_configure_danmaku_for_current_item)
+        self._pending_danmaku_timer = QTimer(self)
+        self._pending_danmaku_timer.setInterval(300)
+        self._pending_danmaku_timer.timeout.connect(self._refresh_pending_danmaku_for_current_item)
         self._controller_task_queue: queue.SimpleQueue[tuple[str, Callable[[], None]] | None] = queue.SimpleQueue()
         self._controller_task_worker = threading.Thread(
             target=self._run_controller_task_queue,
@@ -1658,18 +1671,19 @@ class PlayerWindow(QWidget):
         return self.session.playlist[self.current_index].danmaku_xml
 
     def _cleanup_danmaku_temp_file(self) -> None:
-        if self._danmaku_temp_path is None:
-            return
-        try:
-            self._danmaku_temp_path.unlink(missing_ok=True)
-        except Exception:
-            pass
         self._danmaku_temp_path = None
 
     def _restore_secondary_subtitle_position_after_danmaku(self) -> None:
         if self._danmaku_restore_secondary_position is None:
             return
-        if not hasattr(self.video, "set_secondary_subtitle_position"):
+        if (
+            not hasattr(self.video, "set_secondary_subtitle_position")
+            or not getattr(
+                self.video,
+                "supports_secondary_subtitle_position",
+                lambda: False,
+            )()
+        ):
             self._danmaku_restore_secondary_position = None
             return
         try:
@@ -1679,7 +1693,98 @@ class PlayerWindow(QWidget):
         finally:
             self._danmaku_restore_secondary_position = None
 
+    def _restore_secondary_subtitle_scale_after_danmaku(self) -> None:
+        if self._danmaku_restore_secondary_scale is None:
+            return
+        if (
+            not hasattr(self.video, "set_secondary_subtitle_scale")
+            or not getattr(
+                self.video,
+                "supports_secondary_subtitle_scale",
+                lambda: False,
+            )()
+        ):
+            self._danmaku_restore_secondary_scale = None
+            return
+        try:
+            self.video.set_secondary_subtitle_scale(self._danmaku_restore_secondary_scale)
+        except Exception as exc:
+            self._append_log(f"次字幕大小恢复失败: {exc}")
+        finally:
+            self._danmaku_restore_secondary_scale = None
+
+    def _restore_main_subtitle_scale_after_danmaku(self) -> None:
+        if self._danmaku_restore_main_scale is None:
+            return
+        if (
+            not hasattr(self.video, "set_subtitle_scale")
+            or not getattr(
+                self.video,
+                "supports_subtitle_scale",
+                lambda: False,
+            )()
+        ):
+            self._danmaku_restore_main_scale = None
+            return
+        try:
+            self.video.set_subtitle_scale(self._danmaku_restore_main_scale)
+        except Exception as exc:
+            self._append_log(f"主字幕大小恢复失败: {exc}")
+        finally:
+            self._danmaku_restore_main_scale = None
+
+    def _restore_main_subtitle_ass_override_after_danmaku(self) -> None:
+        if self._danmaku_restore_main_ass_override is None:
+            return
+        if (
+            not hasattr(self.video, "set_subtitle_ass_override")
+            or not getattr(self.video, "supports_subtitle_ass_override", lambda: False)()
+        ):
+            self._danmaku_restore_main_ass_override = None
+            return
+        try:
+            self.video.set_subtitle_ass_override(self._danmaku_restore_main_ass_override)
+        except Exception as exc:
+            self._append_log(f"主字幕样式恢复失败: {exc}")
+        finally:
+            self._danmaku_restore_main_ass_override = None
+
+    def _restore_secondary_subtitle_ass_override_after_danmaku(self) -> None:
+        if self._danmaku_restore_secondary_ass_override is None:
+            return
+        if (
+            not hasattr(self.video, "set_secondary_subtitle_ass_override")
+            or not getattr(self.video, "supports_secondary_subtitle_ass_override", lambda: False)()
+        ):
+            self._danmaku_restore_secondary_ass_override = None
+            return
+        try:
+            self.video.set_secondary_subtitle_ass_override(self._danmaku_restore_secondary_ass_override)
+        except Exception as exc:
+            self._append_log(f"次字幕样式恢复失败: {exc}")
+        finally:
+            self._danmaku_restore_secondary_ass_override = None
+
+    def _restore_subtitle_ass_force_margins_after_danmaku(self) -> None:
+        if self._danmaku_restore_ass_force_margins is None:
+            return
+        if (
+            not hasattr(self.video, "set_subtitle_ass_force_margins")
+            or not getattr(self.video, "supports_subtitle_ass_force_margins", lambda: False)()
+        ):
+            self._danmaku_restore_ass_force_margins = None
+            return
+        try:
+            self.video.set_subtitle_ass_force_margins(self._danmaku_restore_ass_force_margins)
+        except Exception as exc:
+            self._append_log(f"黑边字幕恢复失败: {exc}")
+        finally:
+            self._danmaku_restore_ass_force_margins = None
+
     def _clear_active_danmaku(self, *, restore_position: bool = True) -> None:
+        self._danmaku_retry_timer.stop()
+        self._pending_danmaku_timer.stop()
+        self._danmaku_retry_attempts = 0
         if self._danmaku_track_id is not None and hasattr(self.video, "remove_subtitle_track"):
             try:
                 self.video.remove_subtitle_track(self._danmaku_track_id)
@@ -1689,59 +1794,190 @@ class PlayerWindow(QWidget):
         self._danmaku_active = False
         if restore_position:
             self._restore_secondary_subtitle_position_after_danmaku()
+            self._restore_secondary_subtitle_scale_after_danmaku()
+            self._restore_main_subtitle_scale_after_danmaku()
+            self._restore_secondary_subtitle_ass_override_after_danmaku()
+            self._restore_main_subtitle_ass_override_after_danmaku()
+            self._restore_subtitle_ass_force_margins_after_danmaku()
+        self._danmaku_loading_slot = None
+        self._danmaku_uses_secondary_slot = None
         self._cleanup_danmaku_temp_file()
 
     def _write_danmaku_subtitle_file(self, xml_text: str, line_count: int) -> Path | None:
-        subtitle_text = render_danmaku_srt(xml_text, line_count=line_count)
-        if not subtitle_text:
-            return None
         self._cleanup_danmaku_temp_file()
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".srt", delete=False) as handle:
-            handle.write(subtitle_text)
-            temp_path = Path(handle.name)
+        temp_path = load_or_create_danmaku_ass_cache(xml_text, line_count)
+        if temp_path is None:
+            return None
         self._danmaku_temp_path = temp_path
         return temp_path
 
-    def _apply_danmaku_secondary_position(self) -> None:
-        if not hasattr(self.video, "set_secondary_subtitle_position"):
+    def _apply_danmaku_secondary_scale(self) -> None:
+        if (
+            not hasattr(self.video, "set_secondary_subtitle_scale")
+            or not getattr(
+                self.video,
+                "supports_secondary_subtitle_scale",
+                lambda: False,
+            )()
+        ):
             return
         try:
-            self.video.set_secondary_subtitle_position(self._DANMAKU_SECONDARY_POSITION)
+            self.video.set_secondary_subtitle_scale(self._DANMAKU_SECONDARY_SCALE)
         except Exception as exc:
-            self._append_log(f"弹幕位置设置失败: {exc}")
+            self._append_log(f"弹幕大小设置失败: {exc}")
+
+    def _apply_danmaku_main_scale(self) -> None:
+        if (
+            not hasattr(self.video, "set_subtitle_scale")
+            or not getattr(
+                self.video,
+                "supports_subtitle_scale",
+                lambda: False,
+            )()
+        ):
+            return
+        try:
+            self.video.set_subtitle_scale(self._DANMAKU_SECONDARY_SCALE)
+        except Exception as exc:
+            self._append_log(f"弹幕大小设置失败: {exc}")
+
+    def _apply_danmaku_scale(self) -> None:
+        if self._danmaku_uses_secondary_slot is False:
+            self._apply_danmaku_main_scale()
+            return
+        self._apply_danmaku_secondary_scale()
 
     def _enable_danmaku(self, line_count: int) -> None:
         xml_text = self._current_play_item_danmaku_xml()
         if not xml_text:
             return
+        if self._danmaku_restore_secondary_position is None:
+            self._danmaku_restore_secondary_position = self._secondary_subtitle_position
+        if (
+            self._danmaku_restore_ass_force_margins is None
+            and hasattr(self.video, "subtitle_ass_force_margins")
+            and getattr(self.video, "supports_subtitle_ass_force_margins", lambda: False)()
+        ):
+            self._danmaku_restore_ass_force_margins = self.video.subtitle_ass_force_margins()
+        if (
+            hasattr(self.video, "set_subtitle_ass_force_margins")
+            and getattr(self.video, "supports_subtitle_ass_force_margins", lambda: False)()
+        ):
+            self.video.set_subtitle_ass_force_margins("yes")
+        self._clear_active_danmaku(restore_position=False)
         subtitle_path = self._write_danmaku_subtitle_file(xml_text, line_count)
         if subtitle_path is None:
             raise ValueError("弹幕为空")
-        if self._danmaku_restore_secondary_position is None:
-            self._danmaku_restore_secondary_position = self._secondary_subtitle_position
-        self._clear_active_danmaku(restore_position=False)
         if not hasattr(self.video, "load_external_subtitle"):
             raise RuntimeError("播放器不支持外挂弹幕")
-        track_id = self.video.load_external_subtitle(str(subtitle_path), select_for_secondary=True)
+        can_preserve_secondary_ass = bool(
+            getattr(self.video, "supports_secondary_subtitle_ass_override", lambda: False)()
+        )
+        if can_preserve_secondary_ass:
+            if (
+                self._danmaku_restore_secondary_ass_override is None
+                and hasattr(self.video, "secondary_subtitle_ass_override")
+            ):
+                self._danmaku_restore_secondary_ass_override = self.video.secondary_subtitle_ass_override()
+            if hasattr(self.video, "set_secondary_subtitle_ass_override"):
+                self.video.set_secondary_subtitle_ass_override("no")
+            try:
+                self._danmaku_loading_slot = "secondary"
+                track_id = self.video.load_external_subtitle(str(subtitle_path), select_for_secondary=True)
+                self._danmaku_uses_secondary_slot = True
+            except Exception as exc:
+                if self._is_mpv_command_error(exc):
+                    raise
+                track_id = self._load_primary_danmaku_subtitle(subtitle_path)
+            finally:
+                self._danmaku_loading_slot = None
+        else:
+            track_id = self._load_primary_danmaku_subtitle(subtitle_path)
         if track_id is None:
             raise RuntimeError("播放器未返回弹幕轨道")
         self._danmaku_track_id = track_id
         self._danmaku_active = True
         self._danmaku_line_count = line_count
-        self._apply_danmaku_secondary_position()
+
+    def _load_primary_danmaku_subtitle(self, subtitle_path: Path) -> int | None:
+        if (
+            self._danmaku_restore_main_ass_override is None
+            and hasattr(self.video, "subtitle_ass_override")
+            and getattr(self.video, "supports_subtitle_ass_override", lambda: False)()
+        ):
+            self._danmaku_restore_main_ass_override = self.video.subtitle_ass_override()
+        if (
+            hasattr(self.video, "set_subtitle_ass_override")
+            and getattr(self.video, "supports_subtitle_ass_override", lambda: False)()
+        ):
+            self.video.set_subtitle_ass_override("no")
+        self._danmaku_loading_slot = "primary"
+        try:
+            track_id = self.video.load_external_subtitle(str(subtitle_path), select_for_secondary=False)
+            if track_id is not None and hasattr(self.video, "apply_subtitle_mode"):
+                self.video.apply_subtitle_mode("track", track_id=track_id)
+        finally:
+            self._danmaku_loading_slot = None
+        self._danmaku_uses_secondary_slot = False
+        return track_id
 
     def _configure_danmaku_for_current_item(self) -> None:
+        self._danmaku_retry_timer.stop()
         xml_text = self._current_play_item_danmaku_xml()
         if not xml_text:
+            if self.session is not None and self.session.playlist[self.current_index].danmaku_pending:
+                self._reset_danmaku_combo()
+                if not self._pending_danmaku_timer.isActive():
+                    self._pending_danmaku_timer.start()
+                return
+            self._pending_danmaku_timer.stop()
             self._reset_danmaku_combo()
+            self._danmaku_retry_attempts = 0
             return
+        self._pending_danmaku_timer.stop()
         self._reset_danmaku_combo(enabled=True, current_index=0)
         try:
             self._enable_danmaku(1)
+            self._danmaku_retry_attempts = 0
         except Exception as exc:
+            if self._should_retry_danmaku_load(exc):
+                self._schedule_danmaku_retry()
+                return
             self._append_log(f"弹幕加载失败: {exc}")
             self._clear_active_danmaku()
             self._reset_danmaku_combo(enabled=True, current_index=1)
+
+    def _should_retry_danmaku_load(self, exc: Exception) -> bool:
+        if self._danmaku_retry_attempts >= 3:
+            return False
+        return self._is_mpv_command_error(exc)
+
+    def _is_mpv_command_error(self, exc: Exception) -> bool:
+        return "Error running mpv command" in str(exc)
+
+    def _schedule_danmaku_retry(self) -> None:
+        self._danmaku_retry_attempts += 1
+        self._danmaku_retry_timer.start(400)
+
+    def _retry_configure_danmaku_for_current_item(self) -> None:
+        if self.session is None:
+            return
+        if not self._current_play_item_danmaku_xml():
+            self._danmaku_retry_attempts = 0
+            return
+        self._configure_danmaku_for_current_item()
+
+    def _refresh_pending_danmaku_for_current_item(self) -> None:
+        if self.session is None:
+            self._pending_danmaku_timer.stop()
+            return
+        current_item = self.session.playlist[self.current_index]
+        if current_item.danmaku_xml:
+            self._pending_danmaku_timer.stop()
+            self._configure_danmaku_for_current_item()
+            return
+        if not current_item.danmaku_pending:
+            self._pending_danmaku_timer.stop()
 
     def _refresh_subtitle_state(self) -> None:
         if not hasattr(self.video, "subtitle_tracks") or not hasattr(self.video, "apply_subtitle_mode"):
@@ -1801,15 +2037,20 @@ class PlayerWindow(QWidget):
         if not self._subtitle_tracks:
             self._subtitle_preference = SubtitlePreference()
             return
-        try:
-            self._apply_subtitle_preference()
-        except Exception as exc:
-            self._subtitle_preference = SubtitlePreference()
-            self._reset_subtitle_combo()
-            self._append_log(f"字幕切换失败: {exc}")
-        if self._danmaku_active:
-            self._apply_danmaku_secondary_position()
-        elif hasattr(self.video, "apply_secondary_subtitle_mode"):
+        skip_primary_subtitle_preference = bool(
+            self._danmaku_loading_slot == "primary" or (self._danmaku_active and self._danmaku_uses_secondary_slot is False)
+        )
+        skip_secondary_subtitle_preference = bool(
+            self._danmaku_loading_slot == "secondary" or (self._danmaku_active and self._danmaku_uses_secondary_slot is True)
+        )
+        if not skip_primary_subtitle_preference:
+            try:
+                self._apply_subtitle_preference()
+            except Exception as exc:
+                self._subtitle_preference = SubtitlePreference()
+                self._reset_subtitle_combo()
+                self._append_log(f"字幕切换失败: {exc}")
+        if not self._danmaku_active and not skip_secondary_subtitle_preference and hasattr(self.video, "apply_secondary_subtitle_mode"):
             try:
                 self._apply_secondary_subtitle_preference()
             except Exception as exc:
@@ -1829,7 +2070,11 @@ class PlayerWindow(QWidget):
                 self.video.set_secondary_subtitle_position(self._secondary_subtitle_position)
             except Exception as exc:
                 self._append_log(f"次字幕位置设置失败: {exc}")
-        if self._main_subtitle_scale_supported and hasattr(self.video, "set_subtitle_scale"):
+        if (
+            self._main_subtitle_scale_supported
+            and hasattr(self.video, "set_subtitle_scale")
+            and not (self._danmaku_active and self._danmaku_uses_secondary_slot is False)
+        ):
             try:
                 self.video.set_subtitle_scale(self._main_subtitle_scale)
             except Exception as exc:

@@ -9,6 +9,7 @@ from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QApplication, QWidget
 
 from atv_player.api import ApiClient, ApiError, UnauthorizedError
+from atv_player.danmaku.cache import purge_stale_danmaku_cache
 from atv_player.danmaku.service import create_default_danmaku_service
 from atv_player.custom_live_service import CustomLiveService
 from atv_player.controllers.browse_controller import BrowseController
@@ -106,6 +107,7 @@ def build_application() -> tuple[QApplication, SettingsRepository]:
     data_dir = app_data_dir()
     repo = SettingsRepository(data_dir / "app.db")
     purge_stale_poster_cache()
+    threading.Thread(target=purge_stale_danmaku_cache, daemon=True).start()
     logger.info("Application initialized data_dir=%s", data_dir)
     return app, repo
 
@@ -125,7 +127,7 @@ class AppCoordinator(QObject):
             self._live_epg_repository = LiveEpgRepository(repo.database_path)
             self._plugin_repository = SpiderPluginRepository(repo.database_path)
             self._playback_history_repository = LocalPlaybackHistoryRepository(repo.database_path)
-            cache_dir = repo.database_path.parent / "plugins" / "cache"
+            cache_dir = app_cache_dir() / "plugins"
             self._plugin_loader = SpiderPluginLoader(cache_dir)
             self._plugin_manager = SpiderPluginManager(
                 self._plugin_repository,

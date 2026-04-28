@@ -38,6 +38,7 @@ class PlayItem:
     play_source: str = ""
     media_title: str = ""
     danmaku_xml: str = ""
+    danmaku_pending: bool = False
 
 
 @dataclass(slots=True)

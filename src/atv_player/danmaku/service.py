@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import logging
 
 from atv_player.danmaku.errors import DanmakuEmptyResultError, ProviderNotSupportedError
 from atv_player.danmaku.models import DanmakuSearchItem
@@ -12,6 +13,9 @@ from atv_player.danmaku.providers import (
 )
 from atv_player.danmaku.providers.base import DanmakuProvider
 from atv_player.danmaku.utils import build_xml, match_provider, normalize_name, should_filter_name, similarity_score
+
+
+logger = logging.getLogger(__name__)
 
 
 class DanmakuService:
@@ -34,7 +38,12 @@ class DanmakuService:
         normalized = normalize_name(name)
         results: list[DanmakuSearchItem] = []
         for key in self._ordered_provider_keys(reg_src):
-            for item in self._providers[key].search(normalized):
+            try:
+                provider_items = self._providers[key].search(normalized)
+            except Exception as exc:
+                logger.warning("Danmaku provider search failed provider=%s name=%s error=%s", key, normalized, exc)
+                continue
+            for item in provider_items:
                 if should_filter_name(normalized, item.name):
                     continue
                 ratio = item.ratio or similarity_score(normalized, item.name)

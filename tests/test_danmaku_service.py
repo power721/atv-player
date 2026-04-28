@@ -25,6 +25,12 @@ class FakeProvider:
         return self.key in page_url
 
 
+class FailingSearchProvider(FakeProvider):
+    def search(self, name: str) -> list[DanmakuSearchItem]:
+        self.search_calls.append(name)
+        raise RuntimeError(f"{self.key} search boom")
+
+
 def test_search_danmu_prefers_provider_from_reg_src() -> None:
     tencent = FakeProvider(
         "tencent",
@@ -79,6 +85,22 @@ def test_search_danmu_falls_back_to_default_order_for_unknown_reg_src() -> None:
     results = service.search_danmu("剑来 第1集", "https://unknown.example/video/1")
 
     assert [item.provider for item in results] == ["youku", "tencent"]
+
+
+def test_search_danmu_ignores_single_provider_search_failures() -> None:
+    tencent = FakeProvider(
+        "tencent",
+        [DanmakuSearchItem(provider="tencent", name="剑来 第二季 10集", url="https://tencent/item", ratio=0.82, simi=0.82)],
+        [],
+    )
+    youku = FailingSearchProvider("youku", [], [])
+    service = DanmakuService({"tencent": tencent, "youku": youku}, provider_order=["tencent", "youku"])
+
+    results = service.search_danmu("剑来 第二季 10集", "/play/10")
+
+    assert [(item.provider, item.url) for item in results] == [("tencent", "https://tencent/item")]
+    assert tencent.search_calls == ["剑来 第二季 10集"]
+    assert youku.search_calls == ["剑来 第二季 10集"]
 
 
 def test_resolve_danmu_dispatches_by_url_and_builds_xml() -> None:

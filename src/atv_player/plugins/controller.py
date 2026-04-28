@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import threading
 from collections.abc import Callable
 from collections.abc import Mapping
 from urllib.parse import urlparse
 
 from atv_player.api import ApiError
+from atv_player.danmaku.cache import load_cached_danmaku_xml, save_cached_danmaku_xml
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_category, _map_item
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
@@ -22,6 +25,33 @@ def _looks_like_media_url(value: str) -> bool:
     if candidate.startswith(("http://", "https://", "rtmp://", "rtsp://")):
         return True
     return any(candidate.endswith(ext) or f"{ext}?" in candidate for ext in (".m3u8", ".mkv", ".mp4", ".flv"))
+
+
+def _extract_episode_label(title: str) -> str:
+    candidate = title.strip()
+    if not candidate:
+        return ""
+    patterns = (
+        (r"第\s*(\d+)\s*集", "{number}集"),
+        (r"(\d+)\s*集", "{number}集"),
+        (r"S\d+\s*E(\d+)", "{number}集"),
+        (r"\bEP?\s*(\d+)\b", "{number}集"),
+        (r"\bE\s*(\d+)\b", "{number}集"),
+    )
+    for pattern, template in patterns:
+        match = re.search(pattern, candidate, re.IGNORECASE)
+        if match is None:
+            continue
+        return template.format(number=match.group(1))
+    return ""
+
+
+def _build_danmaku_search_name(item: PlayItem) -> str:
+    media_title = item.media_title.strip()
+    if not media_title:
+        return item.title.strip()
+    episode_label = _extract_episode_label(item.title)
+    return " ".join(part for part in (media_title, episode_label) if part).strip()
 
 
 def _normalize_headers(raw_headers) -> dict[str, str]:
@@ -134,6 +164,9 @@ class SpiderPluginController:
         self._playback_parser_service = playback_parser_service
         self._preferred_parse_key_loader = preferred_parse_key_loader
         self._danmaku_service = danmaku_service
+        self._danmaku_enabled = bool(getattr(self._spider, "danmaku", lambda: False)())
+        self._danmaku_lock = threading.Lock()
+        self._pending_danmaku_item_ids: set[int] = set()
         self._home_loaded = False
         self._home_categories: list[DoubanCategory] = []
         self._home_items: list[VodItem] = []
@@ -241,13 +274,14 @@ class SpiderPluginController:
                 playlists.append(playlist)
         return playlists
 
-    def _build_drive_replacement_playlist(self, detail: VodItem, play_source: str) -> list[PlayItem]:
+    def _build_drive_replacement_playlist(self, detail: VodItem, play_source: str, media_title: str = "") -> list[PlayItem]:
+        resolved_media_title = media_title.strip() or detail.vod_name
         if detail.items:
             return [
                 PlayItem(
                     title=item.title,
                     url=item.url,
-                    media_title=detail.vod_name,
+                    media_title=resolved_media_title,
                     path=item.path,
                     index=index,
                     size=item.size,
@@ -263,7 +297,7 @@ class SpiderPluginController:
             PlayItem(
                 title=item.title,
                 url=item.url,
-                media_title=detail.vod_name,
+                media_title=resolved_media_title,
                 path=item.path,
                 index=index,
                 size=item.size,
@@ -275,31 +309,75 @@ class SpiderPluginController:
             if item.url and not _looks_like_drive_share_link(item.url)
         ]
 
-    def _maybe_resolve_danmaku(self, item: PlayItem, payload: dict, url: str) -> None:
-        if not payload.get("danmu") or self._danmaku_service is None:
+    def _resolve_danmaku_sync(self, item: PlayItem, url: str) -> None:
+        if not self._danmaku_enabled or self._danmaku_service is None:
             return
-        search_name = " ".join(part for part in (item.media_title.strip(), item.title.strip()) if part).strip()
+        search_name = _build_danmaku_search_name(item)
         if not search_name:
             return
         reg_src = str(item.vod_id or url or "").strip()
-        try:
-            candidates = self._danmaku_service.search_danmu(search_name, reg_src)
-            if not candidates:
-                return
-            item.danmaku_xml = self._danmaku_service.resolve_danmu(candidates[0].url)
+        cached_xml = load_cached_danmaku_xml(search_name, reg_src)
+        if cached_xml:
+            item.danmaku_xml = cached_xml
             logger.info(
-                "Spider plugin resolved danmaku plugin=%s source=%s candidate=%s",
+                "Spider plugin loaded cached danmaku plugin=%s source=%s",
                 self._plugin_name,
                 item.vod_id,
-                candidates[0].url,
             )
+            return
+        try:
+            candidates = self._danmaku_service.search_danmu(search_name, reg_src)
         except Exception as exc:
             logger.warning(
-                "Spider plugin danmaku resolution failed plugin=%s source=%s error=%s",
+                "Spider plugin danmaku search failed plugin=%s source=%s error=%s",
                 self._plugin_name,
                 item.vod_id,
                 exc,
             )
+            return
+        if not candidates:
+            return
+        for candidate in candidates:
+            try:
+                item.danmaku_xml = self._danmaku_service.resolve_danmu(candidate.url)
+                save_cached_danmaku_xml(search_name, reg_src, item.danmaku_xml)
+                logger.info(
+                    "Spider plugin resolved danmaku plugin=%s source=%s candidate=%s",
+                    self._plugin_name,
+                    item.vod_id,
+                    candidate.url,
+                )
+                return
+            except Exception as exc:
+                logger.warning(
+                    "Spider plugin danmaku candidate failed plugin=%s source=%s candidate=%s error=%s",
+                    self._plugin_name,
+                    item.vod_id,
+                    candidate.url,
+                    exc,
+                )
+
+    def _maybe_resolve_danmaku(self, item: PlayItem, url: str) -> None:
+        if not self._danmaku_enabled or self._danmaku_service is None:
+            return
+        if item.danmaku_xml or item.danmaku_pending:
+            return
+        item_id = id(item)
+        with self._danmaku_lock:
+            if item_id in self._pending_danmaku_item_ids:
+                return
+            self._pending_danmaku_item_ids.add(item_id)
+        item.danmaku_pending = True
+
+        def run() -> None:
+            try:
+                self._resolve_danmaku_sync(item, url)
+            finally:
+                item.danmaku_pending = False
+                with self._danmaku_lock:
+                    self._pending_danmaku_item_ids.discard(item_id)
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _resolve_replacement_start_index(self, vod_id: str, replacement: list[PlayItem]) -> int:
         if self._playback_history_loader is None or not replacement:
@@ -308,7 +386,11 @@ class SpiderPluginController:
         return resolve_resume_index(history, replacement, 0)
 
     def _resolve_play_item(self, item: PlayItem) -> PlaybackLoadResult | None:
-        if item.url or not item.vod_id:
+        if item.url:
+            if not item.danmaku_xml:
+                self._maybe_resolve_danmaku(item, item.url)
+            return
+        if not item.vod_id:
             return
         if _looks_like_drive_share_link(item.vod_id):
             if self._drive_detail_loader is None:
@@ -323,9 +405,11 @@ class SpiderPluginController:
                     item.vod_id,
                 )
                 raise ValueError(f"没有可播放的项目: {item.title or item.vod_id}") from exc
-            replacement = self._build_drive_replacement_playlist(detail, item.play_source)
+            replacement = self._build_drive_replacement_playlist(detail, item.play_source, media_title=item.media_title)
             if not replacement:
                 raise ValueError(f"没有可播放的项目: {detail.vod_name or item.title}")
+            replacement_start_index = self._resolve_replacement_start_index(item.path or detail.vod_id, replacement)
+            self._maybe_resolve_danmaku(replacement[replacement_start_index], item.vod_id)
             logger.info(
                 "Spider plugin resolved drive playlist plugin=%s source=%s items=%s",
                 self._plugin_name,
@@ -334,7 +418,7 @@ class SpiderPluginController:
             )
             return PlaybackLoadResult(
                 replacement_playlist=replacement,
-                replacement_start_index=self._resolve_replacement_start_index(item.path or detail.vod_id, replacement),
+                replacement_start_index=replacement_start_index,
             )
         try:
             payload = self._spider.playerContent(item.play_source, item.vod_id, []) or {}
@@ -360,9 +444,11 @@ class SpiderPluginController:
                     item.vod_id,
                 )
                 raise ValueError(f"没有可播放的项目: {item.title or item.vod_id}") from exc
-            replacement = self._build_drive_replacement_playlist(detail, item.play_source)
+            replacement = self._build_drive_replacement_playlist(detail, item.play_source, media_title=item.media_title)
             if not replacement:
                 raise ValueError(f"没有可播放的项目: {detail.vod_name or item.title}")
+            replacement_start_index = self._resolve_replacement_start_index(item.path or detail.vod_id, replacement)
+            self._maybe_resolve_danmaku(replacement[replacement_start_index], url)
             logger.info(
                 "Spider plugin resolved drive playlist plugin=%s source=%s items=%s",
                 self._plugin_name,
@@ -371,7 +457,7 @@ class SpiderPluginController:
             )
             return PlaybackLoadResult(
                 replacement_playlist=replacement,
-                replacement_start_index=self._resolve_replacement_start_index(item.path or detail.vod_id, replacement),
+                replacement_start_index=replacement_start_index,
             )
         if parse_required:
             if self._playback_parser_service is None:
@@ -383,7 +469,7 @@ class SpiderPluginController:
             )
             item.url = result.url
             item.headers = dict(result.headers)
-            self._maybe_resolve_danmaku(item, payload, url)
+            self._maybe_resolve_danmaku(item, url)
             logger.info(
                 "Spider plugin resolved parse playback plugin=%s source=%s parser=%s",
                 self._plugin_name,
@@ -395,7 +481,7 @@ class SpiderPluginController:
             raise ValueError("插件未返回可播放地址")
         item.url = url
         item.headers = _normalize_headers(payload.get("header"))
-        self._maybe_resolve_danmaku(item, payload, url)
+        self._maybe_resolve_danmaku(item, url)
         logger.info(
             "Spider plugin resolved playback url plugin=%s source=%s play_source=%s",
             self._plugin_name,

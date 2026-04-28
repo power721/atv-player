@@ -10,7 +10,7 @@ from pathlib import Path
 import requests
 from lxml import etree
 
-_CACHE_ROOT = Path.home() / ".local" / "share" / "atv-player" / "plugins" / "spider-cache"
+_CACHE_ROOT = Path.home() / ".cache" / "atv-player" / "plugins" / "spider-cache"
 
 
 def set_cache_root(path: Path | str) -> None:
@@ -59,6 +59,9 @@ class Spider(metaclass=ABCMeta):
 
     def getName(self):
         return ""
+
+    def danmaku(self):
+        return False
 
     def fetch(
         self,

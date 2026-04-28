@@ -236,6 +236,23 @@ class MpvWidget(QWidget):
                 return default
         return default
 
+    def _ass_override_value(self, value: object | None, default: str) -> str:
+        allowed = {"yes", "no", "force", "strip", "scale"}
+        if isinstance(value, bool):
+            return "yes" if value else "no"
+        normalized = str(value or "").strip().lower()
+        if normalized in allowed:
+            return normalized
+        return default
+
+    def _yes_no_value(self, value: object | None, default: str) -> str:
+        if isinstance(value, bool):
+            return "yes" if value else "no"
+        normalized = str(value or "").strip().lower()
+        if normalized in {"yes", "no"}:
+            return normalized
+        return default
+
     def load(
             self,
             url: str,
@@ -623,6 +640,27 @@ class MpvWidget(QWidget):
         clamped = max(50, min(int(value), 200))
         self._set_player_property("secondary-sub-scale", clamped / 100)
 
+    def subtitle_ass_override(self) -> str:
+        value = self._player_property("sub-ass-override", "scale")
+        return self._ass_override_value(value, "scale")
+
+    def set_subtitle_ass_override(self, value: str) -> None:
+        self._set_player_property("sub-ass-override", self._ass_override_value(value, "scale"))
+
+    def secondary_subtitle_ass_override(self) -> str:
+        value = self._player_property("secondary-sub-ass-override", "strip")
+        return self._ass_override_value(value, "strip")
+
+    def set_secondary_subtitle_ass_override(self, value: str) -> None:
+        self._set_player_property("secondary-sub-ass-override", self._ass_override_value(value, "strip"))
+
+    def subtitle_ass_force_margins(self) -> str:
+        value = self._player_property("sub-ass-force-margins", "no")
+        return self._yes_no_value(value, "no")
+
+    def set_subtitle_ass_force_margins(self, value: str) -> None:
+        self._set_player_property("sub-ass-force-margins", self._yes_no_value(value, "no"))
+
     def supports_subtitle_scale(self) -> bool:
         if self._player is None:
             return False
@@ -641,6 +679,45 @@ class MpvWidget(QWidget):
             return False
         try:
             _ = self._player["secondary-sub-scale"]
+            return True
+        except Exception as exc:
+            if self._is_missing_mpv_property_error(exc):
+                return False
+            if getattr(self._player, "core_shutdown", False):
+                return False
+            raise
+
+    def supports_subtitle_ass_override(self) -> bool:
+        if self._player is None:
+            return False
+        try:
+            _ = self._player["sub-ass-override"]
+            return True
+        except Exception as exc:
+            if self._is_missing_mpv_property_error(exc):
+                return False
+            if getattr(self._player, "core_shutdown", False):
+                return False
+            raise
+
+    def supports_secondary_subtitle_ass_override(self) -> bool:
+        if self._player is None:
+            return False
+        try:
+            _ = self._player["secondary-sub-ass-override"]
+            return True
+        except Exception as exc:
+            if self._is_missing_mpv_property_error(exc):
+                return False
+            if getattr(self._player, "core_shutdown", False):
+                return False
+            raise
+
+    def supports_subtitle_ass_force_margins(self) -> bool:
+        if self._player is None:
+            return False
+        try:
+            _ = self._player["sub-ass-force-margins"]
             return True
         except Exception as exc:
             if self._is_missing_mpv_property_error(exc):

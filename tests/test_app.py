@@ -2167,6 +2167,41 @@ def test_build_application_deletes_poster_cache_files_older_than_seven_days(monk
     assert new_file.exists() is True
 
 
+def test_build_application_starts_async_danmaku_cache_cleanup(monkeypatch, tmp_path) -> None:
+    class FakeApplication:
+        def __init__(self, args) -> None:
+            self.args = args
+            self.application_name = ""
+            self.window_icon = QIcon()
+
+        def setApplicationName(self, name: str) -> None:
+            self.application_name = name
+
+        def setWindowIcon(self, icon: QIcon) -> None:
+            self.window_icon = icon
+
+    cleanup_calls: list[str] = []
+
+    class FakeThread:
+        def __init__(self, *, target, daemon: bool) -> None:
+            self._target = target
+            self.daemon = daemon
+
+        def start(self) -> None:
+            cleanup_calls.append("started")
+            self._target()
+
+    monkeypatch.setattr(app_module, "QApplication", FakeApplication)
+    monkeypatch.setattr(app_module, "app_data_dir", lambda: tmp_path / "app-data")
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(app_module, "purge_stale_danmaku_cache", lambda: cleanup_calls.append("cleaned"))
+    monkeypatch.setattr(app_module.threading, "Thread", FakeThread)
+
+    app_module.build_application()
+
+    assert cleanup_calls == ["started", "cleaned"]
+
+
 def test_build_application_uses_shared_app_path_helpers(monkeypatch, tmp_path) -> None:
     class FakeApplication:
         def __init__(self, args) -> None:

@@ -1,5 +1,6 @@
 import threading
 import time
+from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QByteArray, QEvent, QObject, QRect, Qt, Signal
@@ -1798,6 +1799,9 @@ def test_player_window_disables_audio_selector_when_current_item_has_no_embedded
 
         def audio_tracks(self) -> list[AudioTrack]:
             return []
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return track_id
 
         def apply_audio_mode(self, mode: str, track_id: int | None = None) -> int | None:
             return None
@@ -4221,6 +4225,7 @@ def test_player_window_enables_danmaku_by_default_when_current_item_has_danmaku(
             self.loaded_danmaku_paths: list[str] = []
             self.removed_danmaku_track_ids: list[int] = []
             self.set_secondary_subtitle_position_calls: list[int] = []
+            self.set_secondary_subtitle_ass_override_calls: list[str] = []
             self._next_track_id = 40
 
         def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
@@ -4255,6 +4260,15 @@ def test_player_window_enables_danmaku_by_default_when_current_item_has_danmaku(
         def set_secondary_subtitle_position(self, value: int) -> None:
             self.set_secondary_subtitle_position_calls.append(value)
 
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return True
+
+        def secondary_subtitle_ass_override(self) -> str:
+            return "strip"
+
+        def set_secondary_subtitle_ass_override(self, value: str) -> None:
+            self.set_secondary_subtitle_ass_override_calls.append(value)
+
         def position_seconds(self) -> int:
             return 0
 
@@ -4287,7 +4301,9 @@ def test_player_window_enables_danmaku_by_default_when_current_item_has_danmaku(
     assert window.danmaku_combo.isEnabled() is True
     assert window.danmaku_combo.currentText() == "弹幕"
     assert len(window.video.loaded_danmaku_paths) == 1
-    assert window.video.set_secondary_subtitle_position_calls[-1] == 10
+    assert window.video.set_secondary_subtitle_position_calls == []
+    assert window.video.set_secondary_subtitle_ass_override_calls[-1] == "no"
+    assert Path(window.video.loaded_danmaku_paths[0]).read_text(encoding="utf-8").startswith("[Script Info]")
 
 
 def test_player_window_changes_danmaku_mode_without_affecting_playback(qtbot) -> None:
@@ -4366,6 +4382,509 @@ def test_player_window_changes_danmaku_mode_without_affecting_playback(qtbot) ->
     assert window.video.removed_danmaku_track_ids == [70]
     assert window.video.secondary_subtitle_apply_calls == []
     assert window.danmaku_combo.currentText() == "3行"
+
+
+def test_player_window_keeps_danmaku_temp_file_until_player_loads_it(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_danmaku_paths: list[str] = []
+            self._next_track_id = 70
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            assert Path(path).exists()
+            self.loaded_danmaku_paths.append(path)
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return True
+
+        def set_secondary_subtitle_position(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="http://m/1.m3u8",
+                danmaku_xml='<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>',
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    assert len(window.video.loaded_danmaku_paths) == 1
+    assert window.video.loaded_danmaku_paths[0].endswith(".ass")
+    assert Path(window.video.loaded_danmaku_paths[0]).read_text(encoding="utf-8").startswith("[Script Info]")
+
+
+def test_player_window_falls_back_when_secondary_danmaku_track_is_unsupported(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_danmaku_paths: list[tuple[str, bool]] = []
+            self.set_secondary_subtitle_ass_override_calls: list[str] = []
+            self.set_subtitle_ass_override_calls: list[str] = []
+            self._next_track_id = 70
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return True
+
+        def secondary_subtitle_ass_override(self) -> str:
+            return "strip"
+
+        def set_secondary_subtitle_ass_override(self, value: str) -> None:
+            self.set_secondary_subtitle_ass_override_calls.append(value)
+
+        def supports_subtitle_ass_override(self) -> bool:
+            return True
+
+        def subtitle_ass_override(self) -> str:
+            return "scale"
+
+        def set_subtitle_ass_override(self, value: str) -> None:
+            self.set_subtitle_ass_override_calls.append(value)
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append((path, select_for_secondary))
+            if select_for_secondary:
+                raise RuntimeError("secondary unsupported")
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="http://m/1.m3u8",
+                danmaku_xml='<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>',
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    assert window.danmaku_combo.isEnabled() is True
+    assert window.danmaku_combo.currentText() == "弹幕"
+    assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_danmaku_paths] == [True, False]
+    assert window.video.set_secondary_subtitle_ass_override_calls[-1] == "no"
+    assert window.video.set_subtitle_ass_override_calls[-1] == "no"
+    assert Path(window.video.loaded_danmaku_paths[-1][0]).read_text(encoding="utf-8").startswith("[Script Info]")
+    assert "弹幕加载失败" not in window.log_view.toPlainText()
+
+
+def test_player_window_uses_primary_slot_when_secondary_ass_override_is_unsupported(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_danmaku_paths: list[tuple[str, bool]] = []
+            self.set_subtitle_ass_override_calls: list[str] = []
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
+            self._next_track_id = 90
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return False
+
+        def supports_subtitle_ass_override(self) -> bool:
+            return True
+
+        def subtitle_ass_override(self) -> str:
+            return "scale"
+
+        def set_subtitle_ass_override(self, value: str) -> None:
+            self.set_subtitle_ass_override_calls.append(value)
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
+            return track_id
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append((path, select_for_secondary))
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="http://m/1.m3u8",
+                danmaku_xml='<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>',
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_danmaku_paths] == [False]
+    assert window.video.set_subtitle_ass_override_calls[-1] == "no"
+    assert window.video.subtitle_apply_calls[-1] == ("track", 90)
+
+
+def test_player_window_retries_danmaku_load_after_initial_mpv_command_failure(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_danmaku_paths: list[tuple[str, bool]] = []
+            self.set_secondary_subtitle_ass_override_calls: list[str] = []
+            self._next_track_id = 110
+            self._fail_first_load = True
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return True
+
+        def secondary_subtitle_ass_override(self) -> str:
+            return "strip"
+
+        def set_secondary_subtitle_ass_override(self, value: str) -> None:
+            self.set_secondary_subtitle_ass_override_calls.append(value)
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append((path, select_for_secondary))
+            if self._fail_first_load:
+                self._fail_first_load = False
+                raise RuntimeError("Error running mpv command")
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return True
+
+        def set_secondary_subtitle_position(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="http://m/1.m3u8",
+                danmaku_xml='<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>',
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_danmaku_paths) >= 2)
+
+    assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_danmaku_paths] == [True, True]
+    assert "弹幕加载失败" not in window.log_view.toPlainText()
+
+
+def test_player_window_does_not_disable_danmaku_when_track_list_refresh_arrives_during_load(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self, window: PlayerWindow) -> None:
+            self.window = window
+            self.loaded_danmaku_paths: list[tuple[str, bool]] = []
+            self.secondary_subtitle_apply_calls: list[tuple[str, int | None]] = []
+            self.set_secondary_subtitle_ass_override_calls: list[str] = []
+            self._next_track_id = 120
+            self._loaded_track_id: int | None = None
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            if self._loaded_track_id is None:
+                return []
+            return [
+                SubtitleTrack(
+                    id=self._loaded_track_id,
+                    title="danmaku",
+                    lang="",
+                    is_default=False,
+                    is_forced=False,
+                    label="danmaku",
+                )
+            ]
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return True
+
+        def secondary_subtitle_ass_override(self) -> str:
+            return "strip"
+
+        def set_secondary_subtitle_ass_override(self, value: str) -> None:
+            self.set_secondary_subtitle_ass_override_calls.append(value)
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append((path, select_for_secondary))
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            self._loaded_track_id = track_id
+            self.window.video_widget.subtitle_tracks_changed.emit()
+            return track_id
+
+        def apply_secondary_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.secondary_subtitle_apply_calls.append((mode, track_id))
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return True
+
+        def set_secondary_subtitle_position(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="http://m/1.m3u8",
+                danmaku_xml='<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>',
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo(window)
+
+    window.open_session(session)
+
+    assert window.video.secondary_subtitle_apply_calls == []
+    assert window.danmaku_combo.currentText() == "弹幕"
+
+
+def test_player_window_does_not_disable_primary_fallback_danmaku_when_track_list_refresh_arrives_during_load(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self, window: PlayerWindow) -> None:
+            self.window = window
+            self.loaded_danmaku_paths: list[tuple[str, bool]] = []
+            self.subtitle_apply_calls: list[tuple[str, int | None]] = []
+            self.set_subtitle_ass_override_calls: list[str] = []
+            self._next_track_id = 130
+            self._loaded_track_id: int | None = None
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            if self._loaded_track_id is None:
+                return []
+            return [
+                SubtitleTrack(
+                    id=self._loaded_track_id,
+                    title="danmaku",
+                    lang="",
+                    is_default=False,
+                    is_forced=False,
+                    label="danmaku",
+                )
+            ]
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return False
+
+        def supports_subtitle_ass_override(self) -> bool:
+            return True
+
+        def subtitle_ass_override(self) -> str:
+            return "scale"
+
+        def set_subtitle_ass_override(self, value: str) -> None:
+            self.set_subtitle_ass_override_calls.append(value)
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append((path, select_for_secondary))
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            self._loaded_track_id = track_id
+            self.window.video_widget.subtitle_tracks_changed.emit()
+            return track_id
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            self.subtitle_apply_calls.append((mode, track_id))
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="http://m/1.m3u8",
+                danmaku_xml='<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>',
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo(window)
+
+    window.open_session(session)
+
+    assert window.video.loaded_danmaku_paths == [(window.video.loaded_danmaku_paths[0][0], False)]
+    assert window.video.subtitle_apply_calls == [("track", 130)]
+    assert window.danmaku_combo.currentText() == "弹幕"
 
 
 def test_player_window_keeps_secondary_subtitle_preference_out_of_danmaku_slot(qtbot) -> None:
@@ -4450,6 +4969,81 @@ def test_player_window_keeps_secondary_subtitle_preference_out_of_danmaku_slot(q
     window.video_widget.subtitle_tracks_changed.emit()
 
     assert window.video.secondary_subtitle_apply_calls == []
+
+
+def test_player_window_loads_danmaku_after_async_resolution_completes(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_danmaku_paths: list[str] = []
+            self._next_track_id = 150
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append(path)
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return False
+
+        def supports_subtitle_ass_override(self) -> bool:
+            return False
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return track_id
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="http://m/1.m3u8",
+                danmaku_pending=True,
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    assert window.video.loaded_danmaku_paths == []
+
+    session.playlist[0].danmaku_xml = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>'
+    session.playlist[0].danmaku_pending = False
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_danmaku_paths) == 1)
+    assert window.danmaku_combo.currentText() == "弹幕"
 
 
 def test_player_window_uses_distinct_seek_icons(qtbot) -> None:
