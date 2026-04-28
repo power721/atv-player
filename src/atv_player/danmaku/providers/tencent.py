@@ -15,6 +15,7 @@ from atv_player.danmaku.utils import extract_episode_number
 
 class TencentDanmakuProvider:
     key = "tencent"
+    _SEARCH_WALK_SKIP_KEYS = {"nestedDocs", "nestedBoxes", "richDocs"}
     _BARRAGE_BASE_URL = "https://dm.video.qq.com/barrage/base"
     _BARRAGE_SEGMENT_URL = "https://dm.video.qq.com/barrage/segment"
     _NON_MAIN_CONTENT_KEYWORDS = (
@@ -103,14 +104,14 @@ class TencentDanmakuProvider:
         requested_episode = extract_episode_number(original_name or query_name)
         if requested_episode is None or not items:
             return items
-        if any(extract_episode_number(item.name) == requested_episode for item in items):
+        if any(self._matches_requested_episode_item(item, requested_episode) for item in items):
             return items
         expanded: list[DanmakuSearchItem] = []
         for item in items[:5]:
             page_data_items = self._fetch_page_data_episode_items(item.url, query_name)
             if page_data_items:
                 expanded.extend(page_data_items)
-                if any(extract_episode_number(candidate.name) == requested_episode for candidate in page_data_items):
+                if any(self._matches_requested_episode_item(candidate, requested_episode) for candidate in page_data_items):
                     break
             try:
                 response = self._get(
@@ -122,7 +123,7 @@ class TencentDanmakuProvider:
             except httpx.HTTPError:
                 continue
             expanded.extend(self._extract_detail_episode_items(item.url, response.text, query_name))
-            if any(extract_episode_number(candidate.name) == requested_episode for candidate in expanded):
+            if any(self._matches_requested_episode_item(candidate, requested_episode) for candidate in expanded):
                 break
         if not expanded:
             return items
@@ -174,13 +175,15 @@ class TencentDanmakuProvider:
                 url = str(episode.get("url") or "").replace("\\/", "/").strip()
                 title = self._clean_text(str(episode.get("title") or ""))
                 if url and title:
-                    found.append({"name": title, "url": url})
+                    found.append({"name": title, "url": url, "numeric_title_trusted": "1"})
 
         def walk(obj) -> None:
             if isinstance(obj, dict):
                 maybe_url = ""
                 maybe_title = ""
                 for key, value in obj.items():
+                    if str(key) in self._SEARCH_WALK_SKIP_KEYS:
+                        continue
                     normalized_key = str(key).lower()
                     if isinstance(value, str):
                         if "v.qq.com" in value:
@@ -251,7 +254,7 @@ class TencentDanmakuProvider:
                 )
             )
             if url:
-                found.append({"name": title, "url": url})
+                found.append({"name": title, "url": url, "numeric_title_trusted": "1"})
         found.extend(self._extract_union_episode_items(page_url, html_text))
         found.extend(self._extract_html_episode_items(page_url, html_text))
         return self._to_search_items(self._prefer_main_episode_variants(self._dedupe_items(found)), query_name)
@@ -402,6 +405,7 @@ class TencentDanmakuProvider:
             "episode_no": episode_no,
             "is_preview": False,
             "duration": str(params.get("duration") or ""),
+            "numeric_title_trusted": "1",
         }
 
     def _is_page_data_preview_candidate(self, params: dict, title: str) -> bool:
@@ -438,6 +442,7 @@ class TencentDanmakuProvider:
                 {
                     "name": episode,
                     "url": f"https://v.qq.com/x/cover/{cover_id}/{vid}.html",
+                    "numeric_title_trusted": "1",
                 }
             )
         return found
@@ -535,13 +540,21 @@ class TencentDanmakuProvider:
             if not raw_name or not url or not url.startswith("https://v.qq.com/"):
                 continue
             match = re.fullmatch(r"(\d+)", raw_name)
-            if match is not None and episode_keyword_base:
+            if match is not None and episode_keyword_base and self._numeric_title_is_trusted(item):
                 raw_name = f"{episode_keyword_base} {match.group(1)}集"
             output.append(DanmakuSearchItem(provider=self.key, name=raw_name, url=url))
         return output
 
     def _episode_keyword_base(self, query_name: str) -> str:
         return re.sub(r"\s+第?\d+\s*集\s*$", "", query_name.strip(), flags=re.IGNORECASE).strip()
+
+    def _numeric_title_is_trusted(self, item: dict[str, str]) -> bool:
+        return str(item.get("numeric_title_trusted") or "").strip() == "1"
+
+    def _matches_requested_episode_item(self, item: DanmakuSearchItem, requested_episode: int) -> bool:
+        if extract_episode_number(item.name) != requested_episode:
+            return False
+        return re.fullmatch(r"\d+", item.name.strip()) is None
 
     def _extract_cover_id(self, page_url: str) -> str:
         parsed = urlparse(page_url)
@@ -684,6 +697,7 @@ class TencentDanmakuProvider:
                         "episode_no": extract_episode_number(title) or extract_episode_number(str(fields.get("title") or "")),
                         "is_preview": self._is_union_preview_candidate(fields),
                         "duration": str(fields.get("duration") or ""),
+                        "numeric_title_trusted": "1",
                     }
                 )
         return self._prefer_main_episode_variants(self._dedupe_items(found))

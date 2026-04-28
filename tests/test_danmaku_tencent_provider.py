@@ -80,8 +80,14 @@ def test_tencent_provider_search_uses_stripped_keyword_for_episode_queries() -> 
                             "itemList": [
                                 {
                                     "videoInfo": {
-                                        "title": "16",
-                                        "url": "https://v.qq.com/x/cover/mzc002006dzzunf/u4102abc016.html",
+                                        "title": "蜜语纪",
+                                        "episodeSites": {"qq": True},
+                                        "episodeInfoList": [
+                                            {
+                                                "title": "16",
+                                                "url": "https://v.qq.com/x/cover/mzc002006dzzunf/u4102abc016.html",
+                                            }
+                                        ],
                                     }
                                 }
                             ]
@@ -118,20 +124,24 @@ def test_tencent_provider_search_filters_txvideo_links_and_expands_numeric_episo
                         "itemList": [
                             {
                                 "videoInfo": {
-                                    "title": "10",
-                                    "url": "https://v.qq.com/x/cover/mzc00200xxpsogl/t4101te90vx.html",
+                                    "title": "剑来 第二季",
+                                    "episodeSites": {"qq": True},
+                                    "episodeInfoList": [
+                                        {
+                                            "title": "10",
+                                            "url": "https://v.qq.com/x/cover/mzc00200xxpsogl/t4101te90vx.html",
+                                        },
+                                        {
+                                            "title": "11",
+                                            "url": "https://v.qq.com/x/cover/mzc00200xxpsogl/n4101ho78vs.html",
+                                        },
+                                    ],
                                 }
                             },
                             {
                                 "videoInfo": {
                                     "title": "剑来 第二季",
                                     "url": "txvideo://v.qq.com/HomeActivity?tabIndex=17&searchType=1",
-                                }
-                            },
-                            {
-                                "videoInfo": {
-                                    "title": "11",
-                                    "url": "https://v.qq.com/x/cover/mzc00200xxpsogl/n4101ho78vs.html",
                                 }
                             },
                         ]
@@ -148,6 +158,125 @@ def test_tencent_provider_search_filters_txvideo_links_and_expands_numeric_episo
         ("剑来 第二季 10集", "https://v.qq.com/x/cover/mzc00200xxpsogl/t4101te90vx.html"),
         ("剑来 第二季 11集", "https://v.qq.com/x/cover/mzc00200xxpsogl/n4101ho78vs.html"),
     ]
+
+
+def test_tencent_provider_search_does_not_relabel_untrusted_numeric_search_hit() -> None:
+    detail_page_requested = False
+
+    def fake_get(
+        url: str,
+        params: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        nonlocal detail_page_requested
+        if url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch":
+            assert params is not None
+            assert params["query"] == "八千里路云和月"
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "normalList": {
+                            "itemList": [
+                                {
+                                    "videoInfo": {
+                                        "title": "25",
+                                        "url": "https://v.qq.com/x/cover/mzc00200y504631/l41016bkaoi.html",
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                },
+            )
+        if url == "https://v.qq.com/x/cover/mzc00200y504631/l41016bkaoi.html":
+            detail_page_requested = True
+            return httpx.Response(200, text="<html><title>not the requested episode</title></html>")
+        raise AssertionError(url)
+
+    def fake_post(
+        url: str,
+        content: str | None = None,
+        json: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        raise httpx.HTTPError("page data unavailable")
+
+    provider = TencentDanmakuProvider(get=fake_get, post=fake_post)
+
+    items = provider.search("八千里路云和月", original_name="八千里路云和月 25集")
+
+    assert detail_page_requested is True
+    assert not any(item.name == "八千里路云和月 25集" for item in items)
+    assert [(item.name, item.url) for item in items] == [
+        ("25", "https://v.qq.com/x/cover/mzc00200y504631/l41016bkaoi.html"),
+    ]
+
+
+def test_tencent_provider_search_does_not_collect_nested_docs_from_unrelated_series() -> None:
+    def fake_get(
+        url: str,
+        params: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        assert url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch"
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "normalList": {
+                        "itemList": [
+                            {
+                                "videoInfo": {
+                                    "title": "八千里路云和月",
+                                    "playSites": [
+                                        {
+                                            "enName": "qiyi",
+                                            "episodeInfoList": [
+                                                {
+                                                    "url": "https://v.qq.com/search_redirect.html?cid=sdp0010051tsz9f&url=https%3A%2F%2Fwww.iqiyi.com%2Fv_demo.html",
+                                                    "title": "",
+                                                }
+                                            ],
+                                        }
+                                    ],
+                                },
+                                "nestedDocs": [
+                                    {
+                                        "videoInfo": {
+                                            "title": "长河落日",
+                                            "playSites": [
+                                                {
+                                                    "enName": "qq",
+                                                    "episodeInfoList": [
+                                                        {
+                                                            "url": "https://v.qq.com/x/cover/mzc00200y504631/l41016bkaoi.html",
+                                                            "title": "25",
+                                                        }
+                                                    ],
+                                                }
+                                            ],
+                                        }
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            },
+        )
+
+    provider = TencentDanmakuProvider(get=fake_get)
+
+    items = provider.search("八千里路云和月")
+
+    assert items == []
 
 
 def test_tencent_provider_search_filters_preview_episode_candidates_from_episode_info_list() -> None:
@@ -167,6 +296,7 @@ def test_tencent_provider_search_filters_preview_episode_candidates_from_episode
                             {
                                 "videoInfo": {
                                     "title": "剑来 第二季",
+                                    "episodeSites": {"qq": True},
                                     "episodeInfoList": [
                                         {
                                             "title": "10",
