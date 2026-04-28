@@ -623,7 +623,7 @@ def test_controller_resolves_danmaku_for_drive_replacement_playlist_items() -> N
     ]
 
 
-def test_controller_uses_media_title_only_when_episode_number_cannot_be_extracted() -> None:
+def test_controller_falls_back_to_first_episode_when_single_drive_item_has_no_episode_number() -> None:
     class DanmakuDriveLinkSpider(DriveLinkSpider):
         def danmaku(self):
             return True
@@ -662,7 +662,7 @@ def test_controller_uses_media_title_only_when_episode_number_cannot_be_extracte
     result = request.playback_loader(request.playlists[0][0])
 
     assert result is not None
-    assert calls == [("search", "网盘剧集|https://pan.quark.cn/s/f518510ef92a")]
+    assert calls == [("search", "网盘剧集 1集|https://pan.quark.cn/s/f518510ef92a")]
 
 
 def test_controller_extracts_episode_number_from_sxxexx_style_titles() -> None:
@@ -757,6 +757,55 @@ def test_controller_extracts_episode_number_from_numeric_title_with_size_suffix(
 
     assert result is not None
     assert calls == [("search", "网盘剧集 12集|https://pan.quark.cn/s/f518510ef92a")]
+
+
+def test_controller_uses_replacement_playlist_index_when_drive_titles_have_no_episode_number() -> None:
+    class DanmakuDriveLinkSpider(DriveLinkSpider):
+        def danmaku(self):
+            return True
+
+    calls: list[tuple[str, str]] = []
+
+    class FakeDanmakuService:
+        def search_danmu(self, name: str, reg_src: str = ""):
+            calls.append(("search", f"{name}|{reg_src}"))
+            return []
+
+    def load_drive_detail(link: str) -> dict:
+        assert link == "https://pan.quark.cn/s/f518510ef92a"
+        return {
+            "list": [
+                {
+                    "vod_id": "1$94954$1",
+                    "vod_name": "夸克资源",
+                    "items": [
+                        {"title": "正片.mp4", "url": "http://m/1.mp4", "path": "/S1/1.mp4", "size": 11},
+                        {"title": "国语.mp4", "url": "http://m/2.mp4", "path": "/S1/2.mp4", "size": 12},
+                        {"title": "超清.mp4", "url": "http://m/3.mp4", "path": "/S1/3.mp4", "size": 13},
+                    ],
+                }
+            ]
+        }
+
+    controller = SpiderPluginController(
+        DanmakuDriveLinkSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        drive_detail_loader=load_drive_detail,
+        danmaku_service=FakeDanmakuService(),
+    )
+
+    request = controller.build_request("/detail/drive")
+    assert request.playback_loader is not None
+    result = request.playback_loader(request.playlists[0][0])
+
+    assert result is not None
+    request.playback_loader(result.replacement_playlist[1])
+
+    assert calls == [
+        ("search", "网盘剧集 1集|https://pan.quark.cn/s/f518510ef92a"),
+        ("search", "网盘剧集 2集|http://m/2.mp4"),
+    ]
 
 
 def test_controller_uses_local_history_episode_for_quark_drive_replacement_start_index() -> None:

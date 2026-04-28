@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 from atv_player.api import ApiError
 from atv_player.danmaku.cache import load_cached_danmaku_xml, save_cached_danmaku_xml
-from atv_player.danmaku.utils import extract_episode_number
+from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_category, _map_item
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
@@ -27,18 +27,18 @@ def _looks_like_media_url(value: str) -> bool:
     return any(candidate.endswith(ext) or f"{ext}?" in candidate for ext in (".m3u8", ".mkv", ".mp4", ".flv"))
 
 
-def _extract_episode_label(title: str) -> str:
-    episode_number = extract_episode_number(title)
+def _extract_episode_label(item: PlayItem, playlist: list[PlayItem] | None = None) -> str:
+    episode_number = infer_playlist_episode_number(item, playlist)
     if episode_number is None:
         return ""
     return f"{episode_number}集"
 
 
-def _build_danmaku_search_name(item: PlayItem) -> str:
+def _build_danmaku_search_name(item: PlayItem, playlist: list[PlayItem] | None = None) -> str:
     media_title = item.media_title.strip()
     if not media_title:
         return item.title.strip()
-    episode_label = _extract_episode_label(item.title)
+    episode_label = _extract_episode_label(item, playlist)
     return " ".join(part for part in (media_title, episode_label) if part).strip()
 
 
@@ -297,10 +297,10 @@ class SpiderPluginController:
             if item.url and not _looks_like_drive_share_link(item.url)
         ]
 
-    def _resolve_danmaku_sync(self, item: PlayItem, url: str) -> None:
+    def _resolve_danmaku_sync(self, item: PlayItem, url: str, playlist: list[PlayItem] | None = None) -> None:
         if not self._danmaku_enabled or self._danmaku_service is None:
             return
-        search_name = _build_danmaku_search_name(item)
+        search_name = _build_danmaku_search_name(item, playlist)
         if not search_name:
             return
         reg_src = str(item.vod_id or url or "").strip()
@@ -345,7 +345,7 @@ class SpiderPluginController:
                     exc,
                 )
 
-    def _maybe_resolve_danmaku(self, item: PlayItem, url: str) -> None:
+    def _maybe_resolve_danmaku(self, item: PlayItem, url: str, playlist: list[PlayItem] | None = None) -> None:
         if not self._danmaku_enabled or self._danmaku_service is None:
             return
         if item.danmaku_xml or item.danmaku_pending:
@@ -359,7 +359,7 @@ class SpiderPluginController:
 
         def run() -> None:
             try:
-                self._resolve_danmaku_sync(item, url)
+                self._resolve_danmaku_sync(item, url, playlist)
             finally:
                 item.danmaku_pending = False
                 with self._danmaku_lock:
@@ -397,7 +397,7 @@ class SpiderPluginController:
             if not replacement:
                 raise ValueError(f"没有可播放的项目: {detail.vod_name or item.title}")
             replacement_start_index = self._resolve_replacement_start_index(item.path or detail.vod_id, replacement)
-            self._maybe_resolve_danmaku(replacement[replacement_start_index], item.vod_id)
+            self._maybe_resolve_danmaku(replacement[replacement_start_index], item.vod_id, replacement)
             logger.info(
                 "Spider plugin resolved drive playlist plugin=%s source=%s items=%s",
                 self._plugin_name,
@@ -436,7 +436,7 @@ class SpiderPluginController:
             if not replacement:
                 raise ValueError(f"没有可播放的项目: {detail.vod_name or item.title}")
             replacement_start_index = self._resolve_replacement_start_index(item.path or detail.vod_id, replacement)
-            self._maybe_resolve_danmaku(replacement[replacement_start_index], url)
+            self._maybe_resolve_danmaku(replacement[replacement_start_index], url, replacement)
             logger.info(
                 "Spider plugin resolved drive playlist plugin=%s source=%s items=%s",
                 self._plugin_name,

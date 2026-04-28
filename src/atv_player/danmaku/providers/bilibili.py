@@ -21,6 +21,8 @@ _BROWSER_HEADERS = {
     "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
     "referer": "https://www.bilibili.com/",
     "origin": "https://www.bilibili.com",
+    "accept-language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7,ja;q=0.6,zh-TW;q=0.5",
+    "accept": "*/*",
 }
 _MIXIN_KEY_ENC_TAB = [
     46,
@@ -107,6 +109,7 @@ class BilibiliDanmakuProvider:
         for search_type in ("media_bangumi", "media_ft"):
             payload = self._search_payload(normalized, search_type)
             items.extend(self._parse_search_results(payload, normalized, search_type))
+        items = self._expand_season_search_items(items, normalized)
         items.sort(key=lambda item: (_SEARCH_TYPE_PRIORITY[item.search_type], -item.ratio, -item.simi))
         for item in items:
             self._metadata_by_url[item.url] = item
@@ -207,6 +210,71 @@ class BilibiliDanmakuProvider:
             )
         return output
 
+    def _expand_season_search_items(
+        self,
+        items: list[DanmakuSearchItem],
+        query_name: str,
+    ) -> list[DanmakuSearchItem]:
+        expanded: list[DanmakuSearchItem] = []
+        for item in items:
+            if item.season_id is None or item.ep_id is not None:
+                expanded.append(item)
+                continue
+            try:
+                payload = self._season_payload(ep_id=None, season_id=item.season_id)
+            except DanmakuResolveError:
+                expanded.append(item)
+                continue
+            season_items = self._season_search_items_from_payload(item, payload, query_name)
+            expanded.extend(season_items or [item])
+        return expanded
+
+    def _season_search_items_from_payload(
+        self,
+        item: DanmakuSearchItem,
+        payload: dict,
+        query_name: str,
+    ) -> list[DanmakuSearchItem]:
+        output: list[DanmakuSearchItem] = []
+        for episode in self._season_episodes(payload):
+            ep_id = self._to_int(episode.get("ep_id"))
+            if ep_id is None or ep_id == 0:
+                continue
+            if self._to_int(episode.get("section_type")) != 0:
+                continue
+            name = self._season_episode_name(item.name, episode)
+            if not name or "预告" in name:
+                continue
+            ratio = similarity_score(query_name, name)
+            output.append(
+                DanmakuSearchItem(
+                    provider=self.key,
+                    name=name,
+                    url=f"https://www.bilibili.com/bangumi/play/ep{ep_id}",
+                    ratio=ratio,
+                    simi=ratio,
+                    cid=self._to_int(episode.get("cid")),
+                    bvid=str(episode.get("bvid") or item.bvid or ""),
+                    aid=self._to_int(episode.get("aid")) or item.aid,
+                    ep_id=ep_id,
+                    season_id=item.season_id,
+                    search_type=item.search_type,
+                )
+            )
+        return output
+
+    def _season_episode_name(self, series_title: str, episode: dict) -> str:
+        share_copy = normalize_name(str(episode.get("share_copy") or ""))
+        if share_copy:
+            return share_copy
+        title = normalize_name(str(episode.get("long_title") or episode.get("show_title") or episode.get("title") or ""))
+        if not title:
+            return ""
+        base = normalize_name(series_title)
+        if base and base not in title:
+            return f"{base} {title}".strip()
+        return title
+
     def _resolve_cid(self, candidate: DanmakuSearchItem) -> int:
         if candidate.cid is not None:
             return candidate.cid
@@ -228,14 +296,8 @@ class BilibiliDanmakuProvider:
         return cid
 
     def _cid_from_season(self, ep_id: int | None, season_id: int | None, title: str) -> int | None:
-        params = {"ep_id": ep_id} if ep_id is not None else {"season_id": season_id}
-        payload = self._get(
-            "https://api.bilibili.com/pgc/view/web/season",
-            params=params,
-            timeout=10.0,
-            follow_redirects=True,
-        ).json()
-        episodes = ((payload.get("result") or {}).get("episodes") or [])
+        payload = self._season_payload(ep_id=ep_id, season_id=season_id)
+        episodes = self._season_episodes(payload)
         if ep_id is not None:
             for episode in episodes:
                 if self._to_int(episode.get("ep_id")) == ep_id:
@@ -255,6 +317,30 @@ class BilibiliDanmakuProvider:
         if episodes:
             return self._to_int(episodes[0].get("cid"))
         return None
+
+    def _season_payload(self, ep_id: int | None, season_id: int | None) -> dict:
+        params = {"ep_id": ep_id} if ep_id is not None else {"season_id": season_id}
+        return self._request_json(
+            "https://api.bilibili.com/pgc/view/web/season",
+            params=params,
+            headers=_BROWSER_HEADERS,
+            error_cls=DanmakuResolveError,
+            context="season",
+        )
+
+    def _season_episodes(self, payload: dict) -> list[dict]:
+        result = payload.get("result") or {}
+        episodes: list[dict] = []
+        for episode in result.get("episodes") or []:
+            if isinstance(episode, dict):
+                episodes.append(episode)
+        for section in result.get("section") or []:
+            if not isinstance(section, dict):
+                continue
+            for episode in section.get("episodes") or []:
+                if isinstance(episode, dict):
+                    episodes.append(episode)
+        return episodes
 
     def _cid_from_pagelist(self, candidate: DanmakuSearchItem) -> int | None:
         params = {"bvid": candidate.bvid} if candidate.bvid else {"aid": candidate.aid}

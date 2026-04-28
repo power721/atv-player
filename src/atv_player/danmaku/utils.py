@@ -7,6 +7,7 @@ from typing import Sequence
 from urllib.parse import urlparse
 
 from atv_player.danmaku.models import DanmakuRecord
+from atv_player.models import PlayItem
 
 _NOISE_PATTERNS = (
     r"【[^】]*】",
@@ -14,13 +15,28 @@ _NOISE_PATTERNS = (
     r"\([^)]*(高清|超清|蓝光|qq\.com|youku\.com)[^)]*\)",
 )
 
+_CN_NUM = {
+    "零": 0,
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
+
 _EPISODE_PATTERNS = (
-    r"第\s*(\d+)\s*[集话期]",
-    r"\s+(\d+)\s*[集话期]",
-    r"(?<!\d)(\d+)\s*[集话期]",
-    r"\bS\d+\s*E(\d+)\b",
-    r"\bEP?\s*(\d+)\b",
-    r"\bE\s*(\d+)\b",
+    r"第\s*([0-9零一二两三四五六七八九十百]+)\s*[集话期部回]",
+    r"\s+0*([0-9]+)\s*[集话期]",
+    r"(?<!\d)0*([0-9]+)\s*[集话期]",
+    r"\bS\d+\s*E0*([0-9]+)\b",
+    r"\bEP\s*0*([0-9]+)\b",
+    r"\bE\s*0*([0-9]+)\b",
+    r"^\s*0*([0-9]{1,4})\b",
     r"^\s*(\d+)\s*(?:[（(][^()（）]*[)）])?\s*$",
 )
 
@@ -33,14 +49,60 @@ def normalize_name(name: str) -> str:
     return value.strip()
 
 
+def _cn_to_int(text: str) -> int | None:
+    if not text:
+        return None
+    if text.isdigit():
+        return int(text)
+    total = 0
+    current = 0
+    units = {"十": 10, "百": 100}
+    for char in text:
+        if char in _CN_NUM:
+            current = _CN_NUM[char]
+            continue
+        unit = units.get(char)
+        if unit is None:
+            return None
+        total += (current or 1) * unit
+        current = 0
+    return total + current
+
+
 def extract_episode_number(name: str) -> int | None:
     value = normalize_name(name)
     for pattern in _EPISODE_PATTERNS:
         match = re.search(pattern, value, re.IGNORECASE)
         if match is None:
             continue
-        return int(match.group(1))
+        raw = match.group(1)
+        episode = int(raw) if raw.isdigit() else _cn_to_int(raw)
+        if episode is not None and 1 <= episode <= 10000:
+            return episode
     return None
+
+
+def infer_playlist_episode_number(current_item: PlayItem, playlist: Sequence[PlayItem] | None = None) -> int | None:
+    direct = extract_episode_number(current_item.title)
+    if direct is not None:
+        return direct
+    current_index = current_item.index
+    if not playlist:
+        return current_index + 1 if current_index >= 0 else None
+    if 0 <= current_index < len(playlist):
+        indexed = extract_episode_number(playlist[current_index].title)
+        if indexed is not None:
+            return indexed
+    aligned = [
+        (item.index, episode)
+        for item in playlist
+        if (episode := extract_episode_number(item.title)) is not None
+    ]
+    if aligned:
+        seq_like = sum(1 for index, episode in aligned if episode == index + 1)
+        if seq_like >= max(1, len(aligned) // 2):
+            return current_index + 1 if current_index >= 0 else None
+    return current_index + 1 if current_index >= 0 else None
 
 
 def strip_episode_suffix(name: str) -> str:

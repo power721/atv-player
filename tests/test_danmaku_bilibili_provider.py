@@ -15,7 +15,8 @@ class JsonResponse:
         return self._payload
 
 
-def test_bilibili_search_orders_bangumi_ft_before_video_and_preserves_metadata() -> None:
+def test_bilibili_search_orders_bangumi_and_ft_results_and_skips_normal_video_search() -> None:
+    search_types: list[str] = []
     search_payloads = {
         "media_bangumi": {
             "code": 0,
@@ -64,6 +65,7 @@ def test_bilibili_search_orders_bangumi_ft_before_video_and_preserves_metadata()
     def fake_get(url: str, **kwargs):
         params = kwargs.get("params") or {}
         if "search/type" in url:
+            search_types.append(params["search_type"])
             return JsonResponse(search_payloads[params["search_type"]])
         if "nav" in url:
             return JsonResponse(
@@ -83,13 +85,13 @@ def test_bilibili_search_orders_bangumi_ft_before_video_and_preserves_metadata()
 
     items = provider.search("凡人修仙传 第1集")
 
-    assert [item.search_type for item in items] == ["media_bangumi", "media_ft", "video"]
+    assert search_types == ["media_bangumi", "media_ft"]
+    assert [item.search_type for item in items] == ["media_bangumi", "media_ft"]
     assert items[0].url == "https://www.bilibili.com/bangumi/play/ep5001"
     assert items[0].ep_id == 5001
     assert items[0].season_id == 4001
     assert items[0].bvid == "BVbangumi1"
-    assert items[2].aid == 9001
-    assert items[2].url == "https://www.bilibili.com/video/BVvideo1"
+    assert items[1].url == "https://www.bilibili.com/bangumi/play/ep5002"
 
 
 def test_bilibili_search_retries_once_after_ticket_refresh() -> None:
@@ -124,8 +126,83 @@ def test_bilibili_search_retries_once_after_ticket_refresh() -> None:
     items = provider.search("凡人修仙传 第1集")
 
     assert items == []
-    assert search_attempts["count"] == 4
+    assert search_attempts["count"] == 3
     assert any("GenWebTicket" in url for url in calls)
+
+
+def test_bilibili_search_expands_season_result_into_episode_candidates() -> None:
+    def fake_get(url: str, **kwargs):
+        params = kwargs.get("params") or {}
+        if "x/frontend/finger/spi" in url:
+            return JsonResponse({"code": 0, "data": {"b_3": "buvid3-demo", "b_4": "buvid4-demo"}})
+        if "x/web-interface/nav" in url:
+            return JsonResponse(
+                {
+                    "code": 0,
+                    "data": {
+                        "wbi_img": {
+                            "img_url": "https://i0.hdslb.com/bfs/wbi/abc123.png",
+                            "sub_url": "https://i0.hdslb.com/bfs/wbi/def456.png",
+                        }
+                    },
+                }
+            )
+        if "search/type" in url:
+            if params["search_type"] == "media_bangumi":
+                return JsonResponse(
+                    {
+                        "code": 0,
+                        "data": {
+                            "result": [
+                                {
+                                    "title": "牧神记",
+                                    "season_id": 45969,
+                                    "url": "//www.bilibili.com/bangumi/play/ss45969",
+                                }
+                            ]
+                        },
+                    }
+                )
+            return JsonResponse({"code": 0, "data": {"result": []}})
+        if "pgc/view/web/season" in url and params.get("season_id") == 45969:
+            return JsonResponse(
+                {
+                    "code": 0,
+                    "result": {
+                        "title": "牧神记",
+                        "episodes": [],
+                        "section": [
+                            {
+                                "title": "正片",
+                                "episodes": [
+                                    {
+                                        "ep_id": 9001,
+                                        "cid": 7001,
+                                        "bvid": "BVep9001",
+                                        "share_copy": "牧神记 第1集",
+                                    },
+                                    {
+                                        "ep_id": 9002,
+                                        "cid": 7002,
+                                        "bvid": "BVep9002",
+                                        "share_copy": "牧神记 第2集",
+                                    },
+                                ],
+                            }
+                        ],
+                    },
+                }
+            )
+        return JsonResponse({"code": 0, "data": {}}, text="")
+
+    provider = BilibiliDanmakuProvider(get=fake_get)
+
+    items = provider.search("牧神记")
+
+    assert [(item.name, item.url, item.ep_id, item.cid) for item in items] == [
+        ("牧神记 第1集", "https://www.bilibili.com/bangumi/play/ep9001", 9001, 7001),
+        ("牧神记 第2集", "https://www.bilibili.com/bangumi/play/ep9002", 9002, 7002),
+    ]
 
 
 def test_bilibili_search_raises_after_second_risk_control_failure() -> None:
@@ -212,6 +289,54 @@ def test_bilibili_search_raises_clear_error_when_nav_returns_html_412() -> None:
 
     with pytest.raises(DanmakuSearchError, match="Bilibili nav request failed with HTTP 412"):
         provider.search("凡人修仙传 第1集")
+
+
+def test_bilibili_resolve_uses_browser_headers_for_season_request() -> None:
+    seen: list[tuple[str, dict]] = []
+
+    def fake_get(url: str, **kwargs):
+        seen.append((url, kwargs))
+        params = kwargs.get("params") or {}
+        if "pgc/view/web/season" in url and params.get("season_id") == 45969:
+            return JsonResponse(
+                {
+                    "code": 0,
+                    "result": {
+                        "episodes": [
+                            {
+                                "ep_id": 9001,
+                                "cid": 7001,
+                                "share_copy": "牧神记 第1集",
+                            }
+                        ]
+                    },
+                }
+            )
+        if "comment.bilibili.com/7001.xml" in url:
+            return JsonResponse(
+                {"code": 0},
+                text='<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215,0,0,0,0">ok</d></i>',
+            )
+        return JsonResponse({"code": 0, "data": {}})
+
+    provider = BilibiliDanmakuProvider(get=fake_get)
+    provider._metadata_by_url["https://www.bilibili.com/bangumi/play/ss45969"] = DanmakuSearchItem(
+        provider="bilibili",
+        name="牧神记",
+        url="https://www.bilibili.com/bangumi/play/ss45969",
+        season_id=45969,
+        search_type="media_bangumi",
+    )
+
+    provider.resolve("https://www.bilibili.com/bangumi/play/ss45969")
+
+    season_headers = next(kwargs["headers"] for url, kwargs in seen if "pgc/view/web/season" in url)
+    assert season_headers["user-agent"].startswith("Mozilla/5.0")
+    assert season_headers["referer"] == "https://www.bilibili.com/"
+    assert season_headers["origin"] == "https://www.bilibili.com"
+    assert season_headers["accept-language"].startswith("en-US,en;q=0.9")
+    assert season_headers["accept"] == "*/*"
+    assert "cookie" not in season_headers
 
 
 def test_bilibili_resolve_prefers_cached_candidate_cid_and_parses_xml() -> None:
@@ -316,6 +441,53 @@ def test_bilibili_resolve_uses_season_api_then_pagelist_then_html_fallback() -> 
     assert provider.resolve("https://www.bilibili.com/bangumi/play/ep5002")[0].content == "season"
     assert provider.resolve("https://www.bilibili.com/video/BVvideo2")[0].content == "pagelist"
     assert provider.resolve("https://www.bilibili.com/video/BVhtml1")[0].content == "html"
+
+
+def test_bilibili_resolve_uses_section_episodes_for_season_only_candidate() -> None:
+    def fake_get(url: str, **kwargs):
+        params = kwargs.get("params") or {}
+        if "pgc/view/web/season" in url and params.get("season_id") == 45969:
+            return JsonResponse(
+                {
+                    "code": 0,
+                    "result": {
+                        "title": "牧神记",
+                        "episodes": [],
+                        "section": [
+                            {
+                                "title": "正片",
+                                "episodes": [
+                                    {
+                                        "ep_id": 9001,
+                                        "cid": 7001,
+                                        "bvid": "BVep9001",
+                                        "share_copy": "牧神记 第1集",
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                }
+            )
+        if "comment.bilibili.com/7001.xml" in url:
+            return JsonResponse(
+                {"code": 0},
+                text='<?xml version="1.0" encoding="UTF-8"?><i><d p="5.0,1,25,16777215,0,0,0,0">season-section</d></i>',
+            )
+        return JsonResponse({"code": 0, "data": {}})
+
+    provider = BilibiliDanmakuProvider(get=fake_get)
+    provider._metadata_by_url["https://www.bilibili.com/bangumi/play/ss45969"] = DanmakuSearchItem(
+        provider="bilibili",
+        name="牧神记",
+        url="https://www.bilibili.com/bangumi/play/ss45969",
+        season_id=45969,
+        search_type="media_bangumi",
+    )
+
+    records = provider.resolve("https://www.bilibili.com/bangumi/play/ss45969")
+
+    assert [record.content for record in records] == ["season-section"]
 
 
 def test_bilibili_resolve_prefers_matching_pagelist_part_before_first_entry() -> None:

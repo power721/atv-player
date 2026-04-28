@@ -47,7 +47,7 @@ def test_search_danmu_prefers_provider_from_reg_src() -> None:
     results = service.search_danmu("剑来 第1集", "https://v.qq.com/x/cover/demo.html")
 
     assert [item.provider for item in results] == ["tencent"]
-    assert tencent.search_calls == ["剑来 第1集"]
+    assert tencent.search_calls == ["剑来"]
     assert youku.search_calls == []
 
 
@@ -78,9 +78,9 @@ def test_search_danmu_falls_through_to_other_providers_when_reg_src_provider_mis
         "https://v.qq.com/x/cover/demo15.html",
         "https://v.youku.com/v_show/id_demo.html",
     ]
-    assert bilibili.search_calls == ["蜜语纪 15集"]
-    assert tencent.search_calls == ["蜜语纪 15集"]
-    assert youku.search_calls == ["蜜语纪 15集"]
+    assert bilibili.search_calls == ["蜜语纪"]
+    assert tencent.search_calls == ["蜜语纪"]
+    assert youku.search_calls == ["蜜语纪"]
 
 
 def test_search_danmu_aggregates_and_sorts_results_without_reg_src() -> None:
@@ -131,11 +131,11 @@ def test_search_danmu_ignores_single_provider_search_failures() -> None:
     results = service.search_danmu("剑来 第二季 10集", "/play/10")
 
     assert [(item.provider, item.url) for item in results] == [("tencent", "https://tencent/item")]
-    assert tencent.search_calls == ["剑来 第二季 10集"]
-    assert youku.search_calls == ["剑来 第二季 10集"]
+    assert tencent.search_calls == ["剑来 第二季"]
+    assert youku.search_calls == ["剑来 第二季"]
 
 
-def test_search_danmu_uses_full_title_when_episode_number_is_present() -> None:
+def test_search_danmu_strips_episode_suffix_before_calling_providers() -> None:
     tencent = FakeProvider(
         "tencent",
         [DanmakuSearchItem(provider="tencent", name="剑来 第二季 第10集", url="https://tencent/item")],
@@ -150,8 +150,8 @@ def test_search_danmu_uses_full_title_when_episode_number_is_present() -> None:
 
     service.search_danmu("剑来 第二季 10集")
 
-    assert tencent.search_calls == ["剑来 第二季 10集"]
-    assert youku.search_calls == ["剑来 第二季 10集"]
+    assert tencent.search_calls == ["剑来 第二季"]
+    assert youku.search_calls == ["剑来 第二季"]
 
 
 def test_search_danmu_filters_to_candidates_with_matching_episode_number() -> None:
@@ -205,7 +205,7 @@ def test_search_danmu_does_not_fall_back_to_stripped_keyword_when_episode_search
     results = service.search_danmu("蜜语纪 15集")
 
     assert results == []
-    assert tencent.search_calls == ["蜜语纪 15集"]
+    assert tencent.search_calls == ["蜜语纪"]
 
 
 def test_resolve_danmu_dispatches_by_url_and_builds_xml() -> None:

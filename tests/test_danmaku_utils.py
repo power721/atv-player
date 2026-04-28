@@ -2,10 +2,12 @@ from atv_player.danmaku.models import DanmakuRecord
 from atv_player.danmaku.utils import (
     build_xml,
     extract_episode_number,
+    infer_playlist_episode_number,
     match_provider,
     normalize_name,
     should_filter_name,
 )
+from atv_player.models import PlayItem
 
 
 def test_normalize_name_strips_noise_tokens() -> None:
@@ -28,6 +30,34 @@ def test_should_filter_name_rejects_unrelated_titles() -> None:
 
 def test_extract_episode_number_supports_numeric_title_with_size_suffix() -> None:
     assert extract_episode_number("12(1.26 GB)") == 12
+
+
+def test_extract_episode_number_supports_chinese_numerals() -> None:
+    assert extract_episode_number("第十二集") == 12
+
+
+def test_extract_episode_number_supports_zero_padded_prefix_titles() -> None:
+    assert extract_episode_number("0002 剑来-笼中雀") == 2
+
+
+def test_infer_playlist_episode_number_prefers_current_title() -> None:
+    playlist = [
+        PlayItem(title="0001 剑来-总管坐镇剑气长城", url="http://m/1.mp4", index=0),
+        PlayItem(title="0002 剑来-笼中雀", url="http://m/2.mp4", index=1),
+        PlayItem(title="0003 剑来-第三集", url="http://m/3.mp4", index=2),
+    ]
+
+    assert infer_playlist_episode_number(playlist[1], playlist) == 2
+
+
+def test_infer_playlist_episode_number_falls_back_to_playlist_position() -> None:
+    playlist = [
+        PlayItem(title="正片.mp4", url="http://m/1.mp4", index=0),
+        PlayItem(title="国语.mp4", url="http://m/2.mp4", index=1),
+        PlayItem(title="超清.mp4", url="http://m/3.mp4", index=2),
+    ]
+
+    assert infer_playlist_episode_number(playlist[1], playlist) == 2
 
 
 def test_build_xml_escapes_content_and_keeps_expected_shape() -> None:

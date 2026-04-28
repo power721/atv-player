@@ -53,7 +53,7 @@ class DanmakuService:
         normalized = normalize_name(name)
         search_keyword = strip_episode_suffix(normalized) or normalized
         requested_episode = extract_episode_number(normalized)
-        primary_query = normalized if requested_episode is not None else search_keyword
+        primary_query = search_keyword
         preferred_key = self._preferred_provider_key(reg_src)
         provider_keys = [preferred_key] if preferred_key is not None else self._ordered_provider_keys(reg_src)
         results = self._collect_search_results(provider_keys, primary_query)
