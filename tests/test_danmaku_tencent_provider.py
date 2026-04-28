@@ -522,6 +522,145 @@ def test_tencent_provider_search_expands_episode_list_from_page_data_api() -> No
     ]
 
 
+def test_tencent_provider_search_uses_original_name_to_expand_stripped_query_to_requested_episode() -> None:
+    page_contexts: list[str] = []
+
+    def fake_get(
+        url: str,
+        headers: dict | None = None,
+        params: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        if url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch":
+            assert params is not None
+            assert params["query"] == "白日提灯"
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "normalList": {
+                            "itemList": [
+                                {
+                                    "videoInfo": {
+                                        "title": "白日提灯",
+                                        "url": "https://v.qq.com/x/cover/mzc00200baitideng/h4102baitideng.html",
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                },
+            )
+        raise AssertionError(url)
+
+    def fake_post(
+        url: str,
+        content: str | None = None,
+        json: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        assert url == (
+            "https://pbaccess.video.qq.com/trpc.universal_backend_service.page_server_rpc.PageServer/GetPageData"
+            "?video_appid=3000010&vversion_name=8.2.96&vversion_platform=2"
+        )
+        assert json is not None
+        page_context = json["page_params"]["page_context"]
+        page_contexts.append(page_context)
+        if page_context == "cid=mzc00200baitideng&detail_page_type=1&req_from=web_vsite&req_from_second_type=&req_type=0":
+            return httpx.Response(
+                200,
+                json={
+                    "ret": 0,
+                    "data": {
+                        "module_list_datas": [
+                            {
+                                "module_datas": [
+                                    {
+                                        "module_params": {
+                                            "tabs": (
+                                                '[{"begin":1,"end":11,"selected":true,"page_context":"cid=mzc00200baitideng'
+                                                '&detail_page_type=1&episode_begin=1&episode_end=11"},'
+                                                '{"begin":12,"end":20,"selected":false,"page_context":"cid=mzc00200baitideng'
+                                                '&detail_page_type=1&episode_begin=12&episode_end=20"}]'
+                                            )
+                                        },
+                                        "item_data_lists": {
+                                            "item_datas": [
+                                                {
+                                                    "item_params": {
+                                                        "vid": "u4102baitideng001",
+                                                        "title": "1",
+                                                        "play_title": "白日提灯 第1集",
+                                                        "union_title": "白日提灯_1",
+                                                        "is_trailer": "0",
+                                                    }
+                                                },
+                                                {
+                                                    "item_params": {
+                                                        "vid": "u4102baitideng011",
+                                                        "title": "11",
+                                                        "play_title": "白日提灯 第11集",
+                                                        "union_title": "白日提灯_11",
+                                                        "is_trailer": "0",
+                                                    }
+                                                },
+                                            ]
+                                        },
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                },
+            )
+        if page_context == "cid=mzc00200baitideng&detail_page_type=1&episode_begin=12&episode_end=20":
+            return httpx.Response(
+                200,
+                json={
+                    "ret": 0,
+                    "data": {
+                        "module_list_datas": [
+                            {
+                                "module_datas": [
+                                    {
+                                        "item_data_lists": {
+                                            "item_datas": [
+                                                {
+                                                    "item_params": {
+                                                        "vid": "u4102baitideng020",
+                                                        "title": "20",
+                                                        "play_title": "白日提灯 第20集",
+                                                        "union_title": "白日提灯_20",
+                                                        "is_trailer": "0",
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                },
+            )
+        raise AssertionError(page_context)
+
+    provider = TencentDanmakuProvider(get=fake_get, post=fake_post)
+
+    items = provider.search("白日提灯", original_name="白日提灯 20集")
+
+    assert ("白日提灯 20集", "https://v.qq.com/x/cover/mzc00200baitideng/u4102baitideng020.html") in [
+        (item.name, item.url) for item in items
+    ]
+    assert page_contexts == [
+        "cid=mzc00200baitideng&detail_page_type=1&req_from=web_vsite&req_from_second_type=&req_type=0",
+        "cid=mzc00200baitideng&detail_page_type=1&episode_begin=12&episode_end=20",
+    ]
+
+
 def test_tencent_provider_search_falls_back_to_detail_html_when_page_data_is_unusable() -> None:
     detail_page_requested = False
 

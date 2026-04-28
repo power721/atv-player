@@ -88,17 +88,19 @@ class TencentDanmakuProvider:
     def supports(self, page_url: str) -> bool:
         return "qq.com" in page_url
 
-    def search(self, name: str) -> list[DanmakuSearchItem]:
+    def search(self, name: str, original_name: str | None = None) -> list[DanmakuSearchItem]:
         try:
             items = self._search_mb(self._search_keyword(name))
         except DanmakuSearchError:
             return []
         if not items:
             return []
-        return self._expand_items_from_candidate_pages(name, items)
+        return self._expand_items_from_candidate_pages(name, items, original_name=original_name)
 
-    def _expand_items_from_candidate_pages(self, query_name: str, items: list[DanmakuSearchItem]) -> list[DanmakuSearchItem]:
-        requested_episode = extract_episode_number(query_name)
+    def _expand_items_from_candidate_pages(
+        self, query_name: str, items: list[DanmakuSearchItem], original_name: str | None = None
+    ) -> list[DanmakuSearchItem]:
+        requested_episode = extract_episode_number(original_name or query_name)
         if requested_episode is None or not items:
             return items
         if any(extract_episode_number(item.name) == requested_episode for item in items):

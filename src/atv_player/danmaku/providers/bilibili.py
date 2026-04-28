@@ -102,7 +102,7 @@ class BilibiliDanmakuProvider:
     def supports(self, page_url: str) -> bool:
         return "bilibili.com" in page_url or "b23.tv" in page_url
 
-    def search(self, name: str) -> list[DanmakuSearchItem]:
+    def search(self, name: str, original_name: str | None = None) -> list[DanmakuSearchItem]:
         normalized = normalize_name(name)
         self._prime_web_state()
         items: list[DanmakuSearchItem] = []

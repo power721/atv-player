@@ -11,10 +11,12 @@ class FakeProvider:
         self.items = items
         self.records = records
         self.search_calls: list[str] = []
+        self.original_name_calls: list[str | None] = []
         self.resolve_calls: list[str] = []
 
-    def search(self, name: str) -> list[DanmakuSearchItem]:
+    def search(self, name: str, original_name: str | None = None) -> list[DanmakuSearchItem]:
         self.search_calls.append(name)
+        self.original_name_calls.append(original_name)
         return list(self.items)
 
     def resolve(self, page_url: str) -> list[DanmakuRecord]:
@@ -26,8 +28,9 @@ class FakeProvider:
 
 
 class FailingSearchProvider(FakeProvider):
-    def search(self, name: str) -> list[DanmakuSearchItem]:
+    def search(self, name: str, original_name: str | None = None) -> list[DanmakuSearchItem]:
         self.search_calls.append(name)
+        self.original_name_calls.append(original_name)
         raise RuntimeError(f"{self.key} search boom")
 
 
@@ -168,6 +171,20 @@ def test_search_danmu_strips_episode_suffix_before_calling_providers() -> None:
     assert youku.search_calls == ["剑来 第二季"]
 
 
+def test_search_danmu_passes_original_name_to_providers() -> None:
+    tencent = FakeProvider(
+        "tencent",
+        [DanmakuSearchItem(provider="tencent", name="白日提灯 20集", url="https://tencent/20")],
+        [],
+    )
+    service = DanmakuService({"tencent": tencent}, provider_order=["tencent"])
+
+    service.search_danmu("白日提灯 20集", "https://v.qq.com/x/cover/demo.html")
+
+    assert tencent.search_calls == ["白日提灯"]
+    assert tencent.original_name_calls == ["白日提灯 20集"]
+
+
 def test_search_danmu_filters_to_candidates_with_matching_episode_number() -> None:
     tencent = FakeProvider(
         "tencent",
@@ -275,8 +292,9 @@ def test_search_danmu_rejects_no_episode_candidates_for_episode_requests() -> No
 
 def test_search_danmu_does_not_fall_back_to_stripped_keyword_when_episode_search_misses() -> None:
     class RetryAwareProvider(FakeProvider):
-        def search(self, name: str) -> list[DanmakuSearchItem]:
+        def search(self, name: str, original_name: str | None = None) -> list[DanmakuSearchItem]:
             self.search_calls.append(name)
+            self.original_name_calls.append(original_name)
             if name == "蜜语纪 15集":
                 return [
                     DanmakuSearchItem(provider="tencent", name="蜜语纪 10集", url="https://tencent/10"),

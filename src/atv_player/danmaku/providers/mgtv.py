@@ -19,7 +19,7 @@ class MgtvDanmakuProvider:
     def __init__(self, get=httpx.get) -> None:
         self._get = get
 
-    def search(self, name: str) -> list[DanmakuSearchItem]:
+    def search(self, name: str, original_name: str | None = None) -> list[DanmakuSearchItem]:
         response = self._get(
             "https://mobileso.bz.mgtv.com/msite/search/v2",
             params={

@@ -39,7 +39,7 @@ class YoukuDanmakuProvider:
     def supports(self, page_url: str) -> bool:
         return "youku.com" in page_url
 
-    def search(self, name: str) -> list[DanmakuSearchItem]:
+    def search(self, name: str, original_name: str | None = None) -> list[DanmakuSearchItem]:
         response = self._get(
             "https://search.youku.com/api/search",
             params={
