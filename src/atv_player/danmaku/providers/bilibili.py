@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import math
 import re
 import time
 from urllib.parse import urlencode
@@ -200,6 +201,7 @@ class BilibiliDanmakuProvider:
                     url=url,
                     ratio=ratio,
                     simi=ratio,
+                    duration_seconds=self._parse_duration_seconds(raw.get("duration") or raw.get("length")),
                     cid=self._to_int(raw.get("cid")),
                     bvid=str(raw.get("bvid") or ""),
                     aid=self._to_int(raw.get("aid")),
@@ -254,6 +256,7 @@ class BilibiliDanmakuProvider:
                     url=f"https://www.bilibili.com/bangumi/play/ep{ep_id}",
                     ratio=ratio,
                     simi=ratio,
+                    duration_seconds=self._parse_duration_seconds(episode.get("duration")),
                     cid=self._to_int(episode.get("cid")),
                     bvid=str(episode.get("bvid") or item.bvid or ""),
                     aid=self._to_int(episode.get("aid")) or item.aid,
@@ -402,6 +405,31 @@ class BilibiliDanmakuProvider:
                 )
             )
         return records
+
+    def _parse_duration_seconds(self, value) -> int:
+        text = str(value or "").strip()
+        if not text:
+            return 0
+        if ":" in text:
+            parts = text.split(":")
+            try:
+                numbers = [int(part) for part in parts]
+            except ValueError:
+                return 0
+            if len(numbers) == 3:
+                hours, minutes, seconds = numbers
+                return hours * 3600 + minutes * 60 + seconds
+            if len(numbers) == 2:
+                minutes, seconds = numbers
+                return minutes * 60 + seconds
+            return 0
+        try:
+            number = float(text)
+        except ValueError:
+            return 0
+        if number > 100000:
+            return max(0, int(math.ceil(number / 1000.0)))
+        return max(0, int(math.ceil(number)))
 
     @staticmethod
     def _to_int(value: object) -> int | None:

@@ -18,6 +18,7 @@ class MgtvDanmakuProvider:
 
     def __init__(self, get=httpx.get) -> None:
         self._get = get
+        self._duration_cache: dict[tuple[str, str], int] = {}
 
     def search(self, name: str, original_name: str | None = None) -> list[DanmakuSearchItem]:
         response = self._get(
@@ -61,7 +62,14 @@ class MgtvDanmakuProvider:
                 if not title or should_filter_name(name, title):
                     continue
                 for episode_name, episode_url in self._expand_candidate(title, match.group(1)):
-                    results.append(DanmakuSearchItem(provider=self.key, name=episode_name, url=episode_url))
+                    results.append(
+                        DanmakuSearchItem(
+                            provider=self.key,
+                            name=episode_name,
+                            url=episode_url,
+                            duration_seconds=self._search_candidate_duration(episode_url),
+                        )
+                    )
         return results
 
     def resolve(self, page_url: str) -> list[DanmakuRecord]:
@@ -181,6 +189,21 @@ class MgtvDanmakuProvider:
         if match is None:
             raise DanmakuResolveError("MGTV danmaku resolve failed: invalid play url")
         return match.group(1), match.group(2)
+
+    def _search_candidate_duration(self, page_url: str) -> int:
+        try:
+            collection_id, video_id = self._parse_play_url(page_url)
+        except DanmakuResolveError:
+            return 0
+        cache_key = (collection_id, video_id)
+        if cache_key in self._duration_cache:
+            return self._duration_cache[cache_key]
+        try:
+            duration = self._video_duration(collection_id, video_id)
+        except Exception:
+            duration = 0
+        self._duration_cache[cache_key] = duration
+        return duration
 
     def _video_duration(self, collection_id: str, video_id: str) -> int:
         response = self._get(

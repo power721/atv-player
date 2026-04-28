@@ -199,6 +199,60 @@ def test_youku_provider_search_expands_full_episode_list_from_candidate_detail_p
     ]
 
 
+def test_youku_provider_search_preserves_duration_when_detail_expansion_duplicates_search_item() -> None:
+    def fake_get(
+        url: str,
+        params: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        if "search.youku.com" in url:
+            return httpx.Response(
+                200,
+                json={
+                    "pageComponentList": [
+                        {
+                            "commonData": {
+                                "isYouku": 1,
+                                "hasYouku": 1,
+                                "titleDTO": {"displayName": "金关"},
+                                "videoLink": "https://v.youku.com/v_show/id_demo14.html",
+                            },
+                            "componentMap": {
+                                "1035": {
+                                    "data": [
+                                        {
+                                            "videoId": "demo14",
+                                            "title": "金关 第14集",
+                                            "duration": "5400",
+                                            "action": {"value": "youku://play?source=search&vid=demo14"},
+                                        }
+                                    ]
+                                }
+                            },
+                        }
+                    ]
+                },
+            )
+        if url == "https://v.youku.com/v_show/id_demo14.html":
+            return httpx.Response(
+                200,
+                text=(
+                    '<div class="box-anthology-items">'
+                    '<a class="box-anthology-item" href="//v.youku.com/video?vid=demo14&amp;scm=test" aria-label="金关 第14集"></a>'
+                    "</div>"
+                ),
+            )
+        raise AssertionError(url)
+
+    provider = YoukuDanmakuProvider(get=fake_get)
+
+    items = provider.search("金关")
+
+    assert [(item.name, item.duration_seconds) for item in items] == [("金关 第14集", 5400)]
+
+
 def test_youku_provider_search_strips_vip_prefix_from_detail_episode_titles() -> None:
     def fake_get(
         url: str,

@@ -375,15 +375,18 @@ class YoukuDanmakuProvider:
     def _merge_search_items(
         self, primary_items: list[DanmakuSearchItem], fallback_items: list[DanmakuSearchItem]
     ) -> list[DanmakuSearchItem]:
-        merged: list[DanmakuSearchItem] = []
-        seen: set[tuple[str, str]] = set()
+        merged_by_key: dict[tuple[str, str], DanmakuSearchItem] = {}
+        ordered_keys: list[tuple[str, str]] = []
         for item in [*primary_items, *fallback_items]:
             key = (item.name, item.url)
-            if key in seen:
+            current = merged_by_key.get(key)
+            if current is None:
+                merged_by_key[key] = item
+                ordered_keys.append(key)
                 continue
-            seen.add(key)
-            merged.append(item)
-        return merged
+            if item.duration_seconds > current.duration_seconds:
+                merged_by_key[key] = item
+        return [merged_by_key[key] for key in ordered_keys]
 
     def _component_episode_url(self, episode: dict) -> str:
         video_id = str(episode.get("videoId") or "").strip()

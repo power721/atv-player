@@ -94,6 +94,52 @@ def test_bilibili_search_orders_bangumi_and_ft_results_and_skips_normal_video_se
     assert items[1].url == "https://www.bilibili.com/bangumi/play/ep5002"
 
 
+def test_bilibili_search_maps_duration_from_search_payload() -> None:
+    def fake_get(url: str, **kwargs):
+        params = kwargs.get("params") or {}
+        if "x/frontend/finger/spi" in url:
+            return JsonResponse({"code": 0, "data": {"b_3": "buvid3-demo", "b_4": "buvid4-demo"}})
+        if "x/web-interface/nav" in url:
+            return JsonResponse(
+                {
+                    "code": 0,
+                    "data": {
+                        "wbi_img": {
+                            "img_url": "https://i0.hdslb.com/bfs/wbi/abc123.png",
+                            "sub_url": "https://i0.hdslb.com/bfs/wbi/def456.png",
+                        }
+                    },
+                }
+            )
+        if "search/type" in url and params["search_type"] == "media_bangumi":
+            return JsonResponse(
+                {
+                    "code": 0,
+                    "data": {
+                        "result": [
+                            {
+                                "title": "疯狂动物城2",
+                                "season_id": 4001,
+                                "ep_id": 5001,
+                                "bvid": "BVbangumi1",
+                                "duration": "01:38:55",
+                                "url": "//www.bilibili.com/bangumi/play/ep5001",
+                            }
+                        ]
+                    },
+                }
+            )
+        if "search/type" in url:
+            return JsonResponse({"code": 0, "data": {"result": []}})
+        return JsonResponse({"code": 0, "data": {}}, text="")
+
+    provider = BilibiliDanmakuProvider(get=fake_get)
+
+    items = provider.search("疯狂动物城2")
+
+    assert [(item.name, item.duration_seconds) for item in items] == [("疯狂动物城2", 5935)]
+
+
 def test_bilibili_search_retries_once_after_ticket_refresh() -> None:
     calls: list[str] = []
     search_attempts = {"count": 0}
@@ -180,12 +226,14 @@ def test_bilibili_search_expands_season_result_into_episode_candidates() -> None
                                         "cid": 7001,
                                         "bvid": "BVep9001",
                                         "share_copy": "牧神记 第1集",
+                                        "duration": 1440,
                                     },
                                     {
                                         "ep_id": 9002,
                                         "cid": 7002,
                                         "bvid": "BVep9002",
                                         "share_copy": "牧神记 第2集",
+                                        "duration": 1500,
                                     },
                                 ],
                             }
@@ -199,9 +247,9 @@ def test_bilibili_search_expands_season_result_into_episode_candidates() -> None
 
     items = provider.search("牧神记")
 
-    assert [(item.name, item.url, item.ep_id, item.cid) for item in items] == [
-        ("牧神记 第1集", "https://www.bilibili.com/bangumi/play/ep9001", 9001, 7001),
-        ("牧神记 第2集", "https://www.bilibili.com/bangumi/play/ep9002", 9002, 7002),
+    assert [(item.name, item.url, item.ep_id, item.cid, item.duration_seconds) for item in items] == [
+        ("牧神记 第1集", "https://www.bilibili.com/bangumi/play/ep9001", 9001, 7001, 1440),
+        ("牧神记 第2集", "https://www.bilibili.com/bangumi/play/ep9002", 9002, 7002, 1500),
     ]
 
 

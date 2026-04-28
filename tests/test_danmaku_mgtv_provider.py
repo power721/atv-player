@@ -75,12 +75,13 @@ def test_mgtv_search_expands_collection_into_episode_candidates() -> None:
         ("歌手2026 第1期", "https://www.mgtv.com/b/555/1001.html"),
         ("歌手2026 第2期", "https://www.mgtv.com/b/555/1002.html"),
     ]
+    provider._video_duration = lambda collection_id, video_id: {"1001": 5400, "1002": 5520}[video_id]
 
     items = provider.search("歌手2026")
 
-    assert [(item.provider, item.name, item.url) for item in items] == [
-        ("mgtv", "歌手2026 第1期", "https://www.mgtv.com/b/555/1001.html"),
-        ("mgtv", "歌手2026 第2期", "https://www.mgtv.com/b/555/1002.html"),
+    assert [(item.provider, item.name, item.url, item.duration_seconds) for item in items] == [
+        ("mgtv", "歌手2026 第1期", "https://www.mgtv.com/b/555/1001.html", 5400),
+        ("mgtv", "歌手2026 第2期", "https://www.mgtv.com/b/555/1002.html", 5520),
     ]
 
 
@@ -119,6 +120,7 @@ def test_mgtv_search_skips_expansion_for_unrelated_search_hits() -> None:
         )
 
     provider = MgtvDanmakuProvider(get=fake_get)
+    provider._video_duration = lambda collection_id, video_id: 2700
 
     def fake_expand(title: str, collection_id: str):
         expanded_ids.append(collection_id)
@@ -129,9 +131,51 @@ def test_mgtv_search_skips_expansion_for_unrelated_search_hits() -> None:
     items = provider.search("黑夜告白")
 
     assert expanded_ids == ["555"]
-    assert [(item.name, item.url) for item in items] == [
-        ("黑夜告白 第1集", "https://www.mgtv.com/b/555/1001.html")
+    assert [(item.name, item.url, item.duration_seconds) for item in items] == [
+        ("黑夜告白 第1集", "https://www.mgtv.com/b/555/1001.html", 2700)
     ]
+
+
+def test_mgtv_search_uses_cached_duration_for_duplicate_candidates() -> None:
+    video_calls: list[tuple[str, str]] = []
+
+    def fake_get(url: str, **kwargs):
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "contents": [
+                        {
+                            "type": "media",
+                            "data": [
+                                {
+                                    "source": "imgo",
+                                    "title": "歌手2026",
+                                    "url": "https://www.mgtv.com/b/555/1.html",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            },
+        )
+
+    provider = MgtvDanmakuProvider(get=fake_get)
+    provider._expand_candidate = lambda title, collection_id: [
+        ("歌手2026 第1期", "https://www.mgtv.com/b/555/1001.html"),
+        ("歌手2026 第1期重排", "https://www.mgtv.com/b/555/1001.html"),
+    ]
+
+    def fake_video_duration(collection_id: str, video_id: str) -> int:
+        video_calls.append((collection_id, video_id))
+        return 5400
+
+    provider._video_duration = fake_video_duration
+
+    items = provider.search("歌手2026")
+
+    assert [item.duration_seconds for item in items] == [5400, 5400]
+    assert video_calls == [("555", "1001")]
 
 
 def test_mgtv_search_raises_for_invalid_payload() -> None:
