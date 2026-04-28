@@ -151,6 +151,14 @@ def similarity_score(left: str, right: str) -> float:
     return SequenceMatcher(None, _simplify_name(left), _simplify_name(right)).ratio()
 
 
+def episode_title_matches(target: str, candidate: str) -> bool:
+    target_base = _simplify_name(strip_episode_suffix(target))
+    candidate_base = _simplify_name(strip_episode_suffix(candidate))
+    if not target_base or not candidate_base:
+        return True
+    return candidate_base == target_base or candidate_base.startswith(target_base)
+
+
 def should_filter_name(target: str, candidate: str) -> bool:
     left = _simplify_name(target)
     right = _simplify_name(candidate)

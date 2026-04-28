@@ -170,6 +170,27 @@ def test_search_danmu_filters_to_candidates_with_matching_episode_number() -> No
     assert [item.url for item in results] == ["https://tencent/10"]
 
 
+def test_search_danmu_rejects_matching_episode_when_title_only_matches_by_containment() -> None:
+    iqiyi = FakeProvider(
+        "iqiyi",
+        [
+            DanmakuSearchItem(
+                provider="iqiyi",
+                name="隆行天下之重走八千里路云和月 第16集",
+                url="https://www.iqiyi.com/v_wrong16.html",
+                ratio=0.66,
+                simi=0.66,
+            )
+        ],
+        [],
+    )
+    service = DanmakuService({"iqiyi": iqiyi}, provider_order=["iqiyi"])
+
+    results = service.search_danmu("八千里路云和月 16集")
+
+    assert results == []
+
+
 def test_search_danmu_keeps_fallback_ranking_when_no_candidate_matches_requested_episode() -> None:
     tencent = FakeProvider(
         "tencent",
@@ -184,6 +205,43 @@ def test_search_danmu_keeps_fallback_ranking_when_no_candidate_matches_requested
     service = DanmakuService({"tencent": tencent, "youku": youku}, provider_order=["tencent", "youku"])
 
     results = service.search_danmu("剑来 第二季 10集")
+
+    assert results == []
+
+
+def test_search_danmu_rejects_no_episode_candidates_for_episode_requests() -> None:
+    bilibili = FakeProvider(
+        "bilibili",
+        [
+            DanmakuSearchItem(
+                provider="bilibili",
+                name="《八千里路云和月》史东山编导经典",
+                url="https://www.bilibili.com/bangumi/play/ep338215",
+                ratio=0.66,
+                simi=0.66,
+            )
+        ],
+        [],
+    )
+    iqiyi = FakeProvider(
+        "iqiyi",
+        [
+            DanmakuSearchItem(
+                provider="iqiyi",
+                name="八千里路云和月",
+                url="http://www.iqiyi.com/v_19rrn6svcw.html",
+                ratio=1.0,
+                simi=1.0,
+            )
+        ],
+        [],
+    )
+    service = DanmakuService(
+        {"bilibili": bilibili, "iqiyi": iqiyi},
+        provider_order=["bilibili", "iqiyi"],
+    )
+
+    results = service.search_danmu("八千里路云和月 1集")
 
     assert results == []
 
@@ -272,11 +330,10 @@ def test_default_service_includes_bilibili_provider_in_fixed_order() -> None:
     assert service.provider_order == ["tencent", "youku", "bilibili", "iqiyi", "mgtv"]
 
 
-def test_default_service_raises_clear_error_for_iqiyi_resolution() -> None:
+def test_default_service_includes_iqiyi_provider_in_fixed_order() -> None:
     service = create_default_danmaku_service()
 
-    with pytest.raises(NotImplementedError, match="iQIYI.*brotli.*protobuf"):
-        service.resolve_danmu("https://www.iqiyi.com/v_demo.html")
+    assert "iqiyi" in service.provider_order
 
 
 def test_default_service_raises_clear_error_for_mgtv_resolution() -> None:

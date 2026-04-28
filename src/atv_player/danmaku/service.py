@@ -15,6 +15,7 @@ from atv_player.danmaku.providers import (
 from atv_player.danmaku.providers.base import DanmakuProvider
 from atv_player.danmaku.utils import (
     build_xml,
+    episode_title_matches,
     extract_episode_number,
     match_provider,
     normalize_name,
@@ -58,14 +59,24 @@ class DanmakuService:
         provider_keys = [preferred_key] if preferred_key is not None else self._ordered_provider_keys(reg_src)
         results = self._collect_search_results(provider_keys, primary_query)
         if requested_episode is not None:
-            matching = [item for item in results if extract_episode_number(item.name) == requested_episode]
+            matching = [
+                item
+                for item in results
+                if extract_episode_number(item.name) == requested_episode
+                and episode_title_matches(normalized, item.name)
+            ]
             if not matching and preferred_key is not None:
                 fallback_keys = [
                     key for key in self._provider_order if key in self._providers and key != preferred_key
                 ]
                 if fallback_keys:
                     results.extend(self._collect_search_results(fallback_keys, primary_query))
-                    matching = [item for item in results if extract_episode_number(item.name) == requested_episode]
+                    matching = [
+                        item
+                        for item in results
+                        if extract_episode_number(item.name) == requested_episode
+                        and episode_title_matches(normalized, item.name)
+                    ]
             if matching:
                 no_episode = [item for item in results if extract_episode_number(item.name) is None]
                 results = [*matching, *no_episode]
