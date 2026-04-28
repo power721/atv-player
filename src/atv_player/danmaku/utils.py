@@ -63,6 +63,8 @@ def match_provider(reg_src: str) -> str | None:
         return "tencent"
     if "youku.com" in host:
         return "youku"
+    if "bilibili.com" in host or "b23.tv" in host:
+        return "bilibili"
     if "iqiyi.com" in host:
         return "iqiyi"
     if "mgtv.com" in host:

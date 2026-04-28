@@ -184,7 +184,40 @@ def test_resolve_danmu_raises_for_unknown_provider_url() -> None:
 def test_default_service_has_fixed_provider_order() -> None:
     service = create_default_danmaku_service()
 
-    assert service.provider_order == ["tencent", "youku", "iqiyi", "mgtv"]
+    assert service.provider_order == ["tencent", "youku", "bilibili", "iqiyi", "mgtv"]
+
+
+def test_danmaku_search_item_accepts_bilibili_metadata() -> None:
+    item = DanmakuSearchItem(
+        provider="bilibili",
+        name="凡人修仙传 第1集",
+        url="https://www.bilibili.com/bangumi/play/ep123",
+        cid=987654,
+        bvid="BV1xx411c7mD",
+        aid=123456,
+        ep_id=123,
+        season_id=456,
+        search_type="media_bangumi",
+    )
+
+    assert item.cid == 987654
+    assert item.bvid == "BV1xx411c7mD"
+    assert item.ep_id == 123
+    assert item.search_type == "media_bangumi"
+
+
+def test_match_provider_maps_bilibili_domains() -> None:
+    from atv_player.danmaku.utils import match_provider
+
+    assert match_provider("https://www.bilibili.com/video/BV1xx411c7mD") == "bilibili"
+    assert match_provider("https://www.bilibili.com/bangumi/play/ep123") == "bilibili"
+    assert match_provider("https://b23.tv/demo") == "bilibili"
+
+
+def test_default_service_includes_bilibili_provider_in_fixed_order() -> None:
+    service = create_default_danmaku_service()
+
+    assert service.provider_order == ["tencent", "youku", "bilibili", "iqiyi", "mgtv"]
 
 
 def test_default_service_raises_clear_error_for_iqiyi_resolution() -> None:
