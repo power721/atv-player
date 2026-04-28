@@ -38,6 +38,45 @@ def test_youku_provider_search_maps_candidates_from_search_payload() -> None:
     assert items[0].url == "https://v.youku.com/v_show/id_demo123.html"
 
 
+def test_youku_provider_search_maps_candidates_from_series_payload() -> None:
+    def fake_get(
+        url: str,
+        params: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        assert "search.youku.com" in url
+        return httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "sourceName": "优酷",
+                "serisesList": [
+                    {
+                        "videoId": "XMjQ4MTc0ODMyOA==",
+                        "title": "月鳞绮纪 01",
+                        "displayName": "1",
+                        "showVideoStage": "第1期",
+                    },
+                    {
+                        "videoId": "",
+                        "title": "invalid",
+                    },
+                ],
+            },
+        )
+
+    provider = YoukuDanmakuProvider(get=fake_get)
+
+    items = provider.search("月鳞绮纪")
+
+    assert len(items) == 1
+    assert items[0].provider == "youku"
+    assert items[0].name == "月鳞绮纪 01"
+    assert items[0].url == "https://v.youku.com/v_show/id_XMjQ4MTc0ODMyOA==.html"
+
+
 def test_youku_provider_resolve_extracts_vid_and_uses_data_version() -> None:
     calls: list[str] = []
 

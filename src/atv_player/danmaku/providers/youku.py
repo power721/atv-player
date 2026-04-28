@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
@@ -29,17 +29,9 @@ class YoukuDanmakuProvider:
         )
         try:
             payload = response.json()
-            items = payload["pageComponentList"]
         except Exception as exc:
             raise DanmakuSearchError("优酷弹幕搜索结果解析失败") from exc
-        results: list[DanmakuSearchItem] = []
-        for item in items:
-            common = item.get("commonData") or {}
-            title = str((common.get("titleDTO") or {}).get("displayName") or "").strip()
-            url = str(common.get("videoLink") or "").strip()
-            if title and url:
-                results.append(DanmakuSearchItem(provider=self.key, name=title, url=url))
-        return results
+        return self._extract_search_items(payload)
 
     def resolve(self, page_url: str) -> list[DanmakuRecord]:
         response = self._get(page_url, headers={"user-agent": "Mozilla/5.0"}, follow_redirects=True, timeout=10.0)
@@ -75,3 +67,42 @@ class YoukuDanmakuProvider:
                 )
             )
         return records
+
+    def _extract_search_items(self, payload: dict) -> list[DanmakuSearchItem]:
+        if isinstance(payload.get("pageComponentList"), list):
+            return self._extract_page_component_items(payload["pageComponentList"])
+        if isinstance(payload.get("serisesList"), list):
+            return self._extract_series_items(payload["serisesList"])
+        raise DanmakuSearchError("优酷弹幕搜索结果解析失败")
+
+    def _extract_page_component_items(self, items: list[dict]) -> list[DanmakuSearchItem]:
+        results: list[DanmakuSearchItem] = []
+        for item in items:
+            common = item.get("commonData") or {}
+            title = str((common.get("titleDTO") or {}).get("displayName") or "").strip()
+            url = str(common.get("videoLink") or "").strip()
+            if title and url:
+                results.append(DanmakuSearchItem(provider=self.key, name=title, url=url))
+        return results
+
+    def _extract_series_items(self, items: list[dict]) -> list[DanmakuSearchItem]:
+        results: list[DanmakuSearchItem] = []
+        for item in items:
+            title = str(item.get("title") or item.get("displayName") or "").strip()
+            url = self._series_item_url(item)
+            if title and url:
+                results.append(DanmakuSearchItem(provider=self.key, name=title, url=url))
+        return results
+
+    def _series_item_url(self, item: dict) -> str:
+        video_id = str(item.get("videoId") or "").strip()
+        if video_id:
+            return f"https://v.youku.com/v_show/id_{video_id}.html"
+        action_value = str(((item.get("action") or {}).get("value") or "")).strip()
+        if not action_value:
+            return ""
+        parsed = urlparse(action_value)
+        vid = parse_qs(parsed.query).get("vid", [""])[0].strip()
+        if not vid:
+            return ""
+        return f"https://v.youku.com/v_show/id_{vid}.html"
