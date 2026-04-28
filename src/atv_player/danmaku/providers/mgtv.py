@@ -7,6 +7,7 @@ import httpx
 
 from atv_player.danmaku.errors import DanmakuResolveError, DanmakuSearchError
 from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
+from atv_player.danmaku.utils import should_filter_name
 
 _NOISE_TITLE_PATTERN = re.compile(r"(预告|花絮|彩蛋|幕后|reaction|精彩片段|看点|特辑)", re.IGNORECASE)
 _RGB_PATTERN = re.compile(r"rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)", re.IGNORECASE)
@@ -57,6 +58,8 @@ class MgtvDanmakuProvider:
                 if match is None:
                     continue
                 title = re.sub(r"<[^>]+>", "", str(item.get("title") or "")).strip()
+                if not title or should_filter_name(name, title):
+                    continue
                 for episode_name, episode_url in self._expand_candidate(title, match.group(1)):
                     results.append(DanmakuSearchItem(provider=self.key, name=episode_name, url=episode_url))
         return results

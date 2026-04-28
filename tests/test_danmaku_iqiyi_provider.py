@@ -117,6 +117,40 @@ def test_iqiyi_search_keeps_episode_items_when_album_score_is_missing() -> None:
     ]
 
 
+def test_iqiyi_search_drops_third_party_results_even_when_title_matches() -> None:
+    def fake_get(url: str, **kwargs):
+        return JsonResponse(
+            {
+                "data": {
+                    "docinfos": [
+                        {
+                            "albumDocInfo": {
+                                "albumTitle": "黑夜告白",
+                                "channel": "电视剧,2",
+                                "itemTotalNumber": 28,
+                                "siteName": "优酷",
+                                "siteId": "youku",
+                                "videoinfos": [
+                                    {
+                                        "itemTitle": "黑夜告白 第1集",
+                                        "itemNumber": 1,
+                                        "itemLink": "http://so.iqiyi.com/links/demo1",
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                }
+            }
+        )
+
+    provider = IqiyiDanmakuProvider(get=fake_get)
+
+    items = provider.search("黑夜告白")
+
+    assert items == []
+
+
 def test_iqiyi_search_expands_album_link_when_search_result_skips_middle_episodes() -> None:
     album_page = """
     <html><body>

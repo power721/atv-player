@@ -54,6 +54,10 @@ class TencentDanmakuProvider:
         "Mobile Safari/537.36"
     )
     _SEARCH_URL = "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch"
+    _PAGE_DATA_URL = (
+        "https://pbaccess.video.qq.com/trpc.universal_backend_service.page_server_rpc.PageServer/GetPageData"
+        "?video_appid=3000010&vversion_name=8.2.96&vversion_platform=2"
+    )
     _UNION_URL = "https://union.video.qq.com/fcgi-bin/data"
     _SEARCH_HEADERS = {
         "User-Agent": _UA_PC,
@@ -61,6 +65,13 @@ class TencentDanmakuProvider:
         "Origin": "https://v.qq.com",
         "Referer": "https://v.qq.com/",
         "trpc-trans-info": '{"trpc-env":""}',
+    }
+    _PAGE_DATA_HEADERS = {
+        "User-Agent": _UA_MOBILE,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Origin": "https://v.qq.com",
+        "Referer": "https://v.qq.com/",
     }
     _WEB_SEARCH_HEADERS = {
         "User-Agent": _UA_PC,
@@ -92,6 +103,11 @@ class TencentDanmakuProvider:
             return items
         expanded: list[DanmakuSearchItem] = []
         for item in items[:5]:
+            page_data_items = self._fetch_page_data_episode_items(item.url, query_name)
+            if page_data_items:
+                expanded.extend(page_data_items)
+                if any(extract_episode_number(candidate.name) == requested_episode for candidate in page_data_items):
+                    break
             try:
                 response = self._get(
                     item.url,
@@ -235,6 +251,168 @@ class TencentDanmakuProvider:
         found.extend(self._extract_union_episode_items(page_url, html_text))
         found.extend(self._extract_html_episode_items(page_url, html_text))
         return self._to_search_items(self._prefer_main_episode_variants(self._dedupe_items(found)), query_name)
+
+    def _fetch_page_data_episode_items(self, page_url: str, query_name: str) -> list[DanmakuSearchItem]:
+        cover_id = self._extract_cover_id(page_url)
+        if not cover_id:
+            return []
+        initial_context = (
+            f"cid={cover_id}&detail_page_type=1&req_from=web_vsite&req_from_second_type=&req_type=0"
+        )
+        payload = self._request_page_data(cover_id, initial_context)
+        if not payload:
+            return []
+
+        found = self._extract_page_data_items(payload, cover_id)
+        tabs = self._extract_page_data_tabs(payload)
+        seen_contexts = {initial_context}
+        for page_context in self._page_data_followup_contexts(tabs):
+            if not page_context or page_context in seen_contexts:
+                continue
+            seen_contexts.add(page_context)
+            followup_payload = self._request_page_data(cover_id, page_context)
+            if not followup_payload:
+                continue
+            found.extend(self._extract_page_data_items(followup_payload, cover_id))
+        return self._to_search_items(self._prefer_main_episode_variants(self._dedupe_items(found)), query_name)
+
+    def _request_page_data(self, cover_id: str, page_context: str) -> dict | None:
+        payload = {
+            "has_cache": 1,
+            "page_params": {
+                "req_from": "web_vsite",
+                "page_id": "vsite_episode_list",
+                "page_type": "detail_operation",
+                "id_type": "1",
+                "page_size": "",
+                "cid": cover_id,
+                "vid": "",
+                "lid": "",
+                "page_num": "",
+                "page_context": page_context,
+                "detail_page_type": "1",
+            },
+        }
+        try:
+            response = self._post(
+                self._PAGE_DATA_URL,
+                json=payload,
+                headers=dict(self._PAGE_DATA_HEADERS),
+                follow_redirects=True,
+                timeout=10.0,
+            )
+        except httpx.HTTPError:
+            return None
+        try:
+            data = response.json()
+        except Exception:
+            return None
+        ret = data.get("ret")
+        if ret not in (0, "0", None):
+            return None
+        return data if isinstance(data, dict) else None
+
+    def _extract_page_data_tabs(self, payload: dict) -> list[dict]:
+        for module_list_data in payload.get("data", {}).get("module_list_datas", []):
+            if not isinstance(module_list_data, dict):
+                continue
+            for module_data in module_list_data.get("module_datas", []):
+                if not isinstance(module_data, dict):
+                    continue
+                tabs_text = (module_data.get("module_params") or {}).get("tabs")
+                if not tabs_text:
+                    continue
+                try:
+                    tabs = json.loads(tabs_text)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(tabs, list):
+                    return [tab for tab in tabs if isinstance(tab, dict)]
+        return []
+
+    def _page_data_followup_contexts(self, tabs: list[dict]) -> list[str]:
+        if not tabs:
+            return []
+        selected_contexts = {
+            str(tab.get("page_context") or "")
+            for tab in tabs
+            if self._is_page_data_tab_selected(tab) and str(tab.get("page_context") or "")
+        }
+        contexts: list[str] = []
+        for index, tab in enumerate(tabs):
+            page_context = str(tab.get("page_context") or "").strip()
+            if not page_context:
+                continue
+            if selected_contexts:
+                if page_context in selected_contexts:
+                    continue
+            elif index == 0:
+                continue
+            contexts.append(page_context)
+        return contexts
+
+    def _is_page_data_tab_selected(self, tab: dict) -> bool:
+        selected = tab.get("selected")
+        if isinstance(selected, bool):
+            return selected
+        return str(selected).strip().lower() in {"1", "true"}
+
+    def _extract_page_data_items(self, payload: dict, cover_id: str) -> list[dict[str, str]]:
+        found: list[dict[str, str]] = []
+        for module_list_data in payload.get("data", {}).get("module_list_datas", []):
+            if not isinstance(module_list_data, dict):
+                continue
+            for module_data in module_list_data.get("module_datas", []):
+                if not isinstance(module_data, dict):
+                    continue
+                item_datas = ((module_data.get("item_data_lists") or {}).get("item_datas") or [])
+                for item in item_datas:
+                    if not isinstance(item, dict):
+                        continue
+                    params = item.get("item_params") or {}
+                    candidate = self._page_data_item_to_episode(params, cover_id)
+                    if candidate is not None:
+                        found.append(candidate)
+        return found
+
+    def _page_data_item_to_episode(self, params: dict, cover_id: str) -> dict[str, str] | None:
+        vid = str(params.get("vid") or "").strip()
+        if not vid:
+            return None
+        title = self._clean_text(str(params.get("title") or ""))
+        play_title = self._clean_text(str(params.get("play_title") or ""))
+        union_title = self._clean_text(str(params.get("union_title") or ""))
+        episode_title = play_title or title or union_title
+        if self._is_page_data_preview_candidate(params, episode_title):
+            return None
+        episode_no = (
+            extract_episode_number(play_title)
+            or extract_episode_number(title)
+            or extract_episode_number(union_title)
+        )
+        if episode_no is None:
+            return None
+        return {
+            "name": title or episode_title,
+            "url": f"https://v.qq.com/x/cover/{cover_id}/{vid}.html",
+            "episode_no": episode_no,
+            "is_preview": False,
+            "duration": str(params.get("duration") or ""),
+        }
+
+    def _is_page_data_preview_candidate(self, params: dict, title: str) -> bool:
+        if str(params.get("is_trailer") or "").strip() == "1":
+            return True
+        if title and not self._is_main_content_title(title):
+            return True
+        return self._is_preview_episode_candidate(
+            {
+                "title": title,
+                "markLabel": str(params.get("imgtag_all") or ""),
+                "rawTags": str(params.get("uni_imgtag") or ""),
+                "titleSuffix": str(params.get("video_subtitle") or ""),
+            }
+        )
 
     def _extract_html_episode_items(self, page_url: str, html_text: str) -> list[dict[str, str]]:
         cover_id = self._extract_cover_id(page_url)

@@ -33,6 +33,7 @@ _EPISODE_PATTERNS = (
     r"第\s*([0-9零一二两三四五六七八九十百]+)\s*[集话期部回]",
     r"\s+0*([0-9]+)\s*[集话期]",
     r"(?<!\d)0*([0-9]+)\s*[集话期]",
+    r"\s+0*([0-9]{1,4})\s*$",
     r"\bS\d+\s*E0*([0-9]+)\b",
     r"\bEP\s*0*([0-9]+)\b",
     r"\bE\s*0*([0-9]+)\b",
@@ -110,6 +111,7 @@ def strip_episode_suffix(name: str) -> str:
     patterns = (
         r"\s+第\s*\d+\s*[集话期]\s*$",
         r"\s+\d+\s*[集话期]\s*$",
+        r"\s+0*\d{1,4}\s*$",
         r"\s+S\d+\s*E\d+\s*$",
         r"\s+EP?\s*\d+\s*$",
         r"\s+E\s*\d+\s*$",
@@ -140,6 +142,7 @@ def _simplify_name(name: str) -> str:
     value = normalize_name(name).casefold()
     value = re.sub(r"第\s*\d+\s*[集话期]", "", value)
     value = re.sub(r"(?<!\d)\d+\s*[集话期]", "", value)
+    value = re.sub(r"\s+0*\d{1,4}\s*$", "", value)
     value = re.sub(r"\bs\d+\s*e\d+\b", "", value)
     value = re.sub(r"\bep?\s*\d+\b", "", value)
     value = re.sub(r"\be\s*\d+\b", "", value)

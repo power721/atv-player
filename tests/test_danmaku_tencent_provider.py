@@ -236,7 +236,17 @@ def test_tencent_provider_search_expands_episode_list_from_candidate_detail_page
             ),
         )
 
-    provider = TencentDanmakuProvider(get=fake_get)
+    def fake_post(
+        url: str,
+        content: str | None = None,
+        json: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        raise httpx.HTTPError("page data unavailable")
+
+    provider = TencentDanmakuProvider(get=fake_get, post=fake_post)
 
     items = provider.search("蜜语纪 15集")
 
@@ -360,6 +370,250 @@ def test_tencent_provider_search_prefers_full_episode_over_preview_from_union_de
 
     matching = [(item.name, item.url) for item in items if item.name == "蜜语纪 16集"]
     assert matching == [("蜜语纪 16集", "https://v.qq.com/x/cover/mzc002006dzzunf/v41021ycs9o.html")]
+
+
+def test_tencent_provider_search_expands_episode_list_from_page_data_api() -> None:
+    page_contexts: list[str] = []
+
+    def fake_get(
+        url: str,
+        headers: dict | None = None,
+        params: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        if url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch":
+            assert params is not None
+            assert params["query"] == "蜜语纪"
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "normalList": {
+                            "itemList": [
+                                {
+                                    "videoInfo": {
+                                        "title": "蜜语纪",
+                                        "url": "https://v.qq.com/x/cover/mzc002006dzzunf/h4102lz1osw.html",
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                },
+            )
+        raise AssertionError(url)
+
+    def fake_post(
+        url: str,
+        content: str | None = None,
+        json: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        assert url == (
+            "https://pbaccess.video.qq.com/trpc.universal_backend_service.page_server_rpc.PageServer/GetPageData"
+            "?video_appid=3000010&vversion_name=8.2.96&vversion_platform=2"
+        )
+        payload = json
+        assert payload is not None
+        page_context = payload["page_params"]["page_context"]
+        page_contexts.append(page_context)
+        if page_context == "cid=mzc002006dzzunf&detail_page_type=1&req_from=web_vsite&req_from_second_type=&req_type=0":
+            return httpx.Response(
+                200,
+                json={
+                    "ret": 0,
+                    "data": {
+                        "module_list_datas": [
+                            {
+                                "module_datas": [
+                                    {
+                                        "module_params": {
+                                            "tabs": (
+                                                '[{"begin":1,"end":30,"selected":true,"page_context":"cid=mzc002006dzzunf'
+                                                '&detail_page_type=1&episode_begin=1&episode_end=30"},'
+                                                '{"begin":31,"end":33,"selected":false,"page_context":"cid=mzc002006dzzunf'
+                                                '&detail_page_type=1&episode_begin=31&episode_end=33"}]'
+                                            )
+                                        },
+                                        "item_data_lists": {
+                                            "item_datas": [
+                                                {
+                                                    "item_params": {
+                                                        "vid": "u4102abc029",
+                                                        "title": "29",
+                                                        "play_title": "蜜语纪 第29集",
+                                                        "union_title": "蜜语纪_29",
+                                                        "is_trailer": "0",
+                                                    }
+                                                },
+                                                {
+                                                    "item_params": {
+                                                        "vid": "g41024s47bo",
+                                                        "title": "30",
+                                                        "play_title": "蜜语纪 30集预告",
+                                                        "union_title": "《蜜语纪》预告片_30",
+                                                        "is_trailer": "1",
+                                                    }
+                                                },
+                                            ]
+                                        },
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                },
+            )
+        if page_context == "cid=mzc002006dzzunf&detail_page_type=1&episode_begin=31&episode_end=33":
+            return httpx.Response(
+                200,
+                json={
+                    "ret": 0,
+                    "data": {
+                        "module_list_datas": [
+                            {
+                                "module_datas": [
+                                    {
+                                        "item_data_lists": {
+                                            "item_datas": [
+                                                {
+                                                    "item_params": {
+                                                        "vid": "u4102abc031",
+                                                        "title": "31",
+                                                        "play_title": "蜜语纪 第31集",
+                                                        "union_title": "蜜语纪_31",
+                                                        "is_trailer": "0",
+                                                    }
+                                                },
+                                                {
+                                                    "item_params": {
+                                                        "vid": "x3198drama1",
+                                                        "title": "小剧场1",
+                                                        "play_title": "小剧场1",
+                                                        "union_title": "小剧场1",
+                                                        "is_trailer": "0",
+                                                    }
+                                                },
+                                            ]
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                },
+            )
+        raise AssertionError(page_context)
+
+    provider = TencentDanmakuProvider(get=fake_get, post=fake_post)
+
+    items = provider.search("蜜语纪 31集")
+
+    assert ("蜜语纪 31集", "https://v.qq.com/x/cover/mzc002006dzzunf/u4102abc031.html") in [
+        (item.name, item.url) for item in items
+    ]
+    assert not any("小剧场" in item.name or "预告" in item.name for item in items)
+    assert page_contexts == [
+        "cid=mzc002006dzzunf&detail_page_type=1&req_from=web_vsite&req_from_second_type=&req_type=0",
+        "cid=mzc002006dzzunf&detail_page_type=1&episode_begin=31&episode_end=33",
+    ]
+
+
+def test_tencent_provider_search_falls_back_to_detail_html_when_page_data_is_unusable() -> None:
+    detail_page_requested = False
+
+    def fake_get(
+        url: str,
+        headers: dict | None = None,
+        params: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        nonlocal detail_page_requested
+        if url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch":
+            assert params is not None
+            assert params["query"] == "蜜语纪"
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "normalList": {
+                            "itemList": [
+                                {
+                                    "videoInfo": {
+                                        "title": "蜜语纪",
+                                        "url": "https://v.qq.com/x/cover/mzc002006dzzunf/h4102lz1osw.html",
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                },
+            )
+        if url == "https://v.qq.com/x/cover/mzc002006dzzunf/h4102lz1osw.html":
+            detail_page_requested = True
+            return httpx.Response(
+                200,
+                text=(
+                    '<script>window.__STATE__={"vsite_episode_list":[{"title":"15","url":"https://v.qq.com/x/cover/'
+                    'mzc002006dzzunf/u4102abc015.html","duration":"1826"}]};</script>'
+                ),
+            )
+        raise AssertionError(url)
+
+    def fake_post(
+        url: str,
+        content: str | None = None,
+        json: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        assert url == (
+            "https://pbaccess.video.qq.com/trpc.universal_backend_service.page_server_rpc.PageServer/GetPageData"
+            "?video_appid=3000010&vversion_name=8.2.96&vversion_platform=2"
+        )
+        return httpx.Response(
+            200,
+            json={
+                "ret": 0,
+                "data": {
+                    "module_list_datas": [
+                        {
+                            "module_datas": [
+                                {
+                                    "item_data_lists": {
+                                        "item_datas": [
+                                            {
+                                                "item_params": {
+                                                    "vid": "x3198drama1",
+                                                    "title": "小剧场1",
+                                                    "play_title": "小剧场1",
+                                                    "union_title": "小剧场1",
+                                                    "is_trailer": "0",
+                                                }
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                },
+            },
+        )
+
+    provider = TencentDanmakuProvider(get=fake_get, post=fake_post)
+
+    items = provider.search("蜜语纪 15集")
+
+    assert detail_page_requested is True
+    assert ("蜜语纪 15集", "https://v.qq.com/x/cover/mzc002006dzzunf/u4102abc015.html") in [
+        (item.name, item.url) for item in items
+    ]
 
 
 def test_tencent_provider_search_returns_empty_when_mbsearch_returns_business_error() -> None:

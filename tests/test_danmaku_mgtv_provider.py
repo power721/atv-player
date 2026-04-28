@@ -84,6 +84,56 @@ def test_mgtv_search_expands_collection_into_episode_candidates() -> None:
     ]
 
 
+def test_mgtv_search_skips_expansion_for_unrelated_search_hits() -> None:
+    expanded_ids: list[str] = []
+
+    def fake_get(url: str, **kwargs):
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "contents": [
+                        {
+                            "type": "media",
+                            "data": [
+                                {
+                                    "source": "imgo",
+                                    "title": "黑夜告白",
+                                    "url": "https://www.mgtv.com/b/555/1.html",
+                                },
+                                {
+                                    "source": "imgo",
+                                    "title": "歌手2026",
+                                    "url": "https://www.mgtv.com/b/777/1.html",
+                                },
+                                {
+                                    "source": "imgo",
+                                    "title": "你好，星期六",
+                                    "url": "https://www.mgtv.com/b/888/1.html",
+                                },
+                            ],
+                        }
+                    ]
+                }
+            },
+        )
+
+    provider = MgtvDanmakuProvider(get=fake_get)
+
+    def fake_expand(title: str, collection_id: str):
+        expanded_ids.append(collection_id)
+        return [("黑夜告白 第1集", f"https://www.mgtv.com/b/{collection_id}/1001.html")]
+
+    provider._expand_candidate = fake_expand
+
+    items = provider.search("黑夜告白")
+
+    assert expanded_ids == ["555"]
+    assert [(item.name, item.url) for item in items] == [
+        ("黑夜告白 第1集", "https://www.mgtv.com/b/555/1001.html")
+    ]
+
+
 def test_mgtv_search_raises_for_invalid_payload() -> None:
     provider = MgtvDanmakuProvider(get=lambda url, **kwargs: httpx.Response(200, json={"oops": 1}))
 

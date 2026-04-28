@@ -21,6 +21,8 @@ class IqiyiDanmakuProvider:
     _PAGE_HEADERS = {"user-agent": "Mozilla/5.0", "referer": "https://www.iqiyi.com/"}
     _DROP_CHANNEL_KEYWORDS = ("生活", "教育")
     _DROP_TITLE_KEYWORDS = ("精彩看点", "精彩片段", "精彩分享")
+    _ALLOWED_SITE_IDS = {"iqiyi", ""}
+    _ALLOWED_SITE_NAMES = {"爱奇艺", ""}
 
     def __init__(self, get=httpx.get) -> None:
         self._get = get
@@ -226,6 +228,12 @@ class IqiyiDanmakuProvider:
 
     def _should_drop_search_item(self, item: dict) -> bool:
         album_info = item.get("albumDocInfo") or {}
+        site_id = str(album_info.get("siteId") or "").strip().lower()
+        site_name = str(album_info.get("siteName") or "").strip()
+        if site_id not in self._ALLOWED_SITE_IDS:
+            return True
+        if site_name not in self._ALLOWED_SITE_NAMES:
+            return True
         raw_score = album_info.get("douban_score")
         try:
             score = float(raw_score) if raw_score not in ("", None) else None

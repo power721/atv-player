@@ -184,6 +184,19 @@ def test_search_danmu_filters_to_candidates_with_matching_episode_number() -> No
     assert [item.url for item in results] == ["https://tencent/10"]
 
 
+def test_search_danmu_matches_youku_titles_with_trailing_numeric_episode_suffix() -> None:
+    youku = FakeProvider(
+        "youku",
+        [DanmakuSearchItem(provider="youku", name="黑夜告白 01", url="https://v.youku.com/v_show/id_demo01.html")],
+        [],
+    )
+    service = DanmakuService({"youku": youku}, provider_order=["youku"])
+
+    results = service.search_danmu("黑夜告白 第1集")
+
+    assert [item.url for item in results] == ["https://v.youku.com/v_show/id_demo01.html"]
+
+
 def test_search_danmu_rejects_matching_episode_when_title_only_matches_by_containment() -> None:
     iqiyi = FakeProvider(
         "iqiyi",
