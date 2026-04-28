@@ -1487,6 +1487,25 @@ class PlayerWindow(QWidget):
         line_count = self._preferred_danmaku_line_count()
         return 0 if line_count == 1 else line_count + 1
 
+    def _danmaku_line_count_from_combo_index(self, index: int) -> int:
+        if index in (0, 1, 2):
+            return 1
+        return max(1, min(index - 1, 5))
+
+    def _save_preferred_danmaku_selection(self, index: int) -> None:
+        if self.config is None or index < 0:
+            return
+        enabled = index != 1
+        line_count = self._danmaku_line_count_from_combo_index(index)
+        if (
+            self.config.preferred_danmaku_enabled == enabled
+            and self.config.preferred_danmaku_line_count == line_count
+        ):
+            return
+        self.config.preferred_danmaku_enabled = enabled
+        self.config.preferred_danmaku_line_count = line_count
+        self._save_config()
+
     def _mark_manual_subtitle_switch_refresh(self) -> None:
         self._manual_subtitle_switch_refresh_until = (
             time.monotonic() + self._MANUAL_SUBTITLE_SWITCH_REFRESH_WINDOW_SECONDS
@@ -2166,10 +2185,11 @@ class PlayerWindow(QWidget):
     def _change_danmaku_selection(self, index: int) -> None:
         if index < 0 or not self._current_play_item_danmaku_xml():
             return
+        self._save_preferred_danmaku_selection(index)
         if index == 1:
             self._clear_active_danmaku()
             return
-        line_count = 1 if index == 0 else index - 1
+        line_count = self._danmaku_line_count_from_combo_index(index)
         try:
             self._enable_danmaku(line_count)
         except Exception as exc:
