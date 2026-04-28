@@ -17,6 +17,11 @@ from atv_player.danmaku.utils import normalize_name, similarity_score
 
 _SEARCH_TYPE_PRIORITY = {"media_bangumi": 0, "media_ft": 1, "video": 2}
 _RISK_CONTROL_CODES = {-352, -412}
+_BROWSER_HEADERS = {
+    "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    "referer": "https://www.bilibili.com/",
+    "origin": "https://www.bilibili.com",
+}
 _MIXIN_KEY_ENC_TAB = [
     46,
     47,
@@ -97,6 +102,7 @@ class BilibiliDanmakuProvider:
 
     def search(self, name: str) -> list[DanmakuSearchItem]:
         normalized = normalize_name(name)
+        self._prime_web_state()
         items: list[DanmakuSearchItem] = []
         for search_type in ("media_bangumi", "media_ft", "video"):
             payload = self._search_payload(normalized, search_type)
@@ -131,25 +137,21 @@ class BilibiliDanmakuProvider:
         return payload
 
     def _request_search(self, params: dict[str, str]) -> dict:
-        response = self._get(
+        return self._request_json(
             "https://api.bilibili.com/x/web-interface/wbi/search/type",
             params=params,
-            headers={
-                "user-agent": "Mozilla/5.0",
-                "referer": "https://www.bilibili.com/",
-                "origin": "https://www.bilibili.com",
-            },
-            timeout=10.0,
-            follow_redirects=True,
+            headers=_BROWSER_HEADERS,
+            error_cls=DanmakuSearchError,
+            context="search",
         )
-        return response.json()
 
     def _build_wbi_params(self, params: dict[str, str]) -> dict[str, str]:
-        nav = self._get(
+        nav = self._request_json(
             "https://api.bilibili.com/x/web-interface/nav",
-            timeout=10.0,
-            follow_redirects=True,
-        ).json()
+            headers=_BROWSER_HEADERS,
+            error_cls=DanmakuSearchError,
+            context="nav",
+        )
         wbi_img = (nav.get("data") or {}).get("wbi_img") or {}
         img_key = str(wbi_img.get("img_url") or "").rsplit("/", 1)[-1].split(".", 1)[0]
         sub_key = str(wbi_img.get("sub_url") or "").rsplit("/", 1)[-1].split(".", 1)[0]
@@ -165,9 +167,17 @@ class BilibiliDanmakuProvider:
         self._get(
             "https://api.bilibili.com/bapis/bilibili.api.ticket.v1.Ticket/GenWebTicket",
             params={"key_id": "ec02", "hexsign": "ignored", "context[ts]": str(int(time.time()))},
-            headers={"user-agent": "Mozilla/5.0", "referer": "https://www.bilibili.com/"},
+            headers=_BROWSER_HEADERS,
             timeout=10.0,
             follow_redirects=True,
+        )
+
+    def _prime_web_state(self) -> None:
+        self._request_json(
+            "https://api.bilibili.com/x/frontend/finger/spi",
+            headers=_BROWSER_HEADERS,
+            error_cls=DanmakuSearchError,
+            context="spi",
         )
 
     def _parse_search_results(self, payload: dict, query_name: str, search_type: str) -> list[DanmakuSearchItem]:
@@ -312,3 +322,27 @@ class BilibiliDanmakuProvider:
             return int(value)
         except (TypeError, ValueError):
             return None
+
+    def _request_json(
+        self,
+        url: str,
+        *,
+        params: dict[str, object] | None = None,
+        headers: dict[str, str] | None = None,
+        error_cls: type[Exception],
+        context: str,
+    ) -> dict:
+        response = self._get(
+            url,
+            params=params,
+            headers=headers,
+            timeout=10.0,
+            follow_redirects=True,
+        )
+        try:
+            return response.json()
+        except Exception as exc:
+            status_code = getattr(response, "status_code", None)
+            if status_code is not None:
+                raise error_cls(f"Bilibili {context} request failed with HTTP {status_code}") from exc
+            raise error_cls(f"Bilibili {context} returned a non-JSON response") from exc

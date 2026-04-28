@@ -1,3 +1,4 @@
+import json
 import pytest
 
 from atv_player.danmaku.errors import DanmakuResolveError, DanmakuSearchError
@@ -150,6 +151,66 @@ def test_bilibili_search_raises_after_second_risk_control_failure() -> None:
     provider = BilibiliDanmakuProvider(get=fake_get)
 
     with pytest.raises(DanmakuSearchError, match="Bilibili search failed"):
+        provider.search("凡人修仙传 第1集")
+
+
+def test_bilibili_search_primes_spi_before_nav_and_uses_browser_headers() -> None:
+    seen: list[tuple[str, dict]] = []
+
+    def fake_get(url: str, **kwargs):
+        seen.append((url, kwargs))
+        params = kwargs.get("params") or {}
+        if "x/frontend/finger/spi" in url:
+            return JsonResponse({"code": 0, "data": {"b_3": "buvid3-demo", "b_4": "buvid4-demo"}})
+        if "x/web-interface/nav" in url:
+            return JsonResponse(
+                {
+                    "code": 0,
+                    "data": {
+                        "wbi_img": {
+                            "img_url": "https://i0.hdslb.com/bfs/wbi/abc123.png",
+                            "sub_url": "https://i0.hdslb.com/bfs/wbi/def456.png",
+                        }
+                    },
+                }
+            )
+        if "search/type" in url:
+            return JsonResponse({"code": 0, "data": {"result": []}})
+        return JsonResponse({"code": 0, "data": {}})
+
+    provider = BilibiliDanmakuProvider(get=fake_get)
+
+    provider.search("凡人修仙传 第1集")
+
+    assert [url for url, _ in seen[:3]] == [
+        "https://api.bilibili.com/x/frontend/finger/spi",
+        "https://api.bilibili.com/x/web-interface/nav",
+        "https://api.bilibili.com/x/web-interface/wbi/search/type",
+    ]
+    for _, kwargs in seen[:3]:
+        headers = kwargs["headers"]
+        assert headers["user-agent"].startswith("Mozilla/5.0")
+        assert headers["referer"] == "https://www.bilibili.com/"
+
+
+def test_bilibili_search_raises_clear_error_when_nav_returns_html_412() -> None:
+    class Html412Response:
+        status_code = 412
+        text = "<html><body>412 Precondition Failed</body></html>"
+
+        def json(self):
+            raise json.JSONDecodeError("Expecting value", self.text, 0)
+
+    def fake_get(url: str, **kwargs):
+        if "x/frontend/finger/spi" in url:
+            return JsonResponse({"code": 0, "data": {"b_3": "buvid3-demo", "b_4": "buvid4-demo"}})
+        if "x/web-interface/nav" in url:
+            return Html412Response()
+        return JsonResponse({"code": 0, "data": {}})
+
+    provider = BilibiliDanmakuProvider(get=fake_get)
+
+    with pytest.raises(DanmakuSearchError, match="Bilibili nav request failed with HTTP 412"):
         provider.search("凡人修仙传 第1集")
 
 
