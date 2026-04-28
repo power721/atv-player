@@ -15,6 +15,8 @@ from atv_player.danmaku.utils import extract_episode_number
 
 class TencentDanmakuProvider:
     key = "tencent"
+    _BARRAGE_BASE_URL = "https://dm.video.qq.com/barrage/base"
+    _BARRAGE_SEGMENT_URL = "https://dm.video.qq.com/barrage/segment"
     _NON_MAIN_CONTENT_KEYWORDS = (
         "：",
         "#",
@@ -726,14 +728,12 @@ class TencentDanmakuProvider:
         if not video_id:
             raise DanmakuResolveError("腾讯页面缺少 videoId/vid")
         duration = self._extract_duration_seconds(response.text)
-        segment_count = max(1, math.ceil(duration / 30)) if duration else 8
+        segment_urls, used_base_segment_index = self._resolve_segment_urls(video_id, duration)
         records: list[DanmakuRecord] = []
         seen: set[tuple[float, str]] = set()
-        for segment in range(segment_count):
-            start_ms = segment * 30000
-            end_ms = start_ms + 30000
+        for segment_index, segment_url in enumerate(segment_urls):
             segment_response = self._get(
-                f"https://dm.video.qq.com/barrage/segment/{quote(video_id)}/t/v1/{start_ms}/{end_ms}",
+                segment_url,
                 headers={
                     "User-Agent": self._UA_PC,
                     "Referer": "https://v.qq.com/",
@@ -748,7 +748,7 @@ class TencentDanmakuProvider:
                 continue
             barrage_list = payload.get("barrage_list") or []
             if not barrage_list:
-                if segment > 0:
+                if not used_base_segment_index and segment_index > 0:
                     break
                 continue
             for item in barrage_list:
@@ -768,6 +768,68 @@ class TencentDanmakuProvider:
                     )
                 )
         return records
+
+    def _resolve_segment_urls(self, video_id: str, duration: int) -> tuple[list[str], bool]:
+        segment_urls = self._segment_urls_from_base(video_id)
+        if segment_urls:
+            return segment_urls, True
+        return self._segment_urls_from_duration(video_id, duration), False
+
+    def _segment_urls_from_base(self, video_id: str) -> list[str]:
+        try:
+            response = self._get(
+                f"{self._BARRAGE_BASE_URL}/{quote(video_id)}",
+                headers={
+                    "User-Agent": self._UA_PC,
+                    "Referer": "https://v.qq.com/",
+                    "Accept": "application/json,text/plain,*/*",
+                },
+                follow_redirects=True,
+                timeout=10.0,
+            )
+        except httpx.HTTPError:
+            return []
+        if response.status_code == 404:
+            return []
+        try:
+            payload = response.json()
+        except Exception:
+            return []
+        segment_index = payload.get("segment_index")
+        if not isinstance(segment_index, dict):
+            return []
+
+        segment_rows: list[tuple[int, str]] = []
+        for item in segment_index.values():
+            if not isinstance(item, dict):
+                continue
+            segment_name = str(item.get("segment_name") or "").strip().lstrip("/")
+            if not segment_name:
+                continue
+            segment_start = item.get("segment_start")
+            try:
+                sort_key = int(segment_start)
+            except (TypeError, ValueError):
+                sort_key = self._segment_sort_key_from_name(segment_name)
+            segment_rows.append((sort_key, f"{self._BARRAGE_SEGMENT_URL}/{quote(video_id)}/{segment_name}"))
+
+        segment_rows.sort(key=lambda row: row[0])
+        return [url for _, url in segment_rows]
+
+    def _segment_urls_from_duration(self, video_id: str, duration: int) -> list[str]:
+        segment_count = max(1, math.ceil(duration / 30)) if duration else 8
+        segment_urls: list[str] = []
+        for segment in range(segment_count):
+            start_ms = segment * 30000
+            end_ms = start_ms + 30000
+            segment_urls.append(f"{self._BARRAGE_SEGMENT_URL}/{quote(video_id)}/t/v1/{start_ms}/{end_ms}")
+        return segment_urls
+
+    def _segment_sort_key_from_name(self, segment_name: str) -> int:
+        parts = [part for part in segment_name.split("/") if part]
+        if len(parts) >= 2 and parts[-2].isdigit():
+            return int(parts[-2])
+        return 0
 
     def _extract_video_id(self, page_url: str, html_text: str) -> str:
         video_id = self._match_first(

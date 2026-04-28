@@ -711,6 +711,72 @@ def test_tencent_provider_resolve_extracts_video_id_and_merges_segments() -> Non
     assert "https://dm.video.qq.com/barrage/segment/vid123/t/v1/30000/60000" in calls
 
 
+def test_tencent_provider_resolve_prefers_base_segment_index_when_available() -> None:
+    calls: list[str] = []
+
+    def fake_get(
+        url: str,
+        params: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        calls.append(url)
+        if url == "https://v.qq.com/x/cover/demo/vid123.html":
+            return httpx.Response(200, text='<script>var DATA={"videoId":"vid123","duration":120};</script>')
+        if url == "https://dm.video.qq.com/barrage/base/vid123":
+            return httpx.Response(
+                200,
+                json={
+                    "segment_index": {
+                        "0": {"segment_start": "0", "segment_name": "t/v1/0/30000"},
+                        "1": {"segment_start": "60000", "segment_name": "t/v1/60000/90000"},
+                    }
+                },
+            )
+        if url == "https://dm.video.qq.com/barrage/segment/vid123/t/v1/0/30000":
+            return httpx.Response(
+                200,
+                json={
+                    "barrage_list": [
+                        {
+                            "time_offset": 1500,
+                            "content": "第一条",
+                            "content_style": {"position": 1, "color": 16777215},
+                        }
+                    ]
+                },
+            )
+        if url == "https://dm.video.qq.com/barrage/segment/vid123/t/v1/60000/90000":
+            return httpx.Response(
+                200,
+                json={
+                    "barrage_list": [
+                        {
+                            "time_offset": 61000,
+                            "content": "第三条",
+                            "content_style": {"position": 4, "color": 255},
+                        }
+                    ]
+                },
+            )
+        if url == "https://dm.video.qq.com/barrage/segment/vid123/t/v1/30000/60000":
+            return httpx.Response(200, json={"barrage_list": []})
+        return httpx.Response(404, json={})
+
+    provider = TencentDanmakuProvider(get=fake_get)
+
+    records = provider.resolve("https://v.qq.com/x/cover/demo/vid123.html")
+
+    assert [(record.time_offset, record.pos, record.color, record.content) for record in records] == [
+        (1.5, 1, "16777215", "第一条"),
+        (61.0, 4, "255", "第三条"),
+    ]
+    assert "https://dm.video.qq.com/barrage/base/vid123" in calls
+    assert "https://dm.video.qq.com/barrage/segment/vid123/t/v1/60000/90000" in calls
+    assert "https://dm.video.qq.com/barrage/segment/vid123/t/v1/30000/60000" not in calls
+
+
 def test_tencent_provider_resolve_uses_url_vid_and_millisecond_ranges_when_page_has_no_embedded_vid() -> None:
     calls: list[str] = []
 
