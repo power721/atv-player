@@ -39,6 +39,7 @@ class PlayItem:
     headers: dict[str, str] = field(default_factory=dict)
     play_source: str = ""
     media_title: str = ""
+    danmaku_title_only: bool = False
     danmaku_xml: str = ""
     danmaku_pending: bool = False
 

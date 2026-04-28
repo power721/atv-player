@@ -128,6 +128,36 @@ class HtmlPageSpider(FakeSpider):
         }
 
 
+class NumericMovieSpider(FakeSpider):
+    def detailContent(self, ids):
+        return {
+            "list": [
+                {
+                    "vod_id": ids[0],
+                    "vod_name": "疯狂动物城2",
+                    "vod_pic": "poster-detail",
+                    "vod_play_from": "默认线",
+                    "vod_play_url": "1$/play/1#2$/play/2#3$/play/3#4$/play/4",
+                }
+            ]
+        }
+
+
+class NumericSeriesSpider(FakeSpider):
+    def detailContent(self, ids):
+        return {
+            "list": [
+                {
+                    "vod_id": ids[0],
+                    "vod_name": "白日提灯",
+                    "vod_pic": "poster-detail",
+                    "vod_play_from": "默认线",
+                    "vod_play_url": "#".join(f"{index}$/play/{index}" for index in range(1, 9)),
+                }
+            ]
+        }
+
+
 class PluginLevelDanmakuSpider(FakeSpider):
     def danmaku(self):
         return True
@@ -216,6 +246,64 @@ def test_controller_build_request_defers_player_content_until_episode_load() -> 
 
     assert first.url == "https://stream.example/play/1.m3u8"
     assert first.headers == {"Referer": "https://site.example"}
+
+
+def test_controller_uses_media_title_only_for_short_bare_numeric_playlists() -> None:
+    calls: list[tuple[str, str]] = []
+
+    class FakeDanmakuService:
+        def search_danmu(self, name: str, reg_src: str = ""):
+            calls.append(("search", f"{name}|{reg_src}"))
+            return []
+
+    class DanmakuNumericMovieSpider(NumericMovieSpider):
+        def danmaku(self):
+            return True
+
+    controller = SpiderPluginController(
+        DanmakuNumericMovieSpider(),
+        plugin_name="布布影视",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+    )
+
+    request = controller.build_request("/detail/movie-1")
+    first = request.playlist[0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+    _wait_until(lambda: first.danmaku_pending is False)
+
+    assert calls == [("search", "疯狂动物城2|/play/1")]
+
+
+def test_controller_keeps_implicit_numeric_suffix_for_long_bare_numeric_playlists() -> None:
+    calls: list[tuple[str, str]] = []
+
+    class FakeDanmakuService:
+        def search_danmu(self, name: str, reg_src: str = ""):
+            calls.append(("search", f"{name}|{reg_src}"))
+            return []
+
+    class DanmakuNumericSeriesSpider(NumericSeriesSpider):
+        def danmaku(self):
+            return True
+
+    controller = SpiderPluginController(
+        DanmakuNumericSeriesSpider(),
+        plugin_name="布布影视",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+    )
+
+    request = controller.build_request("/detail/series-1")
+    first = request.playlist[0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+    _wait_until(lambda: first.danmaku_pending is False)
+
+    assert calls == [("search", "白日提灯 1|/play/1")]
 
 
 def test_controller_does_not_print_payloads_during_build_and_playback_resolution(capsys) -> None:

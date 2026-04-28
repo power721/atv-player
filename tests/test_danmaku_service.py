@@ -351,9 +351,148 @@ def test_search_danmu_keeps_movie_candidates_for_implicit_trailing_year_requests
     results = service.search_danmu("疯狂动物城2 2025")
 
     assert [item.url for item in results] == [
-        "https://v.qq.com/x/cover/original.html",
         "https://v.qq.com/x/cover/movie.html",
+        "https://v.qq.com/x/cover/original.html",
     ]
+
+
+def test_search_danmu_prefers_no_episode_candidates_for_implicit_trailing_index_requests() -> None:
+    tencent = FakeProvider(
+        "tencent",
+        [
+            DanmakuSearchItem(
+                provider="tencent",
+                name="疯狂动物城2 1集",
+                url="https://v.qq.com/x/cover/ep1.html",
+                ratio=1.0,
+                simi=1.0,
+            ),
+            DanmakuSearchItem(
+                provider="tencent",
+                name="疯狂动物城2（原声版）",
+                url="https://v.qq.com/x/cover/original.html",
+                ratio=0.8,
+                simi=0.8,
+            ),
+        ],
+        [],
+    )
+    youku = FakeProvider(
+        "youku",
+        [
+            DanmakuSearchItem(
+                provider="youku",
+                name="疯狂动物城2",
+                url="https://v.youku.com/v_show/id_movie.html",
+                ratio=1.0,
+                simi=1.0,
+            )
+        ],
+        [],
+    )
+    service = DanmakuService({"tencent": tencent, "youku": youku}, provider_order=["tencent", "youku"])
+
+    results = service.search_danmu("疯狂动物城2 1")
+
+    assert [item.url for item in results] == [
+        "https://v.youku.com/v_show/id_movie.html",
+        "https://v.qq.com/x/cover/original.html",
+        "https://v.qq.com/x/cover/ep1.html",
+    ]
+
+
+def test_search_danmu_prefers_movie_variants_over_promotional_items_for_implicit_trailing_index_requests() -> None:
+    tencent = FakeProvider(
+        "tencent",
+        [
+            DanmakuSearchItem(
+                provider="tencent",
+                name="疯狂动物城2 1集",
+                url="https://v.qq.com/x/cover/ep1.html",
+                ratio=1.0,
+                simi=1.0,
+                duration_seconds=1826,
+            ),
+            DanmakuSearchItem(
+                provider="tencent",
+                name="疯狂动物城2（原声版）",
+                url="https://v.qq.com/x/cover/original.html",
+                ratio=0.7,
+                simi=0.7,
+                duration_seconds=5940,
+            ),
+            DanmakuSearchItem(
+                provider="tencent",
+                name="疯狂动物城2·独家采访",
+                url="https://v.qq.com/x/cover/interview.html",
+                ratio=0.95,
+                simi=0.95,
+                duration_seconds=480,
+            ),
+        ],
+        [],
+    )
+    youku = FakeProvider(
+        "youku",
+        [
+            DanmakuSearchItem(
+                provider="youku",
+                name="疯狂动物城2",
+                url="https://v.youku.com/v_show/id_movie.html",
+                ratio=1.0,
+                simi=1.0,
+                duration_seconds=5935,
+            ),
+            DanmakuSearchItem(
+                provider="youku",
+                name="疯狂动物城2（普通话版）",
+                url="https://v.youku.com/v_show/id_mandarin.html",
+                ratio=0.68,
+                simi=0.68,
+                duration_seconds=5935,
+            ),
+        ],
+        [],
+    )
+    service = DanmakuService({"tencent": tencent, "youku": youku}, provider_order=["tencent", "youku"])
+
+    results = service.search_danmu("疯狂动物城2 1")
+
+    assert [item.url for item in results] == [
+        "https://v.youku.com/v_show/id_movie.html",
+        "https://v.qq.com/x/cover/original.html",
+        "https://v.youku.com/v_show/id_mandarin.html",
+    ]
+
+
+def test_search_danmu_filters_out_original_title_when_query_targets_sequel() -> None:
+    iqiyi = FakeProvider(
+        "iqiyi",
+        [
+            DanmakuSearchItem(
+                provider="iqiyi",
+                name="疯狂动物城2",
+                url="https://www.iqiyi.com/v_1vf32rlbi7w.html",
+                ratio=1.0,
+                simi=1.0,
+                duration_seconds=5935,
+            ),
+            DanmakuSearchItem(
+                provider="iqiyi",
+                name="疯狂动物城",
+                url="https://www.iqiyi.com/v_19rrlpltbg.html",
+                ratio=0.91,
+                simi=0.91,
+                duration_seconds=6480,
+            ),
+        ],
+        [],
+    )
+    service = DanmakuService({"iqiyi": iqiyi}, provider_order=["iqiyi"])
+
+    results = service.search_danmu("疯狂动物城2")
+
+    assert [item.url for item in results] == ["https://www.iqiyi.com/v_1vf32rlbi7w.html"]
 
 
 def test_search_danmu_does_not_fall_back_to_stripped_keyword_when_episode_search_misses() -> None:

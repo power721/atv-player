@@ -201,11 +201,30 @@ def _simplify_name(name: str) -> str:
     return value
 
 
+def _extract_title_sequel_number(name: str) -> int | None:
+    value = _simplify_name(strip_episode_suffix(name))
+    matches = re.findall(r"(?<=[^\W\d_])(\d{1,2})(?=[^\W\d_]|$)", value, re.UNICODE)
+    if not matches:
+        return None
+    sequel = int(matches[-1])
+    return sequel if 1 <= sequel <= 20 else None
+
+
+def _has_sequel_number_mismatch(left: str, right: str) -> bool:
+    left_seq = _extract_title_sequel_number(left)
+    right_seq = _extract_title_sequel_number(right)
+    if left_seq is None and right_seq is None:
+        return False
+    return left_seq != right_seq
+
+
 def similarity_score(left: str, right: str) -> float:
     return SequenceMatcher(None, _simplify_name(left), _simplify_name(right)).ratio()
 
 
 def episode_title_matches(target: str, candidate: str) -> bool:
+    if _has_sequel_number_mismatch(target, candidate):
+        return False
     target_base = _simplify_name(strip_episode_suffix(target))
     candidate_base = _simplify_name(strip_episode_suffix(candidate))
     if not target_base or not candidate_base:
@@ -214,6 +233,8 @@ def episode_title_matches(target: str, candidate: str) -> bool:
 
 
 def should_filter_name(target: str, candidate: str) -> bool:
+    if _has_sequel_number_mismatch(target, candidate):
+        return True
     left = _simplify_name(target)
     right = _simplify_name(candidate)
     if not left or not right:

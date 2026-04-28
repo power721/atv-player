@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import logging
+import re
 
 from atv_player.danmaku.errors import DanmakuEmptyResultError, ProviderNotSupportedError
 from atv_player.danmaku.models import DanmakuSearchItem
@@ -27,6 +28,73 @@ from atv_player.danmaku.utils import (
 
 
 logger = logging.getLogger(__name__)
+
+_PREFERRED_MOVIE_VARIANT_TOKENS = (
+    "原声版",
+    "普通话版",
+    "普通话",
+    "国语版",
+    "国语",
+    "粤语版",
+    "粤语",
+    "臻彩",
+)
+
+_SUPPLEMENTAL_MOVIE_TOKENS = (
+    "独家采访",
+    "采访",
+    "剧情速看",
+    "速看",
+    "深度剖析",
+    "剖析",
+    "揭秘",
+    "解读",
+    "解析",
+    "预告",
+    "花絮",
+    "特辑",
+    "片段",
+    "幕后",
+    "专访",
+)
+
+_LONG_FORM_DURATION_SECONDS = 3000
+_SHORT_FORM_DURATION_RATIO = 0.55
+_SHORT_FORM_MIN_DURATION_SECONDS = 1200
+
+
+def _compact_title(text: str) -> str:
+    return re.sub(r"[\W_《》【】()（）]+", "", normalize_name(text).casefold())
+
+
+def _movie_candidate_priority(query_name: str, candidate_name: str) -> tuple[int, int, int]:
+    query_base = strip_episode_suffix(normalize_name(query_name))
+    candidate_base = strip_episode_suffix(normalize_name(candidate_name))
+    candidate_text = normalize_name(candidate_name)
+    exact_title = int(_compact_title(candidate_base) == _compact_title(query_base))
+    preferred_variant = int(any(token in candidate_text for token in _PREFERRED_MOVIE_VARIANT_TOKENS))
+    supplemental = int(any(token in candidate_text for token in _SUPPLEMENTAL_MOVIE_TOKENS))
+    return exact_title, preferred_variant, supplemental
+
+
+def _filter_short_duration_candidates_for_implicit_request(
+    items: list[DanmakuSearchItem],
+) -> list[DanmakuSearchItem]:
+    no_episode_durations = [
+        item.duration_seconds for item in items if extract_episode_number(item.name) is None and item.duration_seconds > 0
+    ]
+    if not no_episode_durations:
+        return items
+    max_duration = max(no_episode_durations)
+    if max_duration < _LONG_FORM_DURATION_SECONDS:
+        return items
+    min_duration = max(_SHORT_FORM_MIN_DURATION_SECONDS, int(max_duration * _SHORT_FORM_DURATION_RATIO))
+    filtered = [
+        item
+        for item in items
+        if item.duration_seconds <= 0 or item.duration_seconds >= min_duration
+    ]
+    return filtered or items
 
 
 class DanmakuService:
@@ -86,15 +154,41 @@ class DanmakuService:
                 results = no_episode
             else:
                 results = []
-        print(results)
-        return sorted(
-            results,
-            key=lambda item: (
-                -(extract_episode_number(item.name) == requested_episode) if requested_episode is not None else 0,
+        if requested_episode is not None and not explicit_episode_request:
+            results = _filter_short_duration_candidates_for_implicit_request(results)
+
+        def sort_key(item: DanmakuSearchItem) -> tuple[int, int, int, int, int, float, float, int]:
+            item_episode = extract_episode_number(item.name)
+            no_episode_priority = 0
+            episode_priority = 0
+            movie_exact_priority = 0
+            movie_variant_priority = 0
+            supplemental_penalty = 0
+            duration_priority = item.duration_seconds
+            if requested_episode is not None:
+                if explicit_episode_request:
+                    episode_priority = int(item_episode == requested_episode)
+                else:
+                    no_episode_priority = int(item_episode is None)
+                    episode_priority = int(item_episode == requested_episode)
+                    movie_exact_priority, movie_variant_priority, supplemental_penalty = _movie_candidate_priority(
+                        primary_query, item.name
+                    )
+            return (
+                -no_episode_priority,
+                -movie_exact_priority,
+                -movie_variant_priority,
+                supplemental_penalty,
+                -duration_priority,
+                -episode_priority,
                 -item.ratio,
                 -item.simi,
                 self._provider_rank.get(item.provider, len(self._provider_order)),
-            ),
+            )
+
+        return sorted(
+            results,
+            key=sort_key,
         )
 
     def _collect_search_results(

@@ -542,7 +542,11 @@ class TencentDanmakuProvider:
             match = re.fullmatch(r"(\d+)", raw_name)
             if match is not None and episode_keyword_base and self._numeric_title_is_trusted(item):
                 raw_name = f"{episode_keyword_base} {match.group(1)}集"
-            output.append(DanmakuSearchItem(provider=self.key, name=raw_name, url=url))
+            duration_text = str(item.get("duration") or "0").strip()
+            duration_seconds = int(duration_text) if duration_text.isdigit() else 0
+            output.append(
+                DanmakuSearchItem(provider=self.key, name=raw_name, url=url, duration_seconds=duration_seconds)
+            )
         return output
 
     def _episode_keyword_base(self, query_name: str) -> str:

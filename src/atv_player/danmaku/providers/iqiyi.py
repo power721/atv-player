@@ -125,8 +125,18 @@ class IqiyiDanmakuProvider:
                 if not title or not url:
                     continue
                 ratio = similarity_score(query_name, title)
-                self._remember_metadata(url, self._video_metadata(video, album_info))
-                results.append(DanmakuSearchItem(provider=self.key, name=title, url=url, ratio=ratio, simi=ratio))
+                metadata = self._video_metadata(video, album_info)
+                self._remember_metadata(url, metadata)
+                results.append(
+                    DanmakuSearchItem(
+                        provider=self.key,
+                        name=title,
+                        url=url,
+                        ratio=ratio,
+                        simi=ratio,
+                        duration_seconds=self._to_int(metadata.get("duration_seconds")) or 0,
+                    )
+                )
         return results
 
     def _collect_search_videos(self, item: dict, album_info: dict) -> list[dict]:

@@ -8,6 +8,7 @@ class DanmakuSearchItem:
     url: str
     ratio: float = 0.0
     simi: float = 0.0
+    duration_seconds: int = 0
     cid: int | None = None
     bvid: str = ""
     aid: int | None = None

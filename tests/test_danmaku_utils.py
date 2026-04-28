@@ -28,6 +28,12 @@ def test_should_filter_name_rejects_unrelated_titles() -> None:
     assert should_filter_name(target, "剑来 第1集") is False
 
 
+def test_should_filter_name_rejects_sequel_mismatch() -> None:
+    target = normalize_name("疯狂动物城2")
+    assert should_filter_name(target, "疯狂动物城") is True
+    assert should_filter_name(target, "疯狂动物城2（普通话版）") is False
+
+
 def test_extract_episode_number_supports_numeric_title_with_size_suffix() -> None:
     assert extract_episode_number("12(1.26 GB)") == 12
 

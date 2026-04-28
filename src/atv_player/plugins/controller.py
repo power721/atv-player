@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 from collections.abc import Callable
 from collections.abc import Mapping
@@ -29,11 +30,39 @@ def _looks_like_media_url(value: str) -> bool:
     return any(candidate.endswith(ext) or f"{ext}?" in candidate for ext in (".m3u8", ".mkv", ".mp4", ".flv"))
 
 
+def _has_implicit_numeric_title(value: str) -> bool:
+    return re.fullmatch(r"\s*0*\d{1,4}\s*", value or "") is not None
+
+
+def _is_short_bare_numeric_playlist(item: PlayItem, playlist: list[PlayItem] | None = None) -> bool:
+    if item.danmaku_title_only:
+        return True
+    if not _has_implicit_numeric_title(item.title) or not playlist:
+        return False
+    if len(playlist) < 2 or len(playlist) > 4:
+        return False
+    return all(_has_implicit_numeric_title(candidate.title) for candidate in playlist)
+
+
 def _extract_episode_label(item: PlayItem, playlist: list[PlayItem] | None = None) -> str:
     episode_number = infer_playlist_episode_number(item, playlist)
     if episode_number is None:
         return ""
+    if _is_short_bare_numeric_playlist(item, playlist):
+        return ""
+    if _has_implicit_numeric_title(item.title):
+        return str(episode_number)
     return f"{episode_number}集"
+
+
+def _mark_short_bare_numeric_playlist(playlist: list[PlayItem]) -> list[PlayItem]:
+    if len(playlist) < 2 or len(playlist) > 4:
+        return playlist
+    if not all(_has_implicit_numeric_title(item.title) for item in playlist):
+        return playlist
+    for item in playlist:
+        item.danmaku_title_only = True
+    return playlist
 
 
 def _build_danmaku_search_name(item: PlayItem, playlist: list[PlayItem] | None = None) -> str:
@@ -265,13 +294,13 @@ class SpiderPluginController:
                     )
                 )
             if playlist:
-                playlists.append(playlist)
+                playlists.append(_mark_short_bare_numeric_playlist(playlist))
         return playlists
 
     def _build_drive_replacement_playlist(self, detail: VodItem, play_source: str, media_title: str = "") -> list[PlayItem]:
         resolved_media_title = media_title.strip() or detail.vod_name
         if detail.items:
-            return [
+            return _mark_short_bare_numeric_playlist([
                 PlayItem(
                     title=item.title,
                     url=item.url,
@@ -285,9 +314,9 @@ class SpiderPluginController:
                 )
                 for index, item in enumerate(detail.items)
                 if item.url
-            ]
+            ])
         playlist = build_detail_playlist(detail)
-        return [
+        return _mark_short_bare_numeric_playlist([
             PlayItem(
                 title=item.title,
                 url=item.url,
@@ -301,7 +330,7 @@ class SpiderPluginController:
             )
             for index, item in enumerate(playlist)
             if item.url and not _looks_like_drive_share_link(item.url)
-        ]
+        ])
 
     def _resolve_danmaku_sync(self, item: PlayItem, url: str, playlist: list[PlayItem] | None = None) -> None:
         if not self._danmaku_enabled or self._danmaku_service is None:

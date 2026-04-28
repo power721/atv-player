@@ -272,7 +272,14 @@ class YoukuDanmakuProvider:
             title = self._component_primary_title(common)
             url = self._component_primary_url(common)
             if title and url and not component_results:
-                component_results.append(DanmakuSearchItem(provider=self.key, name=title, url=url))
+                component_results.append(
+                    DanmakuSearchItem(
+                        provider=self.key,
+                        name=title,
+                        url=url,
+                        duration_seconds=self._to_duration_seconds(common.get("duration")),
+                    )
+                )
             results.extend(component_results)
         return results
 
@@ -282,7 +289,14 @@ class YoukuDanmakuProvider:
             title = str(item.get("title") or item.get("displayName") or "").strip()
             url = self._series_item_url(item)
             if title and url and self._series_title_matches_query(query_name, title):
-                results.append(DanmakuSearchItem(provider=self.key, name=title, url=url))
+                results.append(
+                    DanmakuSearchItem(
+                        provider=self.key,
+                        name=title,
+                        url=url,
+                        duration_seconds=self._to_duration_seconds(item.get("duration")),
+                    )
+                )
         return results
 
     def _is_youku_common_data(self, common: dict) -> bool:
@@ -308,7 +322,14 @@ class YoukuDanmakuProvider:
             url = self._component_episode_url(episode)
             if not title or not url:
                 continue
-            output.append(DanmakuSearchItem(provider=self.key, name=title, url=url))
+            output.append(
+                DanmakuSearchItem(
+                    provider=self.key,
+                    name=title,
+                    url=url,
+                    duration_seconds=self._to_duration_seconds(episode.get("duration")),
+                )
+            )
         return output
 
     def _component_primary_url(self, common: dict) -> str:
@@ -341,6 +362,12 @@ class YoukuDanmakuProvider:
                 continue
             output.append(DanmakuSearchItem(provider=self.key, name=title, url=url))
         return output
+
+    def _to_duration_seconds(self, value) -> int:
+        try:
+            return max(0, int(math.ceil(float(value or 0))))
+        except (TypeError, ValueError):
+            return 0
 
     def _clean_detail_episode_title(self, title: str) -> str:
         return re.sub(r"^(?:VIP|SVIP|预告|抢先看)\s+", "", title, flags=re.I).strip()
