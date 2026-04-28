@@ -25,6 +25,7 @@ class PlayerSession:
     resolved_vod_by_id: dict[str, VodItem] = field(default_factory=dict)
     use_local_history: bool = True
     playback_loader: Callable[[PlayItem], PlaybackLoadResult | None] | None = None
+    danmaku_controller: object | None = None
     playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None
     playback_stopper: Callable[[PlayItem], None] | None = None
     playback_history_saver: Callable[[dict[str, object]], None] | None = None
@@ -68,6 +69,7 @@ class PlayerController:
         use_local_history: bool = True,
         restore_history: bool = False,
         playback_loader: Callable[[PlayItem], PlaybackLoadResult | None] | None = None,
+        danmaku_controller: object | None = None,
         playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None,
         playback_stopper: Callable[[PlayItem], None] | None = None,
         playback_history_loader: Callable[[], HistoryRecord | None] | None = None,
@@ -117,6 +119,7 @@ class PlayerController:
             resolved_vod_by_id=dict(resolved_vod_by_id or {}),
             use_local_history=use_local_history,
             playback_loader=playback_loader,
+            danmaku_controller=danmaku_controller,
             playback_progress_reporter=playback_progress_reporter,
             playback_stopper=playback_stopper,
             playback_history_saver=playback_history_saver,

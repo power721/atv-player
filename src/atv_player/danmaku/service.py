@@ -5,7 +5,7 @@ import logging
 import re
 
 from atv_player.danmaku.errors import DanmakuEmptyResultError, ProviderNotSupportedError
-from atv_player.danmaku.models import DanmakuSearchItem
+from atv_player.danmaku.models import DanmakuSearchItem, DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
 from atv_player.danmaku.providers import (
     BilibiliDanmakuProvider,
     IqiyiDanmakuProvider,
@@ -62,9 +62,22 @@ _LONG_FORM_DURATION_SECONDS = 3000
 _SHORT_FORM_DURATION_RATIO = 0.55
 _SHORT_FORM_MIN_DURATION_SECONDS = 1200
 
+_PROVIDER_LABELS = {
+    "tencent": "腾讯",
+    "youku": "优酷",
+    "bilibili": "B站",
+    "iqiyi": "爱奇艺",
+    "mgtv": "芒果",
+}
+
 
 def _compact_title(text: str) -> str:
     return re.sub(r"[\W_《》【】()（）]+", "", normalize_name(text).casefold())
+
+
+def build_danmaku_series_key(name: str) -> str:
+    normalized = normalize_name(strip_episode_suffix(name))
+    return _compact_title(normalized)
 
 
 def _movie_candidate_priority(query_name: str, candidate_name: str) -> tuple[int, int, int]:
@@ -118,6 +131,45 @@ class DanmakuService:
     @property
     def provider_order(self) -> list[str]:
         return list(self._provider_order)
+
+    def search_danmu_sources(
+        self,
+        name: str,
+        reg_src: str = "",
+        preferred_provider: str = "",
+        preferred_page_url: str = "",
+    ) -> DanmakuSourceSearchResult:
+        flat_results = self.search_danmu(name, reg_src)
+        requested_episode = extract_episode_number(normalize_name(name))
+        grouped: dict[str, list[DanmakuSourceOption]] = {}
+        for item in flat_results:
+            grouped.setdefault(item.provider, []).append(
+                DanmakuSourceOption(
+                    provider=item.provider,
+                    name=item.name,
+                    url=item.url,
+                    ratio=item.ratio,
+                    simi=item.simi,
+                    duration_seconds=item.duration_seconds,
+                    episode_match=extract_episode_number(item.name) == requested_episode if requested_episode is not None else False,
+                    preferred_by_history=item.url == preferred_page_url,
+                )
+            )
+        groups = [
+            DanmakuSourceGroup(
+                provider=provider,
+                provider_label=_PROVIDER_LABELS.get(provider, provider),
+                options=options,
+                preferred_by_history=provider == preferred_provider,
+            )
+            for provider, options in grouped.items()
+        ]
+        default_option = self._pick_default_source_option(groups, preferred_provider, preferred_page_url, reg_src)
+        return DanmakuSourceSearchResult(
+            groups=groups,
+            default_option_url=default_option.url if default_option is not None else "",
+            default_provider=default_option.provider if default_option is not None else "",
+        )
 
     def search_danmu(self, name: str, reg_src: str = "") -> list[DanmakuSearchItem]:
         normalized = normalize_name(name)
@@ -208,6 +260,31 @@ class DanmakuService:
                 simi = item.simi or ratio
                 results.append(replace(item, ratio=ratio, simi=simi))
         return results
+
+    def _pick_default_source_option(
+        self,
+        groups: list[DanmakuSourceGroup],
+        preferred_provider: str,
+        preferred_page_url: str,
+        reg_src: str,
+    ) -> DanmakuSourceOption | None:
+        for group in groups:
+            for option in group.options:
+                if preferred_page_url and option.url == preferred_page_url:
+                    return option
+        if preferred_provider:
+            for group in groups:
+                if group.provider == preferred_provider and group.options:
+                    return group.options[0]
+        matched_provider = self._preferred_provider_key(reg_src)
+        if matched_provider:
+            for group in groups:
+                if group.provider == matched_provider and group.options:
+                    return group.options[0]
+        for group in groups:
+            if group.options:
+                return group.options[0]
+        return None
 
     def resolve_danmu(self, page_url: str) -> str:
         for key in self._provider_order:

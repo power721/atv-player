@@ -4,12 +4,15 @@ import json
 import logging
 import re
 import threading
+import time
 from collections.abc import Callable
 from collections.abc import Mapping
 from urllib.parse import urlparse
 
 from atv_player.api import ApiError
 from atv_player.danmaku.cache import load_cached_danmaku_xml, save_cached_danmaku_xml
+from atv_player.danmaku.models import DanmakuSeriesPreference, DanmakuSourceGroup, DanmakuSourceOption
+from atv_player.danmaku.service import build_danmaku_series_key
 from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_category, _map_item
@@ -190,6 +193,7 @@ class SpiderPluginController:
         playback_parser_service=None,
         preferred_parse_key_loader: Callable[[], str] | None = None,
         danmaku_service=None,
+        danmaku_preference_store=None,
     ) -> None:
         self._spider = spider
         self._plugin_name = plugin_name
@@ -200,6 +204,7 @@ class SpiderPluginController:
         self._playback_parser_service = playback_parser_service
         self._preferred_parse_key_loader = preferred_parse_key_loader
         self._danmaku_service = danmaku_service
+        self._danmaku_preference_store = danmaku_preference_store
         self._danmaku_enabled = bool(getattr(self._spider, "danmaku", lambda: False)())
         self._danmaku_lock = threading.Lock()
         self._pending_danmaku_item_ids: set[int] = set()
@@ -362,7 +367,7 @@ class SpiderPluginController:
             )
             return
         try:
-            candidates = self._danmaku_service.search_danmu(search_name, reg_src)
+            default_url = self._populate_danmaku_candidates(item, search_name, reg_src)
         except Exception as exc:
             logger.warning(
                 "Spider plugin danmaku search failed plugin=%s source=%s error=%s",
@@ -371,10 +376,14 @@ class SpiderPluginController:
                 exc,
             )
             return
+        candidates = self._iter_danmaku_candidate_options(item.danmaku_candidates, default_url)
         if not candidates:
             return
         for candidate in candidates:
             try:
+                item.selected_danmaku_provider = candidate.provider
+                item.selected_danmaku_url = candidate.url
+                item.selected_danmaku_title = candidate.name
                 item.danmaku_xml = self._danmaku_service.resolve_danmu(candidate.url)
                 save_cached_danmaku_xml(search_name, reg_src, item.danmaku_xml)
                 logger.info(
@@ -392,6 +401,114 @@ class SpiderPluginController:
                     candidate.url,
                     exc,
                 )
+                item.danmaku_error = str(exc)
+
+    def _lookup_selected_danmaku_title(self, groups: list[DanmakuSourceGroup], page_url: str) -> str:
+        for group in groups:
+            for option in group.options:
+                if option.url == page_url:
+                    return option.name
+        return ""
+
+    def _iter_danmaku_candidate_options(
+        self,
+        groups: list[DanmakuSourceGroup],
+        default_url: str,
+    ) -> list[DanmakuSourceOption]:
+        ordered: list[DanmakuSourceOption] = []
+        fallback: list[DanmakuSourceOption] = []
+        for group in groups:
+            for option in group.options:
+                if option.url == default_url and default_url:
+                    ordered.append(option)
+                else:
+                    fallback.append(option)
+        ordered.extend(fallback)
+        return ordered
+
+    def _populate_danmaku_candidates(self, item: PlayItem, query_name: str, reg_src: str) -> str:
+        series_key = build_danmaku_series_key(item.media_title or query_name)
+        item.danmaku_series_key = series_key
+        item.danmaku_search_query = query_name
+        preference = self._danmaku_preference_store.load(series_key) if self._danmaku_preference_store is not None else None
+        if hasattr(self._danmaku_service, "search_danmu_sources"):
+            result = self._danmaku_service.search_danmu_sources(
+                query_name,
+                reg_src,
+                preferred_provider=preference.provider if preference is not None else "",
+                preferred_page_url=preference.page_url if preference is not None else "",
+            )
+        else:
+            candidates = self._danmaku_service.search_danmu(query_name, reg_src)
+            result = self._legacy_source_search_result(candidates)
+        item.danmaku_candidates = result.groups
+        item.selected_danmaku_provider = result.default_provider
+        item.selected_danmaku_url = result.default_option_url
+        item.selected_danmaku_title = self._lookup_selected_danmaku_title(result.groups, result.default_option_url)
+        item.danmaku_error = ""
+        return result.default_option_url
+
+    def _legacy_source_search_result(self, candidates: list) -> object:
+        groups: dict[str, list[DanmakuSourceOption]] = {}
+        for item in candidates:
+            groups.setdefault(item.provider, []).append(
+                DanmakuSourceOption(
+                    provider=item.provider,
+                    name=item.name,
+                    url=item.url,
+                    ratio=getattr(item, "ratio", 0.0),
+                    simi=getattr(item, "simi", 0.0),
+                    duration_seconds=getattr(item, "duration_seconds", 0),
+                )
+            )
+        source_groups = [
+            DanmakuSourceGroup(provider=provider, provider_label=provider, options=options)
+            for provider, options in groups.items()
+        ]
+        default_option = source_groups[0].options[0] if source_groups and source_groups[0].options else None
+        from atv_player.danmaku.models import DanmakuSourceSearchResult
+
+        return DanmakuSourceSearchResult(
+            groups=source_groups,
+            default_option_url=default_option.url if default_option is not None else "",
+            default_provider=default_option.provider if default_option is not None else "",
+        )
+
+    def refresh_danmaku_sources(
+        self,
+        item: PlayItem,
+        query_override: str | None = None,
+        playlist: list[PlayItem] | None = None,
+    ) -> None:
+        query_name = (query_override or _build_danmaku_search_name(item, playlist)).strip()
+        if not query_name:
+            return
+        item.danmaku_search_query = query_name
+        item.danmaku_search_query_overridden = query_override is not None
+        reg_src = str(item.vod_id or item.url or "").strip()
+        self._populate_danmaku_candidates(item, query_name, reg_src)
+
+    def switch_danmaku_source(self, item: PlayItem, page_url: str) -> str:
+        xml_text = self._danmaku_service.resolve_danmu(page_url)
+        item.danmaku_xml = xml_text
+        item.selected_danmaku_url = page_url
+        item.selected_danmaku_title = self._lookup_selected_danmaku_title(item.danmaku_candidates, page_url)
+        for group in item.danmaku_candidates:
+            for option in group.options:
+                if option.url == page_url:
+                    item.selected_danmaku_provider = option.provider
+                    break
+        if self._danmaku_preference_store is not None and item.danmaku_series_key:
+            self._danmaku_preference_store.save(
+                DanmakuSeriesPreference(
+                    series_key=item.danmaku_series_key,
+                    provider=item.selected_danmaku_provider,
+                    page_url=page_url,
+                    title=item.selected_danmaku_title,
+                    updated_at=int(time.time()),
+                )
+            )
+        return xml_text
 
     def _maybe_resolve_danmaku(self, item: PlayItem, url: str, playlist: list[PlayItem] | None = None) -> None:
         if not self._danmaku_enabled or self._danmaku_service is None:
@@ -571,6 +688,7 @@ class SpiderPluginController:
             source_vod_id=source_vod_id,
             use_local_history=False,
             playback_loader=self._resolve_play_item,
+            danmaku_controller=self if self._danmaku_enabled and self._danmaku_service is not None else None,
             playback_history_loader=history_loader,
             playback_history_saver=history_saver,
         )

@@ -5,8 +5,9 @@ import pytest
 
 import atv_player.plugins.controller as controller_module
 from atv_player.api import ApiError
-from atv_player.danmaku.models import DanmakuSearchItem
+from atv_player.danmaku.models import DanmakuSearchItem, DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
 from atv_player.plugins.controller import SpiderPluginController
+from atv_player.models import PlayItem
 
 
 def _wait_until(predicate, timeout: float = 1.0) -> None:
@@ -467,6 +468,68 @@ def test_controller_resolves_danmaku_when_spider_enables_plugin_level_danmaku() 
         ("search", "红果短剧 1集|/play/1"),
         ("resolve", "https://v.qq.com/x/cover/demo.html"),
     ]
+
+
+def test_controller_populates_grouped_danmaku_candidates_on_successful_search() -> None:
+    class FakeDanmakuService:
+        def search_danmu_sources(
+            self, name: str, reg_src: str = "", preferred_provider: str = "", preferred_page_url: str = ""
+        ):
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[DanmakuSourceOption(provider="tencent", name="红果短剧 第1集", url="https://v.qq.com/demo")],
+                    )
+                ],
+                default_option_url="https://v.qq.com/demo",
+                default_provider="tencent",
+            )
+
+        def resolve_danmu(self, page_url: str) -> str:
+            return '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">ok</d></i>'
+
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+    )
+    request = controller.build_request("/detail/1")
+    item = request.playlist[0]
+    request.playback_loader(item)
+    _wait_until(lambda: item.danmaku_xml != "")
+
+    assert item.selected_danmaku_provider == "tencent"
+    assert item.selected_danmaku_url == "https://v.qq.com/demo"
+    assert item.danmaku_search_query == "红果短剧 1集"
+    assert len(item.danmaku_candidates) == 1
+
+
+def test_controller_research_danmaku_uses_temporary_query_only_for_current_item() -> None:
+    calls: list[str] = []
+
+    class FakeDanmakuService:
+        def search_danmu_sources(
+            self, name: str, reg_src: str = "", preferred_provider: str = "", preferred_page_url: str = ""
+        ):
+            calls.append(name)
+            return DanmakuSourceSearchResult(groups=[], default_option_url="", default_provider="")
+
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+    )
+    item = PlayItem(title="第1集", url="https://stream.example/1.m3u8", media_title="红果短剧")
+
+    controller.refresh_danmaku_sources(item, query_override="红果短剧 腾讯版")
+
+    assert item.danmaku_search_query == "红果短剧 腾讯版"
+    assert item.danmaku_search_query_overridden is True
+    assert calls[-1] == "红果短剧 腾讯版"
 
 
 def test_controller_tries_next_danmaku_candidate_when_first_candidate_has_no_records() -> None:

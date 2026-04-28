@@ -54,6 +54,47 @@ def test_search_danmu_prefers_provider_from_reg_src() -> None:
     assert youku.search_calls == []
 
 
+def test_search_danmu_sources_groups_results_by_provider_and_marks_default() -> None:
+    tencent = FakeProvider(
+        "tencent",
+        [DanmakuSearchItem(provider="tencent", name="剑来 第12集", url="https://v.qq.com/12", ratio=0.9, simi=0.9)],
+        [],
+    )
+    youku = FakeProvider(
+        "youku",
+        [DanmakuSearchItem(provider="youku", name="剑来 第12集", url="https://v.youku.com/12", ratio=0.8, simi=0.8)],
+        [],
+    )
+    service = DanmakuService({"tencent": tencent, "youku": youku}, provider_order=["tencent", "youku"])
+
+    result = service.search_danmu_sources("剑来 第12集")
+
+    assert [group.provider for group in result.groups] == ["tencent", "youku"]
+    assert result.default_provider == "tencent"
+    assert result.default_option_url == "https://v.qq.com/12"
+
+
+def test_search_danmu_sources_prefers_exact_historical_page_url() -> None:
+    tencent = FakeProvider(
+        "tencent",
+        [
+            DanmakuSearchItem(provider="tencent", name="剑来 第12集", url="https://v.qq.com/11", ratio=0.95, simi=0.95),
+            DanmakuSearchItem(provider="tencent", name="剑来 第12集", url="https://v.qq.com/12", ratio=0.80, simi=0.80),
+        ],
+        [],
+    )
+    service = DanmakuService({"tencent": tencent}, provider_order=["tencent"])
+
+    result = service.search_danmu_sources(
+        "剑来 第12集",
+        preferred_provider="tencent",
+        preferred_page_url="https://v.qq.com/12",
+    )
+
+    assert result.default_option_url == "https://v.qq.com/12"
+    assert result.groups[0].options[1].preferred_by_history is True
+
+
 def test_service_resolve_danmu_uses_mgtv_provider_for_mgtv_urls() -> None:
     mgtv = FakeProvider(
         "mgtv",

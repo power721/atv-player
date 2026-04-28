@@ -14,7 +14,15 @@ from atv_player.danmaku.errors import (
     DanmakuSearchError,
     ProviderNotSupportedError,
 )
-from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
+from atv_player.danmaku.models import (
+    DanmakuRecord,
+    DanmakuSearchItem,
+    DanmakuSeriesPreference,
+    DanmakuSourceGroup,
+    DanmakuSourceOption,
+    DanmakuSourceSearchResult,
+)
+from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore, danmaku_series_preference_path
 from atv_player.danmaku.service import DanmakuService, create_default_danmaku_service
 from atv_player.danmaku.subtitle import render_danmaku_ass, render_danmaku_srt
 from atv_player.danmaku.utils import build_xml, match_provider, normalize_name, should_filter_name
@@ -27,9 +35,15 @@ __all__ = [
     "DanmakuResolveError",
     "DanmakuSearchError",
     "DanmakuSearchItem",
+    "DanmakuSeriesPreference",
+    "DanmakuSeriesPreferenceStore",
+    "DanmakuSourceGroup",
+    "DanmakuSourceOption",
+    "DanmakuSourceSearchResult",
     "ProviderNotSupportedError",
     "build_xml",
     "create_default_danmaku_service",
+    "danmaku_series_preference_path",
     "danmaku_ass_cache_path",
     "danmaku_cache_dir",
     "danmaku_xml_cache_path",
