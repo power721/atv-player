@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import html
+import json
 import re
 import time
 from urllib.parse import urlencode
+import xml.etree.ElementTree as ET
 
 import httpx
 
@@ -105,7 +107,15 @@ class BilibiliDanmakuProvider:
         return items
 
     def resolve(self, page_url: str) -> list[DanmakuRecord]:
-        raise NotImplementedError("Bilibili danmaku resolution is not implemented yet")
+        candidate = self._metadata_by_url.get(page_url) or DanmakuSearchItem(provider=self.key, name="", url=page_url)
+        cid = self._resolve_cid(candidate)
+        xml_text = self._get(
+            f"https://comment.bilibili.com/{cid}.xml",
+            headers={"user-agent": "Mozilla/5.0", "referer": page_url},
+            timeout=10.0,
+            follow_redirects=True,
+        ).text
+        return self._parse_xml_records(xml_text)
 
     def _search_payload(self, keyword: str, search_type: str) -> dict:
         params = {"keyword": keyword, "search_type": search_type}
@@ -186,6 +196,114 @@ class BilibiliDanmakuProvider:
                 )
             )
         return output
+
+    def _resolve_cid(self, candidate: DanmakuSearchItem) -> int:
+        if candidate.cid is not None:
+            return candidate.cid
+        if candidate.ep_id is not None:
+            cid = self._cid_from_season(ep_id=candidate.ep_id, season_id=candidate.season_id, title=candidate.name)
+            if cid is not None:
+                return cid
+        if candidate.season_id is not None:
+            cid = self._cid_from_season(ep_id=None, season_id=candidate.season_id, title=candidate.name)
+            if cid is not None:
+                return cid
+        if candidate.bvid or candidate.aid is not None:
+            cid = self._cid_from_pagelist(candidate)
+            if cid is not None:
+                return cid
+        cid = self._cid_from_html(candidate.url)
+        if cid is None:
+            raise DanmakuResolveError(f"Bilibili page missing cid: {candidate.url}")
+        return cid
+
+    def _cid_from_season(self, ep_id: int | None, season_id: int | None, title: str) -> int | None:
+        params = {"ep_id": ep_id} if ep_id is not None else {"season_id": season_id}
+        payload = self._get(
+            "https://api.bilibili.com/pgc/view/web/season",
+            params=params,
+            timeout=10.0,
+            follow_redirects=True,
+        ).json()
+        episodes = ((payload.get("result") or {}).get("episodes") or [])
+        if ep_id is not None:
+            for episode in episodes:
+                if self._to_int(episode.get("ep_id")) == ep_id:
+                    cid = self._to_int(episode.get("cid"))
+                    if cid is not None:
+                        return cid
+        target = normalize_name(title)
+        if target:
+            for episode in episodes:
+                candidate_name = normalize_name(
+                    str(episode.get("share_copy") or episode.get("long_title") or episode.get("title") or "")
+                )
+                if candidate_name == target:
+                    cid = self._to_int(episode.get("cid"))
+                    if cid is not None:
+                        return cid
+        if episodes:
+            return self._to_int(episodes[0].get("cid"))
+        return None
+
+    def _cid_from_pagelist(self, candidate: DanmakuSearchItem) -> int | None:
+        params = {"bvid": candidate.bvid} if candidate.bvid else {"aid": candidate.aid}
+        payload = self._get(
+            "https://api.bilibili.com/x/player/pagelist",
+            params=params,
+            timeout=10.0,
+            follow_redirects=True,
+        ).json()
+        pages = payload.get("data") or []
+        target = normalize_name(candidate.name)
+        for page in pages:
+            if normalize_name(str(page.get("part") or "")) == target:
+                return self._to_int(page.get("cid"))
+        if pages:
+            return self._to_int(pages[0].get("cid"))
+        return None
+
+    def _cid_from_html(self, page_url: str) -> int | None:
+        text = self._get(
+            page_url,
+            headers={"user-agent": "Mozilla/5.0"},
+            timeout=10.0,
+            follow_redirects=True,
+        ).text
+        state_match = re.search(r"__INITIAL_STATE__=(\{.*?\})</script>", text)
+        if state_match:
+            payload = json.loads(state_match.group(1))
+            video_data = payload.get("videoData") or {}
+            cid = self._to_int(video_data.get("cid"))
+            if cid is not None:
+                return cid
+        match = re.search(r'"cid"\s*:\s*(\d+)', text)
+        if match is not None:
+            return int(match.group(1))
+        return None
+
+    def _parse_xml_records(self, xml_text: str) -> list[DanmakuRecord]:
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError as exc:
+            raise DanmakuResolveError("Bilibili danmaku XML is invalid") from exc
+        records: list[DanmakuRecord] = []
+        for element in root.findall("d"):
+            params = str(element.attrib.get("p") or "").split(",")
+            if len(params) < 4:
+                continue
+            content = (element.text or "").strip()
+            if not content:
+                continue
+            records.append(
+                DanmakuRecord(
+                    time_offset=float(params[0]),
+                    pos=int(params[1]),
+                    color=str(params[3]),
+                    content=content,
+                )
+            )
+        return records
 
     @staticmethod
     def _to_int(value: object) -> int | None:
