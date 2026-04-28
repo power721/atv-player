@@ -759,6 +759,62 @@ def test_controller_extracts_episode_number_from_numeric_title_with_size_suffix(
     assert calls == [("search", "网盘剧集 12集|https://pan.quark.cn/s/f518510ef92a")]
 
 
+def test_controller_uses_media_title_only_for_year_prefixed_movie_filename() -> None:
+    class DanmakuDriveLinkSpider(DriveLinkSpider):
+        def danmaku(self):
+            return True
+
+    calls: list[tuple[str, str]] = []
+
+    class FakeDanmakuService:
+        def search_danmu(self, name: str, reg_src: str = ""):
+            calls.append(("search", f"{name}|{reg_src}"))
+            return []
+
+    def load_drive_detail(link: str) -> dict:
+        assert link == "https://pan.quark.cn/s/f518510ef92a"
+        return {
+            "list": [
+                {
+                    "vod_id": "1$94954$1",
+                    "vod_name": "百度资源",
+                    "items": [
+                        {
+                            "title": "2025.2160p.iTunes.WEB-DL.H265.DV.HDR.DDP5.1.Atmos.mkv(18.87 GB)",
+                            "url": "http://m/1.mp4",
+                            "path": "/Zootopia 2/2025.2160p.iTunes.WEB-DL.H265.DV.HDR.DDP5.1.Atmos.mkv",
+                            "size": 20266318222,
+                        },
+                        {
+                            "title": "Zootopia.2.2025.1080p.AMZN.WEB-DL.English.DDP5.1.H.264.mkv(5.51 GB)",
+                            "url": "http://m/2.mp4",
+                            "path": "/Zootopia 2/Zootopia.2.2025.1080p.AMZN.WEB-DL.English.DDP5.1.H.264.mkv",
+                            "size": 5916310000,
+                        },
+                    ],
+                }
+            ]
+        }
+
+    controller = SpiderPluginController(
+        DanmakuDriveLinkSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        drive_detail_loader=load_drive_detail,
+        danmaku_service=FakeDanmakuService(),
+    )
+
+    request = controller.build_request("/detail/drive")
+    assert request.playback_loader is not None
+    result = request.playback_loader(request.playlists[0][0])
+
+    assert result is not None
+    request.playback_loader(result.replacement_playlist[0])
+    _wait_until(lambda: result.replacement_playlist[0].danmaku_pending is False)
+
+    assert calls == [("search", "网盘剧集|http://m/1.mp4")]
+
+
 def test_controller_uses_replacement_playlist_index_when_drive_titles_have_no_episode_number() -> None:
     class DanmakuDriveLinkSpider(DriveLinkSpider):
         def danmaku(self):

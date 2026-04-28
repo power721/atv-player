@@ -17,6 +17,7 @@ from atv_player.danmaku.utils import (
     build_xml,
     episode_title_matches,
     extract_episode_number,
+    has_explicit_episode_marker,
     match_provider,
     normalize_name,
     should_filter_name,
@@ -54,10 +55,11 @@ class DanmakuService:
         normalized = normalize_name(name)
         search_keyword = strip_episode_suffix(normalized) or normalized
         requested_episode = extract_episode_number(normalized)
+        explicit_episode_request = has_explicit_episode_marker(normalized)
         primary_query = search_keyword
         preferred_key = self._preferred_provider_key(reg_src)
         provider_keys = [preferred_key] if preferred_key is not None else self._ordered_provider_keys(reg_src)
-        results = self._collect_search_results(provider_keys, primary_query)
+        results = self._collect_search_results(provider_keys, primary_query, normalized)
         if requested_episode is not None:
             matching = [
                 item
@@ -70,18 +72,21 @@ class DanmakuService:
                     key for key in self._provider_order if key in self._providers and key != preferred_key
                 ]
                 if fallback_keys:
-                    results.extend(self._collect_search_results(fallback_keys, primary_query))
+                    results.extend(self._collect_search_results(fallback_keys, primary_query, normalized))
                     matching = [
                         item
                         for item in results
                         if extract_episode_number(item.name) == requested_episode
                         and episode_title_matches(normalized, item.name)
                     ]
+            no_episode = [item for item in results if extract_episode_number(item.name) is None]
             if matching:
-                no_episode = [item for item in results if extract_episode_number(item.name) is None]
                 results = [*matching, *no_episode]
+            elif not explicit_episode_request and no_episode:
+                results = no_episode
             else:
                 results = []
+        print(results)
         return sorted(
             results,
             key=lambda item: (
@@ -92,11 +97,13 @@ class DanmakuService:
             ),
         )
 
-    def _collect_search_results(self, provider_keys: list[str], query_name: str) -> list[DanmakuSearchItem]:
+    def _collect_search_results(
+        self, provider_keys: list[str], query_name: str, original_name: str | None = None
+    ) -> list[DanmakuSearchItem]:
         results: list[DanmakuSearchItem] = []
         for key in provider_keys:
             try:
-                provider_items = self._providers[key].search(query_name)
+                provider_items = self._providers[key].search(query_name, original_name=original_name)
             except Exception as exc:
                 logger.warning("Danmaku provider search failed provider=%s name=%s error=%s", key, query_name, exc)
                 continue

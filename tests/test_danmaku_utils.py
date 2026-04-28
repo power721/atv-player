@@ -70,6 +70,23 @@ def test_infer_playlist_episode_number_falls_back_to_playlist_position() -> None
     assert infer_playlist_episode_number(playlist[1], playlist) == 2
 
 
+def test_infer_playlist_episode_number_ignores_year_prefixed_media_filename() -> None:
+    playlist = [
+        PlayItem(
+            title="2025.2160p.iTunes.WEB-DL.H265.DV.HDR.DDP5.1.Atmos.mkv(18.87 GB)",
+            url="http://m/1.mp4",
+            index=0,
+        ),
+        PlayItem(
+            title="Zootopia.2.2025.1080p.AMZN.WEB-DL.English.DDP5.1.H.264.mkv(5.51 GB)",
+            url="http://m/2.mp4",
+            index=1,
+        ),
+    ]
+
+    assert infer_playlist_episode_number(playlist[0], playlist) is None
+
+
 def test_build_xml_escapes_content_and_keeps_expected_shape() -> None:
     xml = build_xml(
         [

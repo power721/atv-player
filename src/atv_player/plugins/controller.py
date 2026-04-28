@@ -44,6 +44,10 @@ def _build_danmaku_search_name(item: PlayItem, playlist: list[PlayItem] | None =
     return " ".join(part for part in (media_title, episode_label) if part).strip()
 
 
+def _should_prefetch_danmaku(item: PlayItem, playlist: list[PlayItem] | None = None) -> bool:
+    return bool(_extract_episode_label(item, playlist))
+
+
 def _normalize_headers(raw_headers) -> dict[str, str]:
     if not raw_headers:
         return {}
@@ -399,7 +403,9 @@ class SpiderPluginController:
             if not replacement:
                 raise ValueError(f"没有可播放的项目: {detail.vod_name or item.title}")
             replacement_start_index = self._resolve_replacement_start_index(item.path or detail.vod_id, replacement)
-            self._maybe_resolve_danmaku(replacement[replacement_start_index], item.vod_id, replacement)
+            replacement_item = replacement[replacement_start_index]
+            if _should_prefetch_danmaku(replacement_item, replacement):
+                self._maybe_resolve_danmaku(replacement_item, item.vod_id, replacement)
             logger.info(
                 "Spider plugin resolved drive playlist plugin=%s source=%s items=%s",
                 self._plugin_name,
@@ -438,7 +444,9 @@ class SpiderPluginController:
             if not replacement:
                 raise ValueError(f"没有可播放的项目: {detail.vod_name or item.title}")
             replacement_start_index = self._resolve_replacement_start_index(item.path or detail.vod_id, replacement)
-            self._maybe_resolve_danmaku(replacement[replacement_start_index], url, replacement)
+            replacement_item = replacement[replacement_start_index]
+            if _should_prefetch_danmaku(replacement_item, replacement):
+                self._maybe_resolve_danmaku(replacement_item, url, replacement)
             logger.info(
                 "Spider plugin resolved drive playlist plugin=%s source=%s items=%s",
                 self._plugin_name,

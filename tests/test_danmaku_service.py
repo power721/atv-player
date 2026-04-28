@@ -290,6 +290,72 @@ def test_search_danmu_rejects_no_episode_candidates_for_episode_requests() -> No
     assert results == []
 
 
+def test_search_danmu_keeps_movie_candidates_for_implicit_trailing_index_requests() -> None:
+    tencent = FakeProvider(
+        "tencent",
+        [
+            DanmakuSearchItem(
+                provider="tencent",
+                name="熊猫计划之部落奇遇记",
+                url="https://v.qq.com/x/cover/movie.html",
+                ratio=0.98,
+                simi=0.98,
+            ),
+            DanmakuSearchItem(
+                provider="tencent",
+                name="熊猫计划",
+                url="https://v.qq.com/x/cover/other.html",
+                ratio=0.80,
+                simi=0.80,
+            ),
+        ],
+        [],
+    )
+    service = DanmakuService({"tencent": tencent}, provider_order=["tencent"])
+
+    results = service.search_danmu("熊猫计划之部落奇遇记 1")
+
+    assert [item.url for item in results] == ["https://v.qq.com/x/cover/movie.html", "https://v.qq.com/x/cover/other.html"]
+
+
+def test_search_danmu_keeps_movie_candidates_for_implicit_trailing_year_requests() -> None:
+    tencent = FakeProvider(
+        "tencent",
+        [
+            DanmakuSearchItem(
+                provider="tencent",
+                name="疯狂动物城2（原声版）",
+                url="https://v.qq.com/x/cover/original.html",
+                ratio=0.99,
+                simi=0.99,
+            ),
+            DanmakuSearchItem(
+                provider="tencent",
+                name="疯狂动物城2 1集",
+                url="https://v.qq.com/x/cover/ep1.html",
+                ratio=0.90,
+                simi=0.90,
+            ),
+            DanmakuSearchItem(
+                provider="tencent",
+                name="疯狂动物城2",
+                url="https://v.qq.com/x/cover/movie.html",
+                ratio=0.98,
+                simi=0.98,
+            ),
+        ],
+        [],
+    )
+    service = DanmakuService({"tencent": tencent}, provider_order=["tencent"])
+
+    results = service.search_danmu("疯狂动物城2 2025")
+
+    assert [item.url for item in results] == [
+        "https://v.qq.com/x/cover/original.html",
+        "https://v.qq.com/x/cover/movie.html",
+    ]
+
+
 def test_search_danmu_does_not_fall_back_to_stripped_keyword_when_episode_search_misses() -> None:
     class RetryAwareProvider(FakeProvider):
         def search(self, name: str, original_name: str | None = None) -> list[DanmakuSearchItem]:

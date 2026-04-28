@@ -42,6 +42,39 @@ _EPISODE_PATTERNS = (
     r"^\s*(\d+)\s*(?:[（(][^()（）]*[)）])?\s*$",
 )
 
+_EXPLICIT_EPISODE_PATTERNS = (
+    r"第\s*([0-9零一二两三四五六七八九十百]+)\s*[集话期部回]",
+    r"(?<!\d)0*([0-9]+)\s*[集话期]",
+    r"\bS\d+\s*E0*([0-9]+)\b",
+    r"\bEP\s*0*([0-9]+)\b",
+    r"\bE\s*0*([0-9]+)\b",
+)
+
+_TECHNICAL_FILENAME_MARKERS = (
+    "2160p",
+    "1080p",
+    "720p",
+    "web-dl",
+    "webrip",
+    "bluray",
+    "bdrip",
+    "hdrip",
+    "hdtv",
+    "itunes",
+    "amzn",
+    "nf",
+    "x264",
+    "x265",
+    "h264",
+    "h265",
+    "hevc",
+    "hdr",
+    "dv",
+    "ddp",
+    "aac",
+    "atmos",
+)
+
 
 def normalize_name(name: str) -> str:
     value = str(name).strip()
@@ -84,10 +117,27 @@ def extract_episode_number(name: str) -> int | None:
     return None
 
 
+def has_explicit_episode_marker(name: str) -> bool:
+    value = normalize_name(name)
+    return any(re.search(pattern, value, re.IGNORECASE) is not None for pattern in _EXPLICIT_EPISODE_PATTERNS)
+
+
+def _looks_like_technical_media_filename(name: str) -> bool:
+    value = normalize_name(name).casefold()
+    has_file_extension = re.search(r"\.(mkv|mp4|avi|mov|m4v|ts|flv)\b", value) is not None
+    has_year_prefix = re.match(r"^\s*(?:19|20)\d{2}(?:[.\s_-]|$)", value) is not None
+    has_marker = any(re.search(rf"(?<![a-z0-9]){re.escape(marker)}(?![a-z0-9])", value) is not None for marker in _TECHNICAL_FILENAME_MARKERS)
+    return has_marker and (has_file_extension or has_year_prefix)
+
+
 def infer_playlist_episode_number(current_item: PlayItem, playlist: Sequence[PlayItem] | None = None) -> int | None:
+    current_title = current_item.title or ""
+    technical_filename = _looks_like_technical_media_filename(current_title)
     direct = extract_episode_number(current_item.title)
-    if direct is not None:
+    if direct is not None and (not technical_filename or has_explicit_episode_marker(current_title)):
         return direct
+    if technical_filename:
+        return None
     current_index = current_item.index
     if not playlist:
         return current_index + 1 if current_index >= 0 else None
