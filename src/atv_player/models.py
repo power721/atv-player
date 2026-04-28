@@ -1,5 +1,11 @@
+from __future__ import annotations
+
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from atv_player.danmaku.models import DanmakuSourceGroup
 
 
 @dataclass(slots=True)
@@ -42,6 +48,14 @@ class PlayItem:
     danmaku_title_only: bool = False
     danmaku_xml: str = ""
     danmaku_pending: bool = False
+    danmaku_series_key: str = ""
+    danmaku_search_query: str = ""
+    danmaku_search_query_overridden: bool = False
+    danmaku_candidates: list[DanmakuSourceGroup] = field(default_factory=list)
+    selected_danmaku_url: str = ""
+    selected_danmaku_provider: str = ""
+    selected_danmaku_title: str = ""
+    danmaku_error: str = ""
 
 
 @dataclass(slots=True)
