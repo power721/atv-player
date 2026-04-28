@@ -158,6 +158,21 @@ class NumericSeriesSpider(FakeSpider):
         }
 
 
+class VarietySeasonSpider(FakeSpider):
+    def detailContent(self, ids):
+        return {
+            "list": [
+                {
+                    "vod_id": ids[0],
+                    "vod_name": "现在就出发 第三季",
+                    "vod_pic": "poster-detail",
+                    "vod_play_from": "默认线",
+                    "vod_play_url": "20250427$/play/1#20250504$/play/2#20250511$/play/3",
+                }
+            ]
+        }
+
+
 class PluginLevelDanmakuSpider(FakeSpider):
     def danmaku(self):
         return True
@@ -304,6 +319,35 @@ def test_controller_keeps_implicit_numeric_suffix_for_long_bare_numeric_playlist
     _wait_until(lambda: first.danmaku_pending is False)
 
     assert calls == [("search", "白日提灯 1|/play/1")]
+
+
+def test_controller_uses_date_title_for_non_drive_variety_playlist_search() -> None:
+    calls: list[tuple[str, str]] = []
+
+    class FakeDanmakuService:
+        def search_danmu(self, name: str, reg_src: str = ""):
+            calls.append(("search", f"{name}|{reg_src}"))
+            return []
+
+    class DanmakuVarietySeasonSpider(VarietySeasonSpider):
+        def danmaku(self):
+            return True
+
+    controller = SpiderPluginController(
+        DanmakuVarietySeasonSpider(),
+        plugin_name="布布影视",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+    )
+
+    request = controller.build_request("/detail/variety-1")
+    first = request.playlist[0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+    _wait_until(lambda: first.danmaku_pending is False)
+
+    assert calls == [("search", "现在就出发 第三季 20250427|/play/1")]
 
 
 def test_controller_does_not_print_payloads_during_build_and_playback_resolution(capsys) -> None:

@@ -34,6 +34,17 @@ def _has_implicit_numeric_title(value: str) -> bool:
     return re.fullmatch(r"\s*0*\d{1,4}\s*", value or "") is not None
 
 
+def _looks_like_calendar_episode_title(value: str) -> bool:
+    candidate = (value or "").strip()
+    if not candidate:
+        return False
+    return (
+        re.match(r"^(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])(?:\D|$)", candidate) is not None
+        or re.match(r"^(?:19|20)\d{2}[-/.年](?:0?[1-9]|1[0-2])[-/.月](?:0?[1-9]|[12]\d|3[01])(?:日|\D|$)", candidate)
+        is not None
+    )
+
+
 def _is_short_bare_numeric_playlist(item: PlayItem, playlist: list[PlayItem] | None = None) -> bool:
     if item.danmaku_title_only:
         return True
@@ -45,6 +56,8 @@ def _is_short_bare_numeric_playlist(item: PlayItem, playlist: list[PlayItem] | N
 
 
 def _extract_episode_label(item: PlayItem, playlist: list[PlayItem] | None = None) -> str:
+    if _looks_like_calendar_episode_title(item.title):
+        return item.title.strip()
     episode_number = infer_playlist_episode_number(item, playlist)
     if episode_number is None:
         return ""
