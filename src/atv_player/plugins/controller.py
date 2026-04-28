@@ -688,6 +688,7 @@ class SpiderPluginController:
             source_vod_id=source_vod_id,
             use_local_history=False,
             playback_loader=self._resolve_play_item,
+            danmaku_controller=self if self._danmaku_enabled and self._danmaku_service is not None else None,
             playback_history_loader=history_loader,
             playback_history_saver=history_saver,
         )

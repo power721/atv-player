@@ -27,8 +27,10 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QApplication, QMenu, QStyle, QStyleOptionSlider, QToolTip
 from PySide6.QtWidgets import (
     QComboBox,
+    QDialog,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -244,6 +246,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._pending_play_item_load: _PendingPlayItemLoad | None = None
         self._pending_playback_prepare: _PendingPlaybackPrepare | None = None
         self._video_context_menu: QMenu | None = None
+        self._danmaku_source_dialog: QDialog | None = None
+        self._danmaku_source_query_edit: QLineEdit | None = None
+        self._danmaku_source_provider_list: QListWidget | None = None
+        self._danmaku_source_option_list: QListWidget | None = None
         self._last_video_context_menu_request_ms = 0
         self._last_video_context_menu_request_global_pos: tuple[int, int] | None = None
         self._video_surface_ready = False
@@ -316,10 +322,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.wide_button.setCheckable(True)
         self.toggle_playlist_button = self._create_icon_button("queue.svg", "播放列表")
         self.toggle_details_button = self._create_icon_button("info.svg", "详情")
+        self.danmaku_source_button = self._create_icon_button("danmaku.svg", "弹幕源")
         self.toggle_playlist_button.setCheckable(True)
         self.toggle_details_button.setCheckable(True)
         self.toggle_playlist_button.setChecked(True)
         self.toggle_details_button.setChecked(True)
+        self.danmaku_source_button.setEnabled(False)
 
         self.speed_combo = QComboBox()
         self.speed_combo.addItems(["0.5x", "0.75x", "1.0x", "1.25x", "1.5x", "2.0x"])
@@ -410,6 +418,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         sidebar_actions.setContentsMargins(0, 0, 0, 0)
         sidebar_actions.addWidget(self.toggle_playlist_button)
         sidebar_actions.addWidget(self.toggle_details_button)
+        sidebar_actions.addWidget(self.danmaku_source_button)
 
         self.bottom_area = QWidget()
         self.bottom_area.setMaximumHeight(72)
@@ -515,6 +524,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.playlist.itemDoubleClicked.connect(self._play_clicked_item)
         self.toggle_playlist_button.clicked.connect(self._update_sidebar_visibility)
         self.toggle_details_button.clicked.connect(self._update_sidebar_visibility)
+        self.danmaku_source_button.clicked.connect(self._open_danmaku_source_dialog)
         self.video_widget.double_clicked.connect(self.toggle_fullscreen)
         self.video_widget.playback_finished.connect(self._handle_playback_finished)
         self.video_widget.subtitle_tracks_changed.connect(self._refresh_subtitle_state)
@@ -755,6 +765,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._refresh_window_title()
         self._render_playlist_group_combo()
         self._render_playlist_items()
+        self._refresh_danmaku_source_entry_points()
         self.progress.setValue(0)
         self._reset_subtitle_combo()
         self._reset_danmaku_combo()
@@ -941,6 +952,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.current_index = index
         try:
             self.playlist.setCurrentRow(self.current_index)
+            self._refresh_danmaku_source_entry_points()
             self._load_current_item(
                 start_position_seconds=start_position_seconds,
                 pause=pause,
@@ -2304,8 +2316,150 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         menu.addMenu(self._build_subtitle_scale_menu(menu, title="主字幕大小", secondary=False))
         menu.addMenu(self._build_subtitle_scale_menu(menu, title="次字幕大小", secondary=True))
         menu.addMenu(self._build_audio_menu(menu))
+        current_item = self._current_play_item()
+        action = menu.addAction("弹幕源", self._open_danmaku_source_dialog)
+        action.setEnabled(bool(current_item and current_item.danmaku_candidates))
         menu.addAction("视频信息", self._toggle_video_info_from_menu)
         return menu
+
+    def _current_play_item(self) -> PlayItem | None:
+        if self.session is None or not self.session.playlist:
+            return None
+        if not 0 <= self.current_index < len(self.session.playlist):
+            return None
+        return self.session.playlist[self.current_index]
+
+    def _refresh_danmaku_source_entry_points(self) -> None:
+        current_item = self._current_play_item()
+        enabled = bool(current_item and current_item.danmaku_candidates)
+        self.danmaku_source_button.setEnabled(enabled)
+
+    def _ensure_danmaku_source_dialog(self) -> QDialog:
+        if self._danmaku_source_dialog is not None:
+            return self._danmaku_source_dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("弹幕源")
+        dialog.resize(760, 480)
+        layout = QVBoxLayout(dialog)
+        self._danmaku_source_query_edit = QLineEdit(dialog)
+        layout.addWidget(self._danmaku_source_query_edit)
+        columns = QHBoxLayout()
+        self._danmaku_source_provider_list = QListWidget(dialog)
+        self._danmaku_source_option_list = QListWidget(dialog)
+        columns.addWidget(self._danmaku_source_provider_list, 1)
+        columns.addWidget(self._danmaku_source_option_list, 2)
+        layout.addLayout(columns)
+        actions = QHBoxLayout()
+        rerun_button = QPushButton("重新搜索", dialog)
+        reset_button = QPushButton("恢复默认搜索词", dialog)
+        switch_button = QPushButton("切换并加载", dialog)
+        rerun_button.clicked.connect(self._rerun_current_item_danmaku_search)
+        reset_button.clicked.connect(self._reset_current_item_danmaku_search_query)
+        switch_button.clicked.connect(self._switch_current_item_danmaku_source)
+        actions.addWidget(rerun_button)
+        actions.addWidget(reset_button)
+        actions.addWidget(switch_button)
+        layout.addLayout(actions)
+        self._danmaku_source_provider_list.currentRowChanged.connect(self._handle_danmaku_source_provider_changed)
+        self._danmaku_source_dialog = dialog
+        return dialog
+
+    def _populate_danmaku_source_provider_list(self, groups) -> None:
+        if self._danmaku_source_provider_list is None:
+            return
+        self._danmaku_source_provider_list.clear()
+        for group in groups:
+            self._danmaku_source_provider_list.addItem(f"{group.provider_label} ({len(group.options)})")
+        if groups:
+            self._danmaku_source_provider_list.setCurrentRow(0)
+
+    def _populate_danmaku_source_option_list(self, groups, selected_provider: str) -> None:
+        if self._danmaku_source_option_list is None:
+            return
+        self._danmaku_source_option_list.clear()
+        target_group = None
+        for group in groups:
+            if group.provider == selected_provider:
+                target_group = group
+                break
+        if target_group is None and groups:
+            target_group = groups[0]
+        if target_group is None:
+            return
+        current_item = self._current_play_item()
+        selected_url = current_item.selected_danmaku_url if current_item is not None else ""
+        selected_index = 0
+        for index, option in enumerate(target_group.options):
+            item = QListWidgetItem(option.name)
+            item.setData(Qt.ItemDataRole.UserRole, option.url)
+            self._danmaku_source_option_list.addItem(item)
+            if option.url == selected_url:
+                selected_index = index
+        if self._danmaku_source_option_list.count():
+            self._danmaku_source_option_list.setCurrentRow(selected_index)
+
+    def _handle_danmaku_source_provider_changed(self, index: int) -> None:
+        current_item = self._current_play_item()
+        if current_item is None or index < 0 or index >= len(current_item.danmaku_candidates):
+            return
+        group = current_item.danmaku_candidates[index]
+        self._populate_danmaku_source_option_list(current_item.danmaku_candidates, group.provider)
+
+    def _open_danmaku_source_dialog(self) -> None:
+        current_item = self._current_play_item()
+        if current_item is None:
+            return
+        dialog = self._ensure_danmaku_source_dialog()
+        if self._danmaku_source_query_edit is not None:
+            self._danmaku_source_query_edit.setText(current_item.danmaku_search_query)
+        self._populate_danmaku_source_provider_list(current_item.danmaku_candidates)
+        self._populate_danmaku_source_option_list(current_item.danmaku_candidates, current_item.selected_danmaku_provider)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _refresh_danmaku_source_dialog_from_item(self, current_item: PlayItem) -> None:
+        if self._danmaku_source_dialog is None:
+            return
+        if self._danmaku_source_query_edit is not None:
+            self._danmaku_source_query_edit.setText(current_item.danmaku_search_query)
+        self._populate_danmaku_source_provider_list(current_item.danmaku_candidates)
+        self._populate_danmaku_source_option_list(current_item.danmaku_candidates, current_item.selected_danmaku_provider)
+        self._refresh_danmaku_source_entry_points()
+
+    def _selected_danmaku_source_url_from_dialog(self) -> str:
+        if self._danmaku_source_option_list is None:
+            return ""
+        current_item = self._danmaku_source_option_list.currentItem()
+        if current_item is None:
+            return ""
+        return str(current_item.data(Qt.ItemDataRole.UserRole) or "")
+
+    def _rerun_current_item_danmaku_search(self) -> None:
+        if self.session is None or self.session.danmaku_controller is None or self._danmaku_source_query_edit is None:
+            return
+        current_item = self.session.playlist[self.current_index]
+        query = self._danmaku_source_query_edit.text().strip()
+        self.session.danmaku_controller.refresh_danmaku_sources(current_item, query_override=query)
+        self._refresh_danmaku_source_dialog_from_item(current_item)
+
+    def _reset_current_item_danmaku_search_query(self) -> None:
+        if self.session is None or self.session.danmaku_controller is None:
+            return
+        current_item = self.session.playlist[self.current_index]
+        self.session.danmaku_controller.refresh_danmaku_sources(current_item, query_override=None)
+        self._refresh_danmaku_source_dialog_from_item(current_item)
+
+    def _switch_current_item_danmaku_source(self) -> None:
+        if self.session is None or self.session.danmaku_controller is None:
+            return
+        current_item = self.session.playlist[self.current_index]
+        selected_url = self._selected_danmaku_source_url_from_dialog()
+        if not selected_url:
+            return
+        self.session.danmaku_controller.switch_danmaku_source(current_item, selected_url)
+        self._configure_danmaku_for_current_item()
+        self._refresh_danmaku_source_dialog_from_item(current_item)
 
     def _build_primary_subtitle_menu(self, parent: QWidget) -> QMenu:
         menu = QMenu("主字幕", parent)

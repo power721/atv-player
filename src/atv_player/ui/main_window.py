@@ -578,6 +578,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             use_local_history=request.use_local_history,
             restore_history=request.restore_history,
             playback_loader=request.playback_loader,
+            danmaku_controller=request.danmaku_controller,
             playback_progress_reporter=request.playback_progress_reporter,
             playback_stopper=request.playback_stopper,
             playback_history_loader=request.playback_history_loader,

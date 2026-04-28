@@ -8,6 +8,7 @@ from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QIcon, QI
 from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QMenu, QTableWidget, QWidget
 from PySide6.QtWidgets import QSplitter, QToolTip
 from atv_player.controllers.player_controller import PlayerSession
+from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption
 from atv_player.models import AppConfig, PlayItem, PlaybackLoadResult, VodItem
 from atv_player.player.mpv_widget import AudioTrack, SubtitleTrack
 
@@ -193,6 +194,159 @@ def test_player_window_icon_updates_use_cached_icon_loader(qtbot, monkeypatch) -
         str(window._icons_dir / "volume-off.svg"),
         str(window._icons_dir / "volume-on.svg"),
     ]
+
+
+def test_player_window_shows_danmaku_source_button_with_custom_icon(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    assert window.danmaku_source_button.toolTip() == "弹幕源"
+    assert window.danmaku_source_button.isEnabled() is False
+
+
+def test_player_window_video_context_menu_contains_danmaku_source_action_when_candidates_exist(qtbot) -> None:
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/1.m3u8",
+        media_title="红果短剧",
+        danmaku_candidates=[
+            DanmakuSourceGroup(
+                provider="tencent",
+                provider_label="腾讯",
+                options=[DanmakuSourceOption(provider="tencent", name="红果短剧 第1集", url="https://v.qq.com/demo")],
+            )
+        ],
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+    menu = window._build_video_context_menu()
+
+    assert any(action.text() == "弹幕源" for action in menu.actions())
+
+
+def test_player_window_opens_danmaku_source_dialog_for_current_item(qtbot) -> None:
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/1.m3u8",
+        media_title="红果短剧",
+        danmaku_candidates=[
+            DanmakuSourceGroup(
+                provider="tencent",
+                provider_label="腾讯",
+                options=[DanmakuSourceOption(provider="tencent", name="红果短剧 第1集", url="https://v.qq.com/demo")],
+            )
+        ],
+        selected_danmaku_provider="tencent",
+        selected_danmaku_url="https://v.qq.com/demo",
+        selected_danmaku_title="红果短剧 第1集",
+        danmaku_search_query="红果短剧 1集",
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+    window._open_danmaku_source_dialog()
+
+    assert window._danmaku_source_dialog is not None
+    assert window._danmaku_source_query_edit.text() == "红果短剧 1集"
+    assert window._danmaku_source_provider_list.count() == 1
+
+
+def test_player_window_reset_danmaku_source_query_restores_default(qtbot) -> None:
+    class FakeDanmakuController:
+        def __init__(self) -> None:
+            self.calls: list[str | None] = []
+
+        def refresh_danmaku_sources(self, item: PlayItem, query_override: str | None = None) -> None:
+            self.calls.append(query_override)
+            item.danmaku_search_query = "红果短剧 1集" if query_override is None else query_override
+            item.danmaku_search_query_overridden = query_override is not None
+
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/1.m3u8",
+        media_title="红果短剧",
+        danmaku_search_query="红果短剧 腾讯版",
+        danmaku_search_query_overridden=True,
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=FakeDanmakuController(),
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+    window._open_danmaku_source_dialog()
+    window._reset_current_item_danmaku_search_query()
+
+    assert window._danmaku_source_query_edit.text() == "红果短剧 1集"
+    assert item.danmaku_search_query_overridden is False
+
+
+def test_player_window_manual_danmaku_source_switch_reconfigures_current_item(qtbot, monkeypatch) -> None:
+    class FakeDanmakuController:
+        def switch_danmaku_source(self, item: PlayItem, page_url: str) -> str:
+            item.selected_danmaku_url = page_url
+            item.selected_danmaku_provider = "tencent"
+            item.selected_danmaku_title = "红果短剧 第1集"
+            item.danmaku_xml = '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">ok</d></i>'
+            return item.danmaku_xml
+
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/1.m3u8",
+        media_title="红果短剧",
+        danmaku_candidates=[
+            DanmakuSourceGroup(
+                provider="tencent",
+                provider_label="腾讯",
+                options=[DanmakuSourceOption(provider="tencent", name="红果短剧 第1集", url="https://v.qq.com/demo")],
+            )
+        ],
+        selected_danmaku_provider="tencent",
+        selected_danmaku_url="https://v.qq.com/demo",
+        selected_danmaku_title="红果短剧 第1集",
+        danmaku_search_query="红果短剧 1集",
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=FakeDanmakuController(),
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_configure_danmaku_for_current_item", lambda: None)
+
+    window.open_session(session)
+    window._open_danmaku_source_dialog()
+    window._switch_current_item_danmaku_source()
+
+    assert item.selected_danmaku_url == "https://v.qq.com/demo"
+    assert "ok" in item.danmaku_xml
 
 
 def test_player_window_uses_splitters_for_resizable_panels(qtbot) -> None:
@@ -2140,6 +2294,7 @@ def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> N
         "主字幕大小",
         "次字幕大小",
         "音轨",
+        "弹幕源",
         "视频信息",
     ]
     assert [action.text() for action in _submenu_actions(menu, "主字幕")] == ["自动选择", "关闭字幕", "中文 (默认)", "English"]
@@ -2587,6 +2742,7 @@ def test_player_window_context_menu_includes_primary_and_secondary_subtitle_size
         "主字幕大小",
         "次字幕大小",
         "音轨",
+        "弹幕源",
         "视频信息",
     ]
     assert [action.text() for action in _submenu_actions(menu, "主字幕大小")] == [
