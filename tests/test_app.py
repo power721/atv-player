@@ -2722,7 +2722,11 @@ def test_app_coordinator_starts_epg_and_remote_live_refresh_in_background(monkey
     monkeypatch.setattr(app_module, "LiveEpgRepository", lambda db_path: object())
     monkeypatch.setattr(app_module, "SpiderPluginRepository", lambda db_path: object())
     monkeypatch.setattr(app_module, "SpiderPluginLoader", lambda cache_dir: object())
-    monkeypatch.setattr(app_module, "SpiderPluginManager", lambda repository, loader: FakePluginManager())
+    monkeypatch.setattr(
+        app_module,
+        "SpiderPluginManager",
+        lambda repository, loader, playback_history_repository: FakePluginManager(),
+    )
     monkeypatch.setattr(app_module, "LiveEpgService", lambda repository, http_client: fake_epg_service)
     monkeypatch.setattr(
         app_module,
