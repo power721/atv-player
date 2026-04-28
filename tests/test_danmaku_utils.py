@@ -50,6 +50,16 @@ def test_infer_playlist_episode_number_prefers_current_title() -> None:
     assert infer_playlist_episode_number(playlist[1], playlist) == 2
 
 
+def test_infer_playlist_episode_number_prefers_trailing_episode_over_range_prefix() -> None:
+    playlist = [
+        PlayItem(title="01-08 - 01(1.66 GB)", url="http://m/1.mp4", index=0),
+        PlayItem(title="01-08 - 02(1.54 GB)", url="http://m/2.mp4", index=1),
+        PlayItem(title="01-08 - 03(1.42 GB)", url="http://m/3.mp4", index=2),
+    ]
+
+    assert infer_playlist_episode_number(playlist[1], playlist) == 2
+
+
 def test_infer_playlist_episode_number_falls_back_to_playlist_position() -> None:
     playlist = [
         PlayItem(title="正片.mp4", url="http://m/1.mp4", index=0),

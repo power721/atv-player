@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import threading
 
-import shiboken6
 from PySide6.QtCore import QObject, Signal
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from atv_player.api import ApiError, UnauthorizedError
 from atv_player.controllers.browse_controller import filter_search_results
 from atv_player.models import VodItem
+from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.filter_options import SEARCH_DRIVE_FILTER_OPTIONS
 from atv_player.ui.table_utils import configure_table_columns
 
@@ -36,12 +37,13 @@ class _ResolveSignals(QObject):
     unauthorized = Signal(int)
 
 
-class SearchPage(QWidget):
+class SearchPage(QWidget, AsyncGuardMixin):
     browse_requested = Signal(str)
     unauthorized = Signal()
 
     def __init__(self, controller) -> None:
         super().__init__()
+        self._init_async_guard()
         self.controller = controller
         self.keyword_edit = QLineEdit()
         self.filter_combo = QComboBox()
@@ -60,14 +62,14 @@ class SearchPage(QWidget):
         self._filtered_results: list[VodItem] = []
         self._search_request_id = 0
         self._resolve_request_id = 0
-        self._search_signals = _SearchSignals(self)
-        self._search_signals.succeeded.connect(self._handle_search_succeeded)
-        self._search_signals.failed.connect(self._handle_search_failed)
-        self._search_signals.unauthorized.connect(self._handle_search_unauthorized)
-        self._resolve_signals = _ResolveSignals(self)
-        self._resolve_signals.succeeded.connect(self._handle_resolve_succeeded)
-        self._resolve_signals.failed.connect(self._handle_resolve_failed)
-        self._resolve_signals.unauthorized.connect(self._handle_resolve_unauthorized)
+        self._search_signals = _SearchSignals()
+        self._connect_async_signal(self._search_signals.succeeded, self._handle_search_succeeded)
+        self._connect_async_signal(self._search_signals.failed, self._handle_search_failed)
+        self._connect_async_signal(self._search_signals.unauthorized, self._handle_search_unauthorized)
+        self._resolve_signals = _ResolveSignals()
+        self._connect_async_signal(self._resolve_signals.succeeded, self._handle_resolve_succeeded)
+        self._connect_async_signal(self._resolve_signals.failed, self._handle_resolve_failed)
+        self._connect_async_signal(self._resolve_signals.unauthorized, self._handle_resolve_unauthorized)
 
         for label, value in SEARCH_DRIVE_FILTER_OPTIONS:
             self.filter_combo.addItem(label, value)
@@ -101,7 +103,7 @@ class SearchPage(QWidget):
         self.results_table.cellDoubleClicked.connect(self._open_selected)
 
     def _is_widget_alive(self) -> bool:
-        return shiboken6.isValid(self)
+        return self._can_deliver_async_result()
 
     def search(self) -> None:
         keyword = self.keyword_edit.text().strip()
@@ -218,3 +220,7 @@ class SearchPage(QWidget):
             return
         self.status_label.setText(f"{len(self._filtered_results)} 条结果")
         self.unauthorized.emit()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self._deactivate_async_guard()
+        super().closeEvent(event)

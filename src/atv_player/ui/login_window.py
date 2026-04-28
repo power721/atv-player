@@ -1,6 +1,7 @@
 import threading
 
 from PySide6.QtCore import QObject, Signal
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
@@ -12,7 +13,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-import shiboken6
+from atv_player.ui.async_guard import AsyncGuardMixin
 
 
 class _LoginWindowSignals(QObject):
@@ -21,17 +22,18 @@ class _LoginWindowSignals(QObject):
     login_failed = Signal(str)
 
 
-class LoginWindow(QWidget):
+class LoginWindow(QWidget, AsyncGuardMixin):
     login_succeeded = Signal()
 
     def __init__(self, controller) -> None:
         super().__init__()
+        self._init_async_guard()
         self._controller = controller
         self._login_request_id = 0
-        self._signals = _LoginWindowSignals(self)
-        self._signals.defaults_loaded.connect(self._handle_defaults_loaded)
-        self._signals.login_succeeded.connect(self._handle_login_succeeded)
-        self._signals.login_failed.connect(self._handle_login_failed)
+        self._signals = _LoginWindowSignals()
+        self._connect_async_signal(self._signals.defaults_loaded, self._handle_defaults_loaded)
+        self._connect_async_signal(self._signals.login_succeeded, self._handle_login_succeeded)
+        self._connect_async_signal(self._signals.login_failed, self._handle_login_failed)
         self.setWindowTitle("alist-tvbox 登录")
         self.resize(720, 520)
 
@@ -88,15 +90,14 @@ class LoginWindow(QWidget):
     def _on_login_clicked(self) -> None:
         self._login_request_id += 1
         request_id = self._login_request_id
+        base_url = self.base_url_edit.text().strip()
+        username = self.username_edit.text().strip()
+        password = self.password_edit.text()
         self.login_button.setEnabled(False)
 
         def run() -> None:
             try:
-                self._controller.login(
-                    self.base_url_edit.text().strip(),
-                    self.username_edit.text().strip(),
-                    self.password_edit.text(),
-                )
+                self._controller.login(base_url, username, password)
             except Exception as exc:
                 if not self._can_deliver_worker_result():
                     return
@@ -131,4 +132,8 @@ class LoginWindow(QWidget):
         QMessageBox.critical(self, "登录失败", message)
 
     def _can_deliver_worker_result(self) -> bool:
-        return shiboken6.isValid(self)
+        return self._can_deliver_async_result()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self._deactivate_async_guard()
+        super().closeEvent(event)

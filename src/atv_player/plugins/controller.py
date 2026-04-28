@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 
 def _looks_like_media_url(value: str) -> bool:
     candidate = value.strip().lower()
+    if candidate.endswith(".html"):
+        return False
     if candidate.startswith(("http://", "https://", "rtmp://", "rtsp://")):
         return True
     return any(candidate.endswith(ext) or f"{ext}?" in candidate for ext in (".m3u8", ".mkv", ".mp4", ".flv"))

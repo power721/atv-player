@@ -4,8 +4,8 @@ import threading
 from threading import BoundedSemaphore
 from typing import cast
 
-import shiboken6
 from PySide6.QtCore import QObject, QSize, Qt, Signal
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QGridLayout,
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.api import ApiError, UnauthorizedError
+from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.poster_loader import load_local_poster_image, load_remote_poster_image, normalize_poster_url
 
 
@@ -33,7 +34,7 @@ class _PosterGridSignals(QObject):
     poster_loaded = Signal(object, object)
 
 
-class PosterGridPage(QWidget):
+class PosterGridPage(QWidget, AsyncGuardMixin):
     search_requested = Signal(str)
     open_requested = Signal(str)
     item_open_requested = Signal(object)
@@ -54,6 +55,7 @@ class PosterGridPage(QWidget):
         folder_navigation_enabled: bool = False,
     ) -> None:
         super().__init__()
+        self._init_async_guard()
         self.controller = controller
         self._click_action = click_action
         self._search_enabled = search_enabled
@@ -94,12 +96,12 @@ class PosterGridPage(QWidget):
         self._items_request_id = 0
         self._poster_generation = 0
         self._poster_semaphore = BoundedSemaphore(value=6)
-        self._signals = _PosterGridSignals(self)
-        self._signals.categories_loaded.connect(self._handle_categories_loaded)
-        self._signals.items_loaded.connect(self._handle_items_loaded)
-        self._signals.failed.connect(self._handle_failed)
-        self._signals.unauthorized.connect(self._handle_unauthorized)
-        self._signals.poster_loaded.connect(self._handle_poster_loaded)
+        self._signals = _PosterGridSignals()
+        self._connect_async_signal(self._signals.categories_loaded, self._handle_categories_loaded)
+        self._connect_async_signal(self._signals.items_loaded, self._handle_items_loaded)
+        self._connect_async_signal(self._signals.failed, self._handle_failed)
+        self._connect_async_signal(self._signals.unauthorized, self._handle_unauthorized)
+        self._connect_async_signal(self._signals.poster_loaded, self._handle_poster_loaded)
 
         self.category_list.setMinimumWidth(180)
         self.status_label.setWordWrap(True)
@@ -152,7 +154,7 @@ class PosterGridPage(QWidget):
             self.keyword_edit.returnPressed.connect(self.search)
 
     def _is_widget_alive(self) -> bool:
-        return shiboken6.isValid(self)
+        return self._can_deliver_async_result()
 
     def ensure_loaded(self) -> None:
         if self._initial_load_started:
@@ -478,6 +480,10 @@ class PosterGridPage(QWidget):
         pixmap = QPixmap.fromImage(image)
         button.setIcon(QIcon(pixmap))
         button.setIconSize(self._CARD_POSTER_SIZE)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self._deactivate_async_guard()
+        super().closeEvent(event)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

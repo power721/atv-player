@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import cast
 
 import httpx
-import shiboken6
 from PySide6.QtCore import QEvent, QObject, QSize, QTimer, Qt, Signal
 from PySide6.QtGui import (
     QActionGroup,
@@ -43,9 +42,10 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
-from atv_player.models import PlaybackLoadResult, VodItem
+from atv_player.models import PlayItem, PlaybackLoadResult, VodItem
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
+from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.icon_cache import load_icon
 from atv_player.ui.poster_loader import load_remote_poster_image, normalize_poster_url
@@ -184,7 +184,7 @@ class _PendingPlaybackPrepare:
     pause: bool
 
 
-class PlayerWindow(QWidget):
+class PlayerWindow(QWidget, AsyncGuardMixin):
     closed_to_main = Signal()
     _SEEK_SHORTCUT_SECONDS = 15
     _MODIFIED_SEEK_SHORTCUT_SECONDS = 60
@@ -221,6 +221,7 @@ class PlayerWindow(QWidget):
         playback_parser_service=None,
     ) -> None:
         super().__init__()
+        self._init_async_guard()
         self.controller = controller
         self.config = config
         self._save_config = save_config or (lambda: None)
@@ -261,16 +262,16 @@ class PlayerWindow(QWidget):
         self._danmaku_restore_secondary_position: int | None = None
         self._danmaku_restore_secondary_scale: int | None = None
         self.help_dialog: ShortcutHelpDialog | None = None
-        self._poster_load_signals = _PosterLoadSignals(self)
-        self._poster_load_signals.loaded.connect(self._handle_poster_load_finished)
-        self._play_item_resolve_signals = _PlayItemResolveSignals(self)
-        self._play_item_resolve_signals.succeeded.connect(self._handle_play_item_resolve_succeeded)
-        self._play_item_resolve_signals.failed.connect(self._handle_play_item_resolve_failed)
-        self._playback_prepare_signals = _PlaybackPrepareSignals(self)
-        self._playback_prepare_signals.succeeded.connect(self._handle_playback_prepare_succeeded)
-        self._playback_prepare_signals.failed.connect(self._handle_playback_prepare_failed)
-        self._background_task_signals = _BackgroundTaskSignals(self)
-        self._background_task_signals.failed.connect(self._append_log)
+        self._poster_load_signals = _PosterLoadSignals()
+        self._connect_async_signal(self._poster_load_signals.loaded, self._handle_poster_load_finished)
+        self._play_item_resolve_signals = _PlayItemResolveSignals()
+        self._connect_async_signal(self._play_item_resolve_signals.succeeded, self._handle_play_item_resolve_succeeded)
+        self._connect_async_signal(self._play_item_resolve_signals.failed, self._handle_play_item_resolve_failed)
+        self._playback_prepare_signals = _PlaybackPrepareSignals()
+        self._connect_async_signal(self._playback_prepare_signals.succeeded, self._handle_playback_prepare_succeeded)
+        self._connect_async_signal(self._playback_prepare_signals.failed, self._handle_playback_prepare_failed)
+        self._background_task_signals = _BackgroundTaskSignals()
+        self._connect_async_signal(self._background_task_signals.failed, self._append_log)
         self._danmaku_retry_timer = QTimer(self)
         self._danmaku_retry_timer.setSingleShot(True)
         self._danmaku_retry_timer.timeout.connect(self._retry_configure_danmaku_for_current_item)
@@ -626,7 +627,8 @@ class PlayerWindow(QWidget):
         self.playlist.setCurrentRow(self.current_index)
 
     def _set_button_icon(self, button: QPushButton, icon_name: str) -> None:
-        button.setIcon(load_icon(self._icons_dir / icon_name))
+        icon: QIcon = load_icon(self._icons_dir / icon_name)
+        button.setIcon(icon)
 
     def _update_mute_button_icon(self) -> None:
         icon_name = "volume-off.svg" if self._is_muted else "volume-on.svg"
@@ -1058,7 +1060,7 @@ class PlayerWindow(QWidget):
         self._save_config()
 
     def _is_window_alive(self) -> bool:
-        return shiboken6.isValid(self)
+        return self._can_deliver_async_result()
 
     def _invalidate_play_item_resolution(self) -> None:
         self._play_item_request_id += 1
@@ -2837,6 +2839,7 @@ class PlayerWindow(QWidget):
             self._append_log(f"播放失败: {exc}")
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        self._deactivate_async_guard()
         try:
             self._poster_request_id += 1
             self._invalidate_play_item_resolution()

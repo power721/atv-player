@@ -4,6 +4,7 @@ from datetime import datetime
 import threading
 
 from PySide6.QtCore import QObject, Signal
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -16,10 +17,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-import shiboken6
-
 from atv_player.api import ApiError, UnauthorizedError
 from atv_player.models import HistoryRecord
+from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.table_utils import configure_table_columns
 
 
@@ -35,12 +35,13 @@ class _HistoryMutationSignals(QObject):
     unauthorized = Signal(int)
 
 
-class HistoryPage(QWidget):
+class HistoryPage(QWidget, AsyncGuardMixin):
     open_detail_requested = Signal(object)
     unauthorized = Signal()
 
     def __init__(self, controller) -> None:
         super().__init__()
+        self._init_async_guard()
         self.controller = controller
         self._initial_load_started = False
         self.delete_button = QPushButton("删除")
@@ -62,14 +63,14 @@ class HistoryPage(QWidget):
         self.total_items = 0
         self._load_request_id = 0
         self._mutation_request_id = 0
-        self._load_signals = _HistoryLoadSignals(self)
-        self._load_signals.succeeded.connect(self._handle_load_succeeded)
-        self._load_signals.failed.connect(self._handle_load_failed)
-        self._load_signals.unauthorized.connect(self._handle_load_unauthorized)
-        self._mutation_signals = _HistoryMutationSignals(self)
-        self._mutation_signals.succeeded.connect(self._handle_mutation_succeeded)
-        self._mutation_signals.failed.connect(self._handle_mutation_failed)
-        self._mutation_signals.unauthorized.connect(self._handle_mutation_unauthorized)
+        self._load_signals = _HistoryLoadSignals()
+        self._connect_async_signal(self._load_signals.succeeded, self._handle_load_succeeded)
+        self._connect_async_signal(self._load_signals.failed, self._handle_load_failed)
+        self._connect_async_signal(self._load_signals.unauthorized, self._handle_load_unauthorized)
+        self._mutation_signals = _HistoryMutationSignals()
+        self._connect_async_signal(self._mutation_signals.succeeded, self._handle_mutation_succeeded)
+        self._connect_async_signal(self._mutation_signals.failed, self._handle_mutation_failed)
+        self._connect_async_signal(self._mutation_signals.unauthorized, self._handle_mutation_unauthorized)
         for size in ("20", "30", "50", "100"):
             self.page_size_combo.addItem(size, int(size))
         self.page_size_combo.setCurrentText(str(self.page_size))
@@ -272,6 +273,8 @@ class HistoryPage(QWidget):
         records: list[HistoryRecord],
         total: int,
     ) -> None:
+        if not self._can_deliver_worker_result():
+            return
         if request_id != self._load_request_id:
             return
         if page != self.current_page or size != self.page_size:
@@ -290,28 +293,42 @@ class HistoryPage(QWidget):
         self._update_pagination_controls()
 
     def _handle_load_failed(self, request_id: int) -> None:
+        if not self._can_deliver_worker_result():
+            return
         if request_id != self._load_request_id:
             return
 
     def _handle_load_unauthorized(self, request_id: int) -> None:
+        if not self._can_deliver_worker_result():
+            return
         if request_id != self._load_request_id:
             return
         self.unauthorized.emit()
 
     def _handle_mutation_succeeded(self, request_id: int, next_page: int) -> None:
+        if not self._can_deliver_worker_result():
+            return
         if request_id != self._mutation_request_id:
             return
         self.current_page = next_page
         self.load_history()
 
     def _handle_mutation_failed(self, request_id: int) -> None:
+        if not self._can_deliver_worker_result():
+            return
         if request_id != self._mutation_request_id:
             return
 
     def _handle_mutation_unauthorized(self, request_id: int) -> None:
+        if not self._can_deliver_worker_result():
+            return
         if request_id != self._mutation_request_id:
             return
         self.unauthorized.emit()
 
     def _can_deliver_worker_result(self) -> bool:
-        return shiboken6.isValid(self)
+        return self._can_deliver_async_result()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self._deactivate_async_guard()
+        super().closeEvent(event)

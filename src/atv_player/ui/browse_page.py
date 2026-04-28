@@ -4,8 +4,8 @@ from datetime import datetime
 import threading
 from typing import Any, cast
 
-import shiboken6
 from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from atv_player.api import ApiError, UnauthorizedError
 from atv_player.controllers.browse_controller import filter_search_results
 from atv_player.models import VodItem
+from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.filter_options import SEARCH_DRIVE_FILTER_OPTIONS
 from atv_player.ui.qt_compat import qbytearray_to_bytes, to_qbytearray
 from atv_player.ui.table_utils import configure_table_columns
@@ -123,12 +124,13 @@ class _ResolveSignals(QObject):
     unauthorized = Signal(int)
 
 
-class BrowsePage(QWidget):
+class BrowsePage(QWidget, AsyncGuardMixin):
     open_requested = Signal(object)
     unauthorized = Signal()
 
     def __init__(self, controller, config=None, save_config=None) -> None:
         super().__init__()
+        self._init_async_guard()
         self.controller = controller
         self.config = config
         self._save_config = save_config or (lambda: None)
@@ -176,22 +178,22 @@ class BrowsePage(QWidget):
         self._open_request_id = 0
         self._resolve_request_id = 0
         self._search_request_id = 0
-        self._folder_signals = _FolderLoadSignals(self)
-        self._folder_signals.succeeded.connect(self._handle_folder_load_succeeded)
-        self._folder_signals.failed.connect(self._handle_folder_load_failed)
-        self._folder_signals.unauthorized.connect(self._handle_folder_load_unauthorized)
-        self._open_signals = _OpenRequestSignals(self)
-        self._open_signals.succeeded.connect(self._handle_open_request_succeeded)
-        self._open_signals.failed.connect(self._handle_open_request_failed)
-        self._open_signals.unauthorized.connect(self._handle_open_request_unauthorized)
-        self._resolve_signals = _ResolveSignals(self)
-        self._resolve_signals.succeeded.connect(self._handle_resolve_succeeded)
-        self._resolve_signals.failed.connect(self._handle_resolve_failed)
-        self._resolve_signals.unauthorized.connect(self._handle_resolve_unauthorized)
-        self._search_signals = _SearchSignals(self)
-        self._search_signals.succeeded.connect(self._handle_search_succeeded)
-        self._search_signals.failed.connect(self._handle_search_failed)
-        self._search_signals.unauthorized.connect(self._handle_search_unauthorized)
+        self._folder_signals = _FolderLoadSignals()
+        self._connect_async_signal(self._folder_signals.succeeded, self._handle_folder_load_succeeded)
+        self._connect_async_signal(self._folder_signals.failed, self._handle_folder_load_failed)
+        self._connect_async_signal(self._folder_signals.unauthorized, self._handle_folder_load_unauthorized)
+        self._open_signals = _OpenRequestSignals()
+        self._connect_async_signal(self._open_signals.succeeded, self._handle_open_request_succeeded)
+        self._connect_async_signal(self._open_signals.failed, self._handle_open_request_failed)
+        self._connect_async_signal(self._open_signals.unauthorized, self._handle_open_request_unauthorized)
+        self._resolve_signals = _ResolveSignals()
+        self._connect_async_signal(self._resolve_signals.succeeded, self._handle_resolve_succeeded)
+        self._connect_async_signal(self._resolve_signals.failed, self._handle_resolve_failed)
+        self._connect_async_signal(self._resolve_signals.unauthorized, self._handle_resolve_unauthorized)
+        self._search_signals = _SearchSignals()
+        self._connect_async_signal(self._search_signals.succeeded, self._handle_search_succeeded)
+        self._connect_async_signal(self._search_signals.failed, self._handle_search_failed)
+        self._connect_async_signal(self._search_signals.unauthorized, self._handle_search_unauthorized)
 
         for label, value in SEARCH_DRIVE_FILTER_OPTIONS:
             self.filter_combo.addItem(label, value)
@@ -278,7 +280,7 @@ class BrowsePage(QWidget):
         self._update_pagination_controls()
 
     def _is_widget_alive(self) -> bool:
-        return shiboken6.isValid(self)
+        return self._can_deliver_async_result()
 
     def ensure_loaded(self, path: str | None = None) -> None:
         if self._initial_load_started:
@@ -720,3 +722,7 @@ class BrowsePage(QWidget):
         self.status_label.show()
         self.status_label.setText(f"{len(self._filtered_results)} 条结果")
         self.unauthorized.emit()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self._deactivate_async_guard()
+        super().closeEvent(event)

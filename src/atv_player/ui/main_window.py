@@ -4,7 +4,6 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
-import shiboken6
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -20,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from atv_player.ui.browse_page import BrowsePage
 from atv_player.models import HistoryRecord, OpenPlayerRequest
+from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.poster_grid_page import PosterGridPage
 from atv_player.ui.history_page import HistoryPage
@@ -99,7 +99,7 @@ class _MediaLoadResult:
     trim_breadcrumbs_to: int | None = None
 
 
-class MainWindow(QMainWindow):
+class MainWindow(QMainWindow, AsyncGuardMixin):
     logout_requested = Signal()
 
     def __init__(
@@ -124,6 +124,7 @@ class MainWindow(QMainWindow):
             playback_parser_service=None,
     ) -> None:
         super().__init__()
+        self._init_async_guard()
         self._save_config = save_config or (lambda: None)
         self._m3u8_ad_filter = m3u8_ad_filter
         self._playback_parser_service = playback_parser_service
@@ -178,18 +179,18 @@ class MainWindow(QMainWindow):
         self._media_request_id = 0
         self._restore_request_id = 0
         self._player_session_request_id = 0
-        self._open_request_signals = _AsyncRequestSignals(self)
-        self._open_request_signals.succeeded.connect(self._handle_open_request_succeeded)
-        self._open_request_signals.failed.connect(self._handle_open_request_failed)
-        self._media_request_signals = _AsyncRequestSignals(self)
-        self._media_request_signals.succeeded.connect(self._handle_media_load_succeeded)
-        self._media_request_signals.failed.connect(self._handle_media_load_failed)
-        self._restore_signals = _RestoreSignals(self)
-        self._restore_signals.succeeded.connect(self._handle_restore_succeeded)
-        self._restore_signals.failed.connect(self._handle_restore_failed)
-        self._session_open_signals = _SessionOpenSignals(self)
-        self._session_open_signals.succeeded.connect(self._handle_session_open_succeeded)
-        self._session_open_signals.failed.connect(self._handle_session_open_failed)
+        self._open_request_signals = _AsyncRequestSignals()
+        self._connect_async_signal(self._open_request_signals.succeeded, self._handle_open_request_succeeded)
+        self._connect_async_signal(self._open_request_signals.failed, self._handle_open_request_failed)
+        self._media_request_signals = _AsyncRequestSignals()
+        self._connect_async_signal(self._media_request_signals.succeeded, self._handle_media_load_succeeded)
+        self._connect_async_signal(self._media_request_signals.failed, self._handle_media_load_failed)
+        self._restore_signals = _RestoreSignals()
+        self._connect_async_signal(self._restore_signals.succeeded, self._handle_restore_succeeded)
+        self._connect_async_signal(self._restore_signals.failed, self._handle_restore_failed)
+        self._session_open_signals = _SessionOpenSignals()
+        self._connect_async_signal(self._session_open_signals.succeeded, self._handle_session_open_succeeded)
+        self._connect_async_signal(self._session_open_signals.failed, self._handle_session_open_failed)
 
         self.nav_tabs.addTab(self.douban_page, "豆瓣电影")
         self.nav_tabs.addTab(self.telegram_page, "电报影视")
@@ -559,7 +560,7 @@ class MainWindow(QMainWindow):
         self.show_error(message)
 
     def _is_window_alive(self) -> bool:
-        return shiboken6.isValid(self)
+        return self._can_deliver_async_result()
 
     def _next_player_session_request_id(self) -> int:
         self._player_session_request_id += 1
@@ -817,6 +818,7 @@ class MainWindow(QMainWindow):
         super().keyPressEvent(event)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        self._deactivate_async_guard()
         self.config.main_window_geometry = qbytearray_to_bytes(self.saveGeometry())
         if self.isVisible():
             self.config.last_active_window = "main"

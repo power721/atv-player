@@ -302,7 +302,7 @@ def test_mpv_widget_disables_mpv_keyboard_bindings_for_embedded_player(qtbot, mo
     assert captured["cache"] is True
     assert captured["cache_pause_initial"] is True
     assert captured["cache_pause_wait"] == 3
-    assert captured["demuxer_max_bytes"] == "768M"
+    assert captured["demuxer_max_bytes"] == "512M"
     assert captured["demuxer_max_back_bytes"] == "128M"
     assert captured["stream_buffer_size"] == "4M"
     assert captured["network_timeout"] == 15
@@ -1047,7 +1047,7 @@ def test_mpv_widget_lists_embedded_audio_tracks_with_readable_labels(qtbot) -> N
     ]
 
 
-def test_mpv_widget_auto_mode_prefers_chinese_or_mandarin_audio(qtbot) -> None:
+def test_mpv_widget_auto_mode_keeps_mpv_auto_selection(qtbot) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
     player = types.SimpleNamespace(
@@ -1061,8 +1061,8 @@ def test_mpv_widget_auto_mode_prefers_chinese_or_mandarin_audio(qtbot) -> None:
 
     applied_track_id = widget.apply_audio_mode("auto")
 
-    assert applied_track_id == 5
-    assert player.aid == 5
+    assert applied_track_id is None
+    assert player.aid == "auto"
 
 
 def test_mpv_widget_auto_mode_falls_back_to_mpv_default_without_preferred_audio(qtbot) -> None:

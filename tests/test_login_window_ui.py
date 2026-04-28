@@ -154,3 +154,47 @@ def test_login_window_shows_async_login_error_and_restores_button(qtbot, monkeyp
 
     qtbot.waitUntil(lambda: errors == [("登录失败", "bad credentials")], timeout=1000)
     assert window.login_button.isEnabled() is True
+
+
+def test_login_window_reads_inputs_on_main_thread_before_worker_start(qtbot, monkeypatch) -> None:
+    controller = AsyncLoginController()
+    window = LoginWindow(controller)
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.waitUntil(lambda: controller.load_defaults_calls == 1, timeout=1000)
+    controller.finish_defaults(AppConfig(base_url="http://demo", username="alice"))
+    qtbot.waitUntil(lambda: window.base_url_edit.text() == "http://demo", timeout=1000)
+
+    main_thread_id = threading.get_ident()
+    text_call_threads: list[int] = []
+
+    base_url_text = window.base_url_edit.text
+    username_text = window.username_edit.text
+    password_text = window.password_edit.text
+
+    monkeypatch.setattr(
+        window.base_url_edit,
+        "text",
+        lambda: text_call_threads.append(threading.get_ident()) or base_url_text(),
+    )
+    monkeypatch.setattr(
+        window.username_edit,
+        "text",
+        lambda: text_call_threads.append(threading.get_ident()) or username_text(),
+    )
+    monkeypatch.setattr(
+        window.password_edit,
+        "text",
+        lambda: text_call_threads.append(threading.get_ident()) or password_text(),
+    )
+
+    window.base_url_edit.setText("http://server")
+    window.username_edit.setText("bob")
+    window.password_edit.setText("secret")
+
+    with qtbot.waitSignal(window.login_succeeded, timeout=1000):
+        window.login_button.click()
+        qtbot.waitUntil(lambda: controller.login_calls == [("http://server", "bob", "secret")], timeout=1000)
+        controller.finish_login(AppConfig(base_url="http://server", username="bob", token="token-123"))
+
+    assert text_call_threads == [main_thread_id, main_thread_id, main_thread_id]
