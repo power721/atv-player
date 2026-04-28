@@ -1471,6 +1471,22 @@ class PlayerWindow(QWidget):
         ):
             self._replay_current_item()
 
+    def _preferred_danmaku_enabled(self) -> bool:
+        if self.config is None:
+            return True
+        return bool(getattr(self.config, "preferred_danmaku_enabled", True))
+
+    def _preferred_danmaku_line_count(self) -> int:
+        if self.config is None:
+            return 1
+        return max(1, min(int(getattr(self.config, "preferred_danmaku_line_count", 1)), 5))
+
+    def _preferred_danmaku_combo_index(self) -> int:
+        if not self._preferred_danmaku_enabled():
+            return 1
+        line_count = self._preferred_danmaku_line_count()
+        return 0 if line_count == 1 else line_count + 1
+
     def _mark_manual_subtitle_switch_refresh(self) -> None:
         self._manual_subtitle_switch_refresh_until = (
             time.monotonic() + self._MANUAL_SUBTITLE_SWITCH_REFRESH_WINDOW_SECONDS
@@ -1935,9 +1951,15 @@ class PlayerWindow(QWidget):
             self._danmaku_retry_attempts = 0
             return
         self._pending_danmaku_timer.stop()
-        self._reset_danmaku_combo(enabled=True, current_index=0)
+        preferred_index = self._preferred_danmaku_combo_index()
+        self._reset_danmaku_combo(enabled=True, current_index=preferred_index)
+        if preferred_index == 1:
+            self._clear_active_danmaku()
+            self._danmaku_retry_attempts = 0
+            return
         try:
-            self._enable_danmaku(1)
+            self._enable_danmaku(self._preferred_danmaku_line_count())
+            self._reset_danmaku_combo(enabled=True, current_index=preferred_index)
             self._danmaku_retry_attempts = 0
         except Exception as exc:
             if self._should_retry_danmaku_load(exc):
