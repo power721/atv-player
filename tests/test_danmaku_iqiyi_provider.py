@@ -1,6 +1,7 @@
 import json
 import zlib
 
+import httpx
 import pytest
 
 from atv_player.danmaku.errors import DanmakuResolveError, DanmakuSearchError
@@ -222,6 +223,44 @@ def test_iqiyi_search_expands_album_link_via_album_avlist_api_config() -> None:
 
     assert ("八千里路云和月第14集", "https://www.iqiyi.com/v_target14.html") in [
         (item.name, item.url) for item in items
+    ]
+
+
+def test_iqiyi_search_falls_back_to_partial_search_results_when_album_expansion_times_out() -> None:
+    def fake_get(url: str, **kwargs):
+        if url == "https://search.video.iqiyi.com/o":
+            return JsonResponse(
+                {
+                    "data": {
+                        "docinfos": [
+                            {
+                                "albumDocInfo": {
+                                    "albumId": 6421036798758301,
+                                    "channel": "电视剧,2",
+                                    "itemTotalNumber": 40,
+                                    "albumTitle": "八千里路云和月",
+                                    "albumLink": "http://www.iqiyi.com/a_1qzrer2eqcx.html",
+                                },
+                                "videoinfos": [
+                                    {"itemTitle": "八千里路云和月第1集", "itemNumber": 1, "itemLink": "http://www.iqiyi.com/v_twylt9v918.html"},
+                                    {"itemTitle": "八千里路云和月第10集", "itemNumber": 10, "itemLink": "http://www.iqiyi.com/v_kjnf5f02xg.html"},
+                                ],
+                            }
+                        ]
+                    }
+                }
+            )
+        if url == "https://www.iqiyi.com/a_1qzrer2eqcx.html?jump=0":
+            raise httpx.ReadTimeout("timed out")
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    provider = IqiyiDanmakuProvider(get=fake_get)
+
+    items = provider.search("八千里路云和月")
+
+    assert [(item.name, item.url) for item in items] == [
+        ("八千里路云和月第1集", "https://www.iqiyi.com/v_twylt9v918.html"),
+        ("八千里路云和月第10集", "https://www.iqiyi.com/v_kjnf5f02xg.html"),
     ]
 
 

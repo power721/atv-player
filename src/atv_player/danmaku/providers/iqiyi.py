@@ -131,7 +131,10 @@ class IqiyiDanmakuProvider:
         videos = list(item.get("videoinfos") or album_info.get("videoinfos") or [])
         if not self._should_expand_album_videos(videos, album_info):
             return videos
-        expanded = self._expand_album_videos(album_info)
+        try:
+            expanded = self._expand_album_videos(album_info)
+        except httpx.HTTPError:
+            return videos
         if expanded:
             return expanded
         return videos
