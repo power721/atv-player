@@ -712,6 +712,53 @@ def test_controller_extracts_episode_number_from_sxxexx_style_titles() -> None:
     assert calls == [("search", "网盘剧集 25集|https://pan.quark.cn/s/f518510ef92a")]
 
 
+def test_controller_extracts_episode_number_from_numeric_title_with_size_suffix() -> None:
+    class DanmakuDriveLinkSpider(DriveLinkSpider):
+        def danmaku(self):
+            return True
+
+    calls: list[tuple[str, str]] = []
+
+    class FakeDanmakuService:
+        def search_danmu(self, name: str, reg_src: str = ""):
+            calls.append(("search", f"{name}|{reg_src}"))
+            return []
+
+    def load_drive_detail(link: str) -> dict:
+        assert link == "https://pan.quark.cn/s/f518510ef92a"
+        return {
+            "list": [
+                {
+                    "vod_id": "1$94954$1",
+                    "vod_name": "百度资源",
+                    "items": [
+                        {
+                            "title": "12(1.26 GB)",
+                            "url": "http://m/12.mp4",
+                            "path": "/S1/12.mp4",
+                            "size": 12,
+                        },
+                    ],
+                }
+            ]
+        }
+
+    controller = SpiderPluginController(
+        DanmakuDriveLinkSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        drive_detail_loader=load_drive_detail,
+        danmaku_service=FakeDanmakuService(),
+    )
+
+    request = controller.build_request("/detail/drive")
+    assert request.playback_loader is not None
+    result = request.playback_loader(request.playlists[0][0])
+
+    assert result is not None
+    assert calls == [("search", "网盘剧集 12集|https://pan.quark.cn/s/f518510ef92a")]
+
+
 def test_controller_uses_local_history_episode_for_quark_drive_replacement_start_index() -> None:
     spider = DriveLinkSpider()
     load_calls: list[str] = []

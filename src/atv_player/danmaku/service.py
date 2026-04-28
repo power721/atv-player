@@ -47,21 +47,14 @@ class DanmakuService:
         normalized = normalize_name(name)
         search_keyword = strip_episode_suffix(normalized) or normalized
         requested_episode = extract_episode_number(normalized)
-        results: list[DanmakuSearchItem] = []
-        for key in self._ordered_provider_keys(reg_src):
-            try:
-                provider_items = self._providers[key].search(search_keyword)
-            except Exception as exc:
-                logger.warning("Danmaku provider search failed provider=%s name=%s error=%s", key, search_keyword, exc)
-                continue
-            for item in provider_items:
-                if should_filter_name(search_keyword, item.name):
-                    continue
-                ratio = item.ratio or similarity_score(search_keyword, item.name)
-                simi = item.simi or ratio
-                results.append(replace(item, ratio=ratio, simi=simi))
+        primary_query = normalized if requested_episode is not None else search_keyword
+        print(primary_query, requested_episode)
+        provider_keys = self._ordered_provider_keys(reg_src)
+        results = self._collect_search_results(provider_keys, primary_query)
         if requested_episode is not None:
+            print(results)
             matching = [item for item in results if extract_episode_number(item.name) == requested_episode]
+            print(matching)
             if matching:
                 no_episode = [item for item in results if extract_episode_number(item.name) is None]
                 results = [*matching, *no_episode]
@@ -74,6 +67,22 @@ class DanmakuService:
                 self._provider_rank.get(item.provider, len(self._provider_order)),
             ),
         )
+
+    def _collect_search_results(self, provider_keys: list[str], query_name: str) -> list[DanmakuSearchItem]:
+        results: list[DanmakuSearchItem] = []
+        for key in provider_keys:
+            try:
+                provider_items = self._providers[key].search(query_name)
+            except Exception as exc:
+                logger.warning("Danmaku provider search failed provider=%s name=%s error=%s", key, query_name, exc)
+                continue
+            for item in provider_items:
+                if should_filter_name(query_name, item.name):
+                    continue
+                ratio = item.ratio or similarity_score(query_name, item.name)
+                simi = item.simi or ratio
+                results.append(replace(item, ratio=ratio, simi=simi))
+        return results
 
     def resolve_danmu(self, page_url: str) -> str:
         for key in self._provider_order:

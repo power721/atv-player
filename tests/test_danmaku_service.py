@@ -47,7 +47,7 @@ def test_search_danmu_prefers_provider_from_reg_src() -> None:
     results = service.search_danmu("剑来 第1集", "https://v.qq.com/x/cover/demo.html")
 
     assert [item.provider for item in results] == ["tencent"]
-    assert tencent.search_calls == ["剑来"]
+    assert tencent.search_calls == ["剑来 第1集"]
     assert youku.search_calls == []
 
 
@@ -99,11 +99,11 @@ def test_search_danmu_ignores_single_provider_search_failures() -> None:
     results = service.search_danmu("剑来 第二季 10集", "/play/10")
 
     assert [(item.provider, item.url) for item in results] == [("tencent", "https://tencent/item")]
-    assert tencent.search_calls == ["剑来 第二季"]
-    assert youku.search_calls == ["剑来 第二季"]
+    assert tencent.search_calls == ["剑来 第二季 10集"]
+    assert youku.search_calls == ["剑来 第二季 10集"]
 
 
-def test_search_danmu_strips_episode_suffix_before_calling_providers() -> None:
+def test_search_danmu_uses_full_title_when_episode_number_is_present() -> None:
     tencent = FakeProvider(
         "tencent",
         [DanmakuSearchItem(provider="tencent", name="剑来 第二季 第10集", url="https://tencent/item")],
@@ -118,8 +118,8 @@ def test_search_danmu_strips_episode_suffix_before_calling_providers() -> None:
 
     service.search_danmu("剑来 第二季 10集")
 
-    assert tencent.search_calls == ["剑来 第二季"]
-    assert youku.search_calls == ["剑来 第二季"]
+    assert tencent.search_calls == ["剑来 第二季 10集"]
+    assert youku.search_calls == ["剑来 第二季 10集"]
 
 
 def test_search_danmu_filters_to_candidates_with_matching_episode_number() -> None:
@@ -154,6 +154,26 @@ def test_search_danmu_keeps_fallback_ranking_when_no_candidate_matches_requested
     results = service.search_danmu("剑来 第二季 10集")
 
     assert [item.url for item in results] == ["https://youku/special", "https://tencent/9"]
+
+
+def test_search_danmu_does_not_fall_back_to_stripped_keyword_when_episode_search_misses() -> None:
+    class RetryAwareProvider(FakeProvider):
+        def search(self, name: str) -> list[DanmakuSearchItem]:
+            self.search_calls.append(name)
+            if name == "蜜语纪 15集":
+                return [
+                    DanmakuSearchItem(provider="tencent", name="蜜语纪 10集", url="https://tencent/10"),
+                    DanmakuSearchItem(provider="tencent", name="蜜语纪 11集", url="https://tencent/11"),
+                ]
+            return []
+
+    tencent = RetryAwareProvider("tencent", [], [])
+    service = DanmakuService({"tencent": tencent}, provider_order=["tencent"])
+
+    results = service.search_danmu("蜜语纪 15集")
+
+    assert [item.url for item in results] == ["https://tencent/10", "https://tencent/11"]
+    assert tencent.search_calls == ["蜜语纪 15集"]
 
 
 def test_resolve_danmu_dispatches_by_url_and_builds_xml() -> None:

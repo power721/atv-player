@@ -1,6 +1,7 @@
 from atv_player.danmaku.models import DanmakuRecord
 from atv_player.danmaku.utils import (
     build_xml,
+    extract_episode_number,
     match_provider,
     normalize_name,
     should_filter_name,
@@ -23,6 +24,10 @@ def test_should_filter_name_rejects_unrelated_titles() -> None:
     target = normalize_name("剑来 第1集")
     assert should_filter_name(target, "凡人修仙传 第1集") is True
     assert should_filter_name(target, "剑来 第1集") is False
+
+
+def test_extract_episode_number_supports_numeric_title_with_size_suffix() -> None:
+    assert extract_episode_number("12(1.26 GB)") == 12
 
 
 def test_build_xml_escapes_content_and_keeps_expected_shape() -> None:

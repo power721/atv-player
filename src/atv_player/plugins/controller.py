@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import threading
 from collections.abc import Callable
 from collections.abc import Mapping
@@ -10,6 +9,7 @@ from urllib.parse import urlparse
 
 from atv_player.api import ApiError
 from atv_player.danmaku.cache import load_cached_danmaku_xml, save_cached_danmaku_xml
+from atv_player.danmaku.utils import extract_episode_number
 from atv_player.controllers.browse_controller import _map_vod_item
 from atv_player.controllers.douban_controller import _map_category, _map_item
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
@@ -28,22 +28,10 @@ def _looks_like_media_url(value: str) -> bool:
 
 
 def _extract_episode_label(title: str) -> str:
-    candidate = title.strip()
-    if not candidate:
+    episode_number = extract_episode_number(title)
+    if episode_number is None:
         return ""
-    patterns = (
-        (r"第\s*(\d+)\s*集", "{number}集"),
-        (r"(\d+)\s*集", "{number}集"),
-        (r"S\d+\s*E(\d+)", "{number}集"),
-        (r"\bEP?\s*(\d+)\b", "{number}集"),
-        (r"\bE\s*(\d+)\b", "{number}集"),
-    )
-    for pattern, template in patterns:
-        match = re.search(pattern, candidate, re.IGNORECASE)
-        if match is None:
-            continue
-        return template.format(number=match.group(1))
-    return ""
+    return f"{episode_number}集"
 
 
 def _build_danmaku_search_name(item: PlayItem) -> str:
