@@ -47,7 +47,7 @@ def test_search_danmu_prefers_provider_from_reg_src() -> None:
     results = service.search_danmu("剑来 第1集", "https://v.qq.com/x/cover/demo.html")
 
     assert [item.provider for item in results] == ["tencent"]
-    assert tencent.search_calls == ["剑来 第1集"]
+    assert tencent.search_calls == ["剑来"]
     assert youku.search_calls == []
 
 
@@ -99,8 +99,61 @@ def test_search_danmu_ignores_single_provider_search_failures() -> None:
     results = service.search_danmu("剑来 第二季 10集", "/play/10")
 
     assert [(item.provider, item.url) for item in results] == [("tencent", "https://tencent/item")]
-    assert tencent.search_calls == ["剑来 第二季 10集"]
-    assert youku.search_calls == ["剑来 第二季 10集"]
+    assert tencent.search_calls == ["剑来 第二季"]
+    assert youku.search_calls == ["剑来 第二季"]
+
+
+def test_search_danmu_strips_episode_suffix_before_calling_providers() -> None:
+    tencent = FakeProvider(
+        "tencent",
+        [DanmakuSearchItem(provider="tencent", name="剑来 第二季 第10集", url="https://tencent/item")],
+        [],
+    )
+    youku = FakeProvider(
+        "youku",
+        [DanmakuSearchItem(provider="youku", name="剑来 第二季 第10集", url="https://youku/item")],
+        [],
+    )
+    service = DanmakuService({"tencent": tencent, "youku": youku}, provider_order=["tencent", "youku"])
+
+    service.search_danmu("剑来 第二季 10集")
+
+    assert tencent.search_calls == ["剑来 第二季"]
+    assert youku.search_calls == ["剑来 第二季"]
+
+
+def test_search_danmu_filters_to_candidates_with_matching_episode_number() -> None:
+    tencent = FakeProvider(
+        "tencent",
+        [
+            DanmakuSearchItem(provider="tencent", name="剑来 第二季 第9集", url="https://tencent/9"),
+            DanmakuSearchItem(provider="tencent", name="剑来 第二季 第10集", url="https://tencent/10"),
+        ],
+        [],
+    )
+    service = DanmakuService({"tencent": tencent}, provider_order=["tencent"])
+
+    results = service.search_danmu("剑来 第二季 10集")
+
+    assert [item.url for item in results] == ["https://tencent/10"]
+
+
+def test_search_danmu_keeps_fallback_ranking_when_no_candidate_matches_requested_episode() -> None:
+    tencent = FakeProvider(
+        "tencent",
+        [DanmakuSearchItem(provider="tencent", name="剑来 第二季 第9集", url="https://tencent/9", ratio=0.86, simi=0.86)],
+        [],
+    )
+    youku = FakeProvider(
+        "youku",
+        [DanmakuSearchItem(provider="youku", name="剑来 第二季 特别篇", url="https://youku/special", ratio=0.92, simi=0.92)],
+        [],
+    )
+    service = DanmakuService({"tencent": tencent, "youku": youku}, provider_order=["tencent", "youku"])
+
+    results = service.search_danmu("剑来 第二季 10集")
+
+    assert [item.url for item in results] == ["https://youku/special", "https://tencent/9"]
 
 
 def test_resolve_danmu_dispatches_by_url_and_builds_xml() -> None:

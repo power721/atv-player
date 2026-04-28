@@ -16,7 +16,7 @@ def test_tencent_provider_search_maps_candidates_from_search_payload() -> None:
             == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch?vplatform=2"
         )
         assert content is not None
-        assert '"query":"剑来 第1集"' in content
+        assert '"query":"剑来"' in content
         assert '"pagenum":0' in content
         assert '"pagesize":30' in content
         assert headers == {
@@ -49,7 +49,7 @@ def test_tencent_provider_search_maps_candidates_from_search_payload() -> None:
 
     provider = TencentDanmakuProvider(post=fake_post)
 
-    items = provider.search("剑来 第1集")
+    items = provider.search("剑来")
 
     assert len(items) == 1
     assert items[0].provider == "tencent"
@@ -184,7 +184,7 @@ def test_tencent_provider_search_falls_back_to_web_when_mbsearch_returns_busines
 
     provider = TencentDanmakuProvider(get=fake_get, post=fake_post)
 
-    items = provider.search("剑来 第1集")
+    items = provider.search("剑来")
 
     assert len(items) == 1
     assert items[0].name == "剑来 第1集"
@@ -220,7 +220,7 @@ def test_tencent_provider_search_falls_back_to_web_when_mbsearch_http_fails() ->
 
     provider = TencentDanmakuProvider(get=fake_get, post=fake_post)
 
-    items = provider.search("剑来 第1集")
+    items = provider.search("剑来")
 
     assert len(items) == 1
     assert items[0].name == "剑来 第1集"

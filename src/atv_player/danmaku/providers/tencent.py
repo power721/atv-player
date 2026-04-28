@@ -256,7 +256,7 @@ class TencentDanmakuProvider:
         return output
 
     def _episode_keyword_base(self, query_name: str) -> str:
-        return re.sub(r"\s+\d+\s*集\s*$", "", query_name.strip(), flags=re.IGNORECASE).strip()
+        return re.sub(r"\s+第?\d+\s*集\s*$", "", query_name.strip(), flags=re.IGNORECASE).strip()
 
     def _dedupe_items(self, items: list[dict[str, str]]) -> list[dict[str, str]]:
         seen: set[str] = set()

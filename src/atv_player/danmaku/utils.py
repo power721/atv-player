@@ -14,6 +14,14 @@ _NOISE_PATTERNS = (
     r"\([^)]*(高清|超清|蓝光|qq\.com|youku\.com)[^)]*\)",
 )
 
+_EPISODE_PATTERNS = (
+    r"第\s*(\d+)\s*[集话期]",
+    r"(?<!\d)(\d+)\s*[集话期]",
+    r"\bS\d+\s*E(\d+)\b",
+    r"\bEP?\s*(\d+)\b",
+    r"\bE\s*(\d+)\b",
+)
+
 
 def normalize_name(name: str) -> str:
     value = str(name).strip()
@@ -21,6 +29,32 @@ def normalize_name(name: str) -> str:
         value = re.sub(pattern, "", value, flags=re.IGNORECASE)
     value = re.sub(r"\s+", " ", value)
     return value.strip()
+
+
+def extract_episode_number(name: str) -> int | None:
+    value = normalize_name(name)
+    for pattern in _EPISODE_PATTERNS:
+        match = re.search(pattern, value, re.IGNORECASE)
+        if match is None:
+            continue
+        return int(match.group(1))
+    return None
+
+
+def strip_episode_suffix(name: str) -> str:
+    value = normalize_name(name)
+    patterns = (
+        r"\s+第\s*\d+\s*[集话期]\s*$",
+        r"\s+\d+\s*[集话期]\s*$",
+        r"\s+S\d+\s*E\d+\s*$",
+        r"\s+EP?\s*\d+\s*$",
+        r"\s+E\s*\d+\s*$",
+    )
+    for pattern in patterns:
+        stripped = re.sub(pattern, "", value, flags=re.IGNORECASE)
+        if stripped != value:
+            return stripped.strip()
+    return value
 
 
 def match_provider(reg_src: str) -> str | None:
@@ -39,6 +73,10 @@ def match_provider(reg_src: str) -> str | None:
 def _simplify_name(name: str) -> str:
     value = normalize_name(name).casefold()
     value = re.sub(r"第\s*\d+\s*[集话期]", "", value)
+    value = re.sub(r"(?<!\d)\d+\s*[集话期]", "", value)
+    value = re.sub(r"\bs\d+\s*e\d+\b", "", value)
+    value = re.sub(r"\bep?\s*\d+\b", "", value)
+    value = re.sub(r"\be\s*\d+\b", "", value)
     value = re.sub(r"[\W_]+", "", value)
     return value
 

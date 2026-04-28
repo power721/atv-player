@@ -12,7 +12,15 @@ from atv_player.danmaku.providers import (
     YoukuDanmakuProvider,
 )
 from atv_player.danmaku.providers.base import DanmakuProvider
-from atv_player.danmaku.utils import build_xml, match_provider, normalize_name, should_filter_name, similarity_score
+from atv_player.danmaku.utils import (
+    build_xml,
+    extract_episode_number,
+    match_provider,
+    normalize_name,
+    should_filter_name,
+    similarity_score,
+    strip_episode_suffix,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -36,22 +44,34 @@ class DanmakuService:
 
     def search_danmu(self, name: str, reg_src: str = "") -> list[DanmakuSearchItem]:
         normalized = normalize_name(name)
+        search_keyword = strip_episode_suffix(normalized) or normalized
+        requested_episode = extract_episode_number(normalized)
         results: list[DanmakuSearchItem] = []
         for key in self._ordered_provider_keys(reg_src):
             try:
-                provider_items = self._providers[key].search(normalized)
+                provider_items = self._providers[key].search(search_keyword)
             except Exception as exc:
-                logger.warning("Danmaku provider search failed provider=%s name=%s error=%s", key, normalized, exc)
+                logger.warning("Danmaku provider search failed provider=%s name=%s error=%s", key, search_keyword, exc)
                 continue
             for item in provider_items:
-                if should_filter_name(normalized, item.name):
+                if should_filter_name(search_keyword, item.name):
                     continue
-                ratio = item.ratio or similarity_score(normalized, item.name)
+                ratio = item.ratio or similarity_score(search_keyword, item.name)
                 simi = item.simi or ratio
                 results.append(replace(item, ratio=ratio, simi=simi))
+        if requested_episode is not None:
+            matching = [item for item in results if extract_episode_number(item.name) == requested_episode]
+            if matching:
+                no_episode = [item for item in results if extract_episode_number(item.name) is None]
+                results = [*matching, *no_episode]
         return sorted(
             results,
-            key=lambda item: (-item.ratio, -item.simi, self._provider_rank.get(item.provider, len(self._provider_order))),
+            key=lambda item: (
+                -(extract_episode_number(item.name) == requested_episode) if requested_episode is not None else 0,
+                -item.ratio,
+                -item.simi,
+                self._provider_rank.get(item.provider, len(self._provider_order)),
+            ),
         )
 
     def resolve_danmu(self, page_url: str) -> str:
