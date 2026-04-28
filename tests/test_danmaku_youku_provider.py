@@ -38,6 +38,40 @@ def test_youku_provider_search_maps_candidates_from_search_payload() -> None:
     assert items[0].url == "https://v.youku.com/v_show/id_demo123.html"
 
 
+def test_youku_provider_search_appends_update_notice_episode_suffix_when_title_lacks_episode() -> None:
+    def fake_get(
+        url: str,
+        params: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        assert "search.youku.com" in url
+        return httpx.Response(
+            200,
+            json={
+                "pageComponentList": [
+                    {
+                        "commonData": {
+                            "titleDTO": {"displayName": "金关"},
+                            "updateNotice": "第14集",
+                            "showId": "show123",
+                            "videoLink": "https://v.youku.com/v_show/id_demo014.html",
+                        }
+                    }
+                ]
+            },
+        )
+
+    provider = YoukuDanmakuProvider(get=fake_get)
+
+    items = provider.search("金关")
+
+    assert [(item.name, item.url) for item in items] == [
+        ("金关 第14集", "https://v.youku.com/v_show/id_demo014.html"),
+    ]
+
+
 def test_youku_provider_search_maps_episode_candidates_from_page_component_payload() -> None:
     def fake_get(
         url: str,
@@ -101,6 +135,111 @@ def test_youku_provider_search_maps_episode_candidates_from_page_component_paylo
     assert [(item.name, item.url) for item in items] == [
         ("黑夜告白 01", "https://v.youku.com/v_show/id_XNjUxODQ1MzE1Ng==.html"),
         ("黑夜告白 02", "https://v.youku.com/v_show/id_XNjUxOTE5NjQwOA==.html"),
+    ]
+
+
+def test_youku_provider_search_expands_full_episode_list_from_candidate_detail_page() -> None:
+    def fake_get(
+        url: str,
+        params: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        if "search.youku.com" in url:
+            return httpx.Response(
+                200,
+                json={
+                    "pageComponentList": [
+                        {
+                            "commonData": {
+                                "isYouku": 1,
+                                "hasYouku": 1,
+                                "titleDTO": {"displayName": "金关"},
+                                "videoLink": "https://v.youku.com/v_show/id_demo01.html",
+                            },
+                            "componentMap": {
+                                "1035": {
+                                    "data": [
+                                        {
+                                            "videoId": "demo01",
+                                            "title": "金关 01",
+                                            "action": {"value": "youku://play?source=search&vid=demo01"},
+                                        },
+                                        {
+                                            "videoId": "demo02",
+                                            "title": "金关 02",
+                                            "action": {"value": "youku://play?source=search&vid=demo02"},
+                                        },
+                                    ]
+                                }
+                            },
+                        }
+                    ]
+                },
+            )
+        if url == "https://v.youku.com/v_show/id_demo01.html":
+            return httpx.Response(
+                200,
+                text=(
+                    '<div class="box-anthology-items">'
+                    '<a class="box-anthology-item" href="//v.youku.com/video?vid=demo14&amp;scm=test" aria-label="金关 第14集"></a>'
+                    '<a class="box-anthology-item" href="//v.youku.com/video?vid=demo15&amp;scm=test" aria-label="金关 第15集"></a>'
+                    "</div>"
+                ),
+            )
+        raise AssertionError(url)
+
+    provider = YoukuDanmakuProvider(get=fake_get)
+
+    items = provider.search("金关")
+
+    assert ("金关 第14集", "https://v.youku.com/v_show/id_demo14.html") in [
+        (item.name, item.url) for item in items
+    ]
+
+
+def test_youku_provider_search_strips_vip_prefix_from_detail_episode_titles() -> None:
+    def fake_get(
+        url: str,
+        params: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        if "search.youku.com" in url:
+            return httpx.Response(
+                200,
+                json={
+                    "pageComponentList": [
+                        {
+                            "commonData": {
+                                "isYouku": 1,
+                                "hasYouku": 1,
+                                "titleDTO": {"displayName": "金关"},
+                                "videoLink": "https://v.youku.com/v_show/id_demo01.html",
+                            }
+                        }
+                    ]
+                },
+            )
+        if url == "https://v.youku.com/v_show/id_demo01.html":
+            return httpx.Response(
+                200,
+                text=(
+                    '<div class="box-anthology-items">'
+                    '<a class="box-anthology-item" href="//v.youku.com/video?vid=demo14&amp;scm=test" aria-label="VIP 金关 第14集"></a>'
+                    "</div>"
+                ),
+            )
+        raise AssertionError(url)
+
+    provider = YoukuDanmakuProvider(get=fake_get)
+
+    items = provider.search("金关")
+
+    assert ("金关 第14集", "https://v.youku.com/v_show/id_demo14.html") in [
+        (item.name, item.url) for item in items
     ]
 
 
