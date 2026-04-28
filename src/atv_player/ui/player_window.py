@@ -137,6 +137,10 @@ class _BackgroundTaskSignals(QObject):
     failed = Signal(str)
 
 
+class _DanmakuSourceTaskSignals(QObject):
+    finished = Signal(object, bool)
+
+
 class _PlaybackPrepareSignals(QObject):
     succeeded = Signal(int, str)
     failed = Signal(int, str)
@@ -279,6 +283,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._connect_async_signal(self._playback_prepare_signals.failed, self._handle_playback_prepare_failed)
         self._background_task_signals = _BackgroundTaskSignals()
         self._connect_async_signal(self._background_task_signals.failed, self._append_log)
+        self._danmaku_source_task_signals = _DanmakuSourceTaskSignals()
+        self._connect_async_signal(self._danmaku_source_task_signals.finished, self._handle_danmaku_source_task_finished)
         self._danmaku_retry_timer = QTimer(self)
         self._danmaku_retry_timer.setSingleShot(True)
         self._danmaku_retry_timer.timeout.connect(self._retry_configure_danmaku_for_current_item)
@@ -2372,6 +2378,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if groups:
             self._danmaku_source_provider_list.setCurrentRow(0)
 
+    def _format_danmaku_source_duration(self, duration_seconds: int) -> str:
+        if duration_seconds <= 0:
+            return ""
+        hours, remainder = divmod(int(duration_seconds), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours > 0:
+            return f"{hours}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes}:{seconds:02d}"
+
     def _populate_danmaku_source_option_list(self, groups, selected_provider: str) -> None:
         if self._danmaku_source_option_list is None:
             return
@@ -2389,7 +2404,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         selected_url = current_item.selected_danmaku_url if current_item is not None else ""
         selected_index = 0
         for index, option in enumerate(target_group.options):
-            item = QListWidgetItem(option.name)
+            label = option.name
+            duration_text = self._format_danmaku_source_duration(option.duration_seconds)
+            if duration_text:
+                label = f"{label} · {duration_text}"
+            item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, option.url)
             self._danmaku_source_option_list.addItem(item)
             if option.url == selected_url:
@@ -2439,6 +2458,38 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self._danmaku_source_rerun_button is not None:
             self._danmaku_source_rerun_button.setEnabled(bool(current_item is not None and not current_item.danmaku_pending))
 
+    def _start_danmaku_source_task(
+        self,
+        item: PlayItem,
+        *,
+        error_prefix: str,
+        task: Callable[[], None],
+        configure_danmaku_on_success: bool = False,
+    ) -> None:
+        if item.danmaku_pending:
+            return
+        item.danmaku_pending = True
+        self._refresh_danmaku_source_dialog_from_item(item)
+
+        def run() -> None:
+            succeeded = False
+            try:
+                task()
+                succeeded = True
+            finally:
+                item.danmaku_pending = False
+                self._danmaku_source_task_signals.finished.emit(item, configure_danmaku_on_success and succeeded)
+
+        self._enqueue_controller_task(error_prefix, run)
+
+    def _handle_danmaku_source_task_finished(self, item: PlayItem, configure_danmaku: bool) -> None:
+        self._refresh_danmaku_source_dialog_from_item(item)
+        current_item = self._current_play_item()
+        if current_item is None or current_item is not item:
+            return
+        if configure_danmaku and item.danmaku_xml:
+            self._configure_danmaku_for_current_item()
+
     def _selected_danmaku_source_url_from_dialog(self) -> str:
         if self._danmaku_source_option_list is None:
             return ""
@@ -2451,18 +2502,30 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self.session is None or self.session.danmaku_controller is None or self._danmaku_source_query_edit is None:
             return
         current_item = self.session.playlist[self.current_index]
-        if current_item.danmaku_pending:
-            return
         query = self._danmaku_source_query_edit.text().strip()
-        self.session.danmaku_controller.refresh_danmaku_sources(current_item, query_override=query)
-        self._refresh_danmaku_source_dialog_from_item(current_item)
+        self._start_danmaku_source_task(
+            current_item,
+            error_prefix="弹幕源重新搜索失败",
+            task=lambda: self.session.danmaku_controller.refresh_danmaku_sources(
+                current_item,
+                query_override=query,
+                force_refresh=True,
+            ),
+        )
 
     def _reset_current_item_danmaku_search_query(self) -> None:
         if self.session is None or self.session.danmaku_controller is None:
             return
         current_item = self.session.playlist[self.current_index]
-        self.session.danmaku_controller.refresh_danmaku_sources(current_item, query_override=None)
-        self._refresh_danmaku_source_dialog_from_item(current_item)
+        self._start_danmaku_source_task(
+            current_item,
+            error_prefix="弹幕源恢复默认搜索失败",
+            task=lambda: self.session.danmaku_controller.refresh_danmaku_sources(
+                current_item,
+                query_override=None,
+                force_refresh=True,
+            ),
+        )
 
     def _switch_current_item_danmaku_source(self) -> None:
         if self.session is None or self.session.danmaku_controller is None:
@@ -2471,9 +2534,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         selected_url = self._selected_danmaku_source_url_from_dialog()
         if not selected_url:
             return
-        self.session.danmaku_controller.switch_danmaku_source(current_item, selected_url)
-        self._configure_danmaku_for_current_item()
-        self._refresh_danmaku_source_dialog_from_item(current_item)
+        self._start_danmaku_source_task(
+            current_item,
+            error_prefix="弹幕切换失败",
+            task=lambda: self.session.danmaku_controller.switch_danmaku_source(current_item, selected_url),
+            configure_danmaku_on_success=True,
+        )
 
     def _build_primary_subtitle_menu(self, parent: QWidget) -> QMenu:
         menu = QMenu("主字幕", parent)

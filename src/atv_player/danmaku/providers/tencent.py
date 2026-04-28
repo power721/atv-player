@@ -102,15 +102,22 @@ class TencentDanmakuProvider:
         self, query_name: str, items: list[DanmakuSearchItem], original_name: str | None = None
     ) -> list[DanmakuSearchItem]:
         requested_episode = extract_episode_number(original_name or query_name)
-        if requested_episode is None or not items:
+        if not items:
             return items
-        if any(self._matches_requested_episode_item(item, requested_episode) for item in items):
+        if requested_episode is None and any(extract_episode_number(item.name) is not None for item in items):
+            return items
+        if requested_episode is not None and any(
+            self._matches_requested_episode_item(item, requested_episode) for item in items
+        ):
             return items
         expanded: list[DanmakuSearchItem] = []
-        for item in items[:5]:
+        candidate_limit = 1 if requested_episode is None else 5
+        for item in items[:candidate_limit]:
             page_data_items = self._fetch_page_data_episode_items(item.url, query_name)
             if page_data_items:
                 expanded.extend(page_data_items)
+                if requested_episode is None:
+                    break
                 if any(self._matches_requested_episode_item(candidate, requested_episode) for candidate in page_data_items):
                     break
             try:
@@ -123,9 +130,13 @@ class TencentDanmakuProvider:
             except httpx.HTTPError:
                 continue
             expanded.extend(self._extract_detail_episode_items(item.url, response.text, query_name))
+            if requested_episode is None:
+                break
             if any(self._matches_requested_episode_item(candidate, requested_episode) for candidate in expanded):
                 break
         if not expanded:
+            return items
+        if requested_episode is None and not self._should_use_title_only_expansion(expanded):
             return items
         return self._merge_search_items(expanded, items)
 
@@ -559,6 +570,18 @@ class TencentDanmakuProvider:
         if extract_episode_number(item.name) != requested_episode:
             return False
         return re.fullmatch(r"\d+", item.name.strip()) is None
+
+    def _should_use_title_only_expansion(self, items: list[DanmakuSearchItem]) -> bool:
+        episode_numbers: list[int] = []
+        for item in items:
+            episode_number = extract_episode_number(item.name)
+            if episode_number is None:
+                return False
+            episode_numbers.append(episode_number)
+        unique_numbers = sorted(set(episode_numbers))
+        if len(unique_numbers) < 2 or len(unique_numbers) > 4:
+            return False
+        return unique_numbers == list(range(1, len(unique_numbers) + 1))
 
     def _extract_cover_id(self, page_url: str) -> str:
         parsed = urlparse(page_url)

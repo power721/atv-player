@@ -433,11 +433,11 @@ class SpiderPluginController:
         ordered.extend(fallback)
         return ordered
 
-    def _populate_danmaku_candidates(self, item: PlayItem, query_name: str, reg_src: str) -> str:
+    def _populate_danmaku_candidates(self, item: PlayItem, query_name: str, reg_src: str, force_refresh: bool = False) -> str:
         series_key = build_danmaku_series_key(item.media_title or query_name)
         item.danmaku_series_key = series_key
         item.danmaku_search_query = query_name
-        if self.load_cached_danmaku_sources(item):
+        if not force_refresh and self.load_cached_danmaku_sources(item):
             return item.selected_danmaku_url
         preference = self._danmaku_preference_store.load(series_key) if self._danmaku_preference_store is not None else None
         if hasattr(self._danmaku_service, "search_danmu_sources"):
@@ -506,6 +506,7 @@ class SpiderPluginController:
         item: PlayItem,
         query_override: str | None = None,
         playlist: list[PlayItem] | None = None,
+        force_refresh: bool = False,
     ) -> None:
         query_name = (query_override or _build_danmaku_search_name(item, playlist)).strip()
         if not query_name:
@@ -513,7 +514,7 @@ class SpiderPluginController:
         item.danmaku_search_query = query_name
         item.danmaku_search_query_overridden = query_override is not None
         reg_src = str(item.vod_id or item.url or "").strip()
-        self._populate_danmaku_candidates(item, query_name, reg_src)
+        self._populate_danmaku_candidates(item, query_name, reg_src, force_refresh=force_refresh)
 
     def switch_danmaku_source(self, item: PlayItem, page_url: str) -> str:
         xml_text = self._danmaku_service.resolve_danmu(page_url)

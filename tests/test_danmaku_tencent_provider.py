@@ -436,6 +436,69 @@ def test_tencent_provider_search_extracts_episode_links_from_detail_html_items()
     ]
 
 
+def test_tencent_provider_search_expands_short_numeric_movie_variants_for_title_only_query() -> None:
+    def fake_get(
+        url: str,
+        headers: dict | None = None,
+        params: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        if url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch":
+            assert params is not None
+            assert params["query"] == "疯狂动物城2"
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "normalList": {
+                            "itemList": [
+                                {
+                                    "videoInfo": {
+                                        "title": "疯狂动物城2",
+                                        "url": "https://v.qq.com/x/cover/mzc00200zootopia2/demo001.html",
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                },
+            )
+        assert url == "https://v.qq.com/x/cover/mzc00200zootopia2/demo001.html"
+        return httpx.Response(
+            200,
+            text=(
+                '<script>window.__STATE__={"vsite_episode_list":['
+                '{"title":"1","url":"https://v.qq.com/x/cover/mzc00200zootopia2/movie001.html","duration":"6120"},'
+                '{"title":"2","url":"https://v.qq.com/x/cover/mzc00200zootopia2/movie002.html","duration":"6088"},'
+                '{"title":"3","url":"https://v.qq.com/x/cover/mzc00200zootopia2/movie003.html","duration":"6105"},'
+                '{"title":"4","url":"https://v.qq.com/x/cover/mzc00200zootopia2/movie004.html","duration":"6094"}'
+                "]};</script>"
+            ),
+        )
+
+    def fake_post(
+        url: str,
+        content: str | None = None,
+        json: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        raise httpx.HTTPError("page data unavailable")
+
+    provider = TencentDanmakuProvider(get=fake_get, post=fake_post)
+
+    items = provider.search("疯狂动物城2")
+
+    assert [(item.name, item.url) for item in items[:4]] == [
+        ("疯狂动物城2 1集", "https://v.qq.com/x/cover/mzc00200zootopia2/movie001.html"),
+        ("疯狂动物城2 2集", "https://v.qq.com/x/cover/mzc00200zootopia2/movie002.html"),
+        ("疯狂动物城2 3集", "https://v.qq.com/x/cover/mzc00200zootopia2/movie003.html"),
+        ("疯狂动物城2 4集", "https://v.qq.com/x/cover/mzc00200zootopia2/movie004.html"),
+    ]
+
+
 def test_tencent_provider_search_prefers_full_episode_over_preview_from_union_detail_data() -> None:
     def fake_get(
         url: str,

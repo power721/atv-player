@@ -574,6 +574,56 @@ def test_controller_uses_cached_danmaku_source_search_result_without_network_loo
     assert item.danmaku_candidates == cached_result.groups
 
 
+def test_controller_refresh_danmaku_sources_can_bypass_cached_search_result(monkeypatch) -> None:
+    calls: list[str] = []
+    cached_result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="tencent",
+                provider_label="腾讯",
+                options=[DanmakuSourceOption(provider="tencent", name="缓存结果", url="https://v.qq.com/cached")],
+            )
+        ],
+        default_option_url="https://v.qq.com/cached",
+        default_provider="tencent",
+    )
+    fresh_result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="bilibili",
+                provider_label="B站",
+                options=[DanmakuSourceOption(provider="bilibili", name="新结果", url="https://www.bilibili.com/video/BV1x")],
+            )
+        ],
+        default_option_url="https://www.bilibili.com/video/BV1x",
+        default_provider="bilibili",
+    )
+
+    class FakeDanmakuService:
+        def search_danmu_sources(
+            self, name: str, reg_src: str = "", preferred_provider: str = "", preferred_page_url: str = ""
+        ):
+            calls.append(name)
+            return fresh_result
+
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_source_search_result", lambda name, reg_src: cached_result)
+
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+    )
+    item = PlayItem(title="第1集", url="https://stream.example/1.m3u8", media_title="红果短剧")
+
+    controller.refresh_danmaku_sources(item, force_refresh=True)
+
+    assert calls == ["红果短剧 1集"]
+    assert item.selected_danmaku_provider == "bilibili"
+    assert item.selected_danmaku_url == "https://www.bilibili.com/video/BV1x"
+    assert item.danmaku_candidates == fresh_result.groups
+
+
 def test_controller_tries_next_danmaku_candidate_when_first_candidate_has_no_records() -> None:
     calls: list[tuple[str, str]] = []
 
