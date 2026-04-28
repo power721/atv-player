@@ -20,6 +20,8 @@ class AppConfig:
     player_volume: int = 100
     player_muted: bool = False
     preferred_parse_key: str = ""
+    preferred_danmaku_enabled: bool = True
+    preferred_danmaku_line_count: int = 1
     main_window_geometry: bytes | None = None
     player_window_geometry: bytes | None = None
     player_main_splitter_state: bytes | None = None

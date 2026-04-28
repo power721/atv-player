@@ -40,6 +40,8 @@ class SettingsRepository:
                     player_volume INTEGER NOT NULL DEFAULT 100,
                     player_muted INTEGER NOT NULL DEFAULT 0,
                     preferred_parse_key TEXT NOT NULL DEFAULT '',
+                    preferred_danmaku_enabled INTEGER NOT NULL DEFAULT 1,
+                    preferred_danmaku_line_count INTEGER NOT NULL DEFAULT 1,
                     main_window_geometry BLOB,
                     player_window_geometry BLOB,
                     player_main_splitter_state BLOB,
@@ -99,6 +101,14 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN preferred_parse_key TEXT NOT NULL DEFAULT ''"
                 )
+            if "preferred_danmaku_enabled" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN preferred_danmaku_enabled INTEGER NOT NULL DEFAULT 1"
+                )
+            if "preferred_danmaku_line_count" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN preferred_danmaku_line_count INTEGER NOT NULL DEFAULT 1"
+                )
             if "player_main_splitter_state" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN player_main_splitter_state BLOB"
@@ -127,12 +137,14 @@ class SettingsRepository:
                     player_volume,
                     player_muted,
                     preferred_parse_key,
+                    preferred_danmaku_enabled,
+                    preferred_danmaku_line_count,
                     main_window_geometry,
                     player_window_geometry,
                     player_main_splitter_state,
                     browse_content_splitter_state
                 )
-                VALUES (1, 'http://127.0.0.1:4567', '', '', '', '/', 'main', 'browse', '', '', '', '', '', 0, 100, 0, '', NULL, NULL, NULL, NULL)
+                VALUES (1, 'http://127.0.0.1:4567', '', '', '', '/', 'main', 'browse', '', '', '', '', '', 0, 100, 0, '', 1, 1, NULL, NULL, NULL, NULL)
                 ON CONFLICT(id) DO NOTHING
                 """
             )
@@ -158,6 +170,8 @@ class SettingsRepository:
                     player_volume,
                     player_muted,
                     preferred_parse_key,
+                    preferred_danmaku_enabled,
+                    preferred_danmaku_line_count,
                     main_window_geometry,
                     player_window_geometry,
                     player_main_splitter_state,
@@ -170,6 +184,7 @@ class SettingsRepository:
         values = list(row)
         values[12] = bool(values[12])
         values[14] = bool(values[14])
+        values[16] = bool(values[16])
         return AppConfig(*values)
 
     def save_config(self, config: AppConfig) -> None:
@@ -194,6 +209,8 @@ class SettingsRepository:
                     player_volume = ?,
                     player_muted = ?,
                     preferred_parse_key = ?,
+                    preferred_danmaku_enabled = ?,
+                    preferred_danmaku_line_count = ?,
                     main_window_geometry = ?,
                     player_window_geometry = ?,
                     player_main_splitter_state = ?,
@@ -217,6 +234,8 @@ class SettingsRepository:
                     config.player_volume,
                     int(config.player_muted),
                     config.preferred_parse_key,
+                    int(config.preferred_danmaku_enabled),
+                    config.preferred_danmaku_line_count,
                     config.main_window_geometry,
                     config.player_window_geometry,
                     config.player_main_splitter_state,
