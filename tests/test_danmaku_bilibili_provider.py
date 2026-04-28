@@ -1,8 +1,8 @@
 import pytest
 
+from atv_player.danmaku.errors import DanmakuResolveError, DanmakuSearchError
 from atv_player.danmaku.models import DanmakuSearchItem
 from atv_player.danmaku.providers.bilibili import BilibiliDanmakuProvider
-from atv_player.danmaku.errors import DanmakuSearchError
 
 
 class JsonResponse:
@@ -255,3 +255,64 @@ def test_bilibili_resolve_uses_season_api_then_pagelist_then_html_fallback() -> 
     assert provider.resolve("https://www.bilibili.com/bangumi/play/ep5002")[0].content == "season"
     assert provider.resolve("https://www.bilibili.com/video/BVvideo2")[0].content == "pagelist"
     assert provider.resolve("https://www.bilibili.com/video/BVhtml1")[0].content == "html"
+
+
+def test_bilibili_resolve_prefers_matching_pagelist_part_before_first_entry() -> None:
+    def fake_get(url: str, **kwargs):
+        params = kwargs.get("params") or {}
+        if "x/player/pagelist" in url and params.get("bvid") == "BVmatch1":
+            return JsonResponse(
+                {
+                    "code": 0,
+                    "data": [
+                        {"cid": 123001, "part": "预告"},
+                        {"cid": 123002, "part": "第1集"},
+                    ],
+                }
+            )
+        if "comment.bilibili.com/123002.xml" in url:
+            return JsonResponse(
+                {"code": 0},
+                text='<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215,0,0,0,0">matched</d></i>',
+            )
+        if "comment.bilibili.com/123001.xml" in url:
+            return JsonResponse(
+                {"code": 0},
+                text='<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215,0,0,0,0">wrong</d></i>',
+            )
+        return JsonResponse({"code": 0, "data": {}})
+
+    provider = BilibiliDanmakuProvider(get=fake_get)
+    provider._metadata_by_url["https://www.bilibili.com/video/BVmatch1"] = DanmakuSearchItem(
+        provider="bilibili",
+        name="凡人修仙传 第1集",
+        url="https://www.bilibili.com/video/BVmatch1",
+        bvid="BVmatch1",
+        search_type="video",
+    )
+
+    records = provider.resolve("https://www.bilibili.com/video/BVmatch1")
+
+    assert [record.content for record in records] == ["matched"]
+
+
+def test_bilibili_resolve_raises_clear_error_when_no_cid_can_be_found() -> None:
+    def fake_get(url: str, **kwargs):
+        params = kwargs.get("params") or {}
+        if "x/player/pagelist" in url and params.get("bvid") == "BVnone":
+            return JsonResponse({"code": 0, "data": []})
+        if "video/BVnone" in url:
+            return JsonResponse({"code": 0}, text="<html><body>missing cid</body></html>")
+        return JsonResponse({"code": 0, "data": {}})
+
+    provider = BilibiliDanmakuProvider(get=fake_get)
+    provider._metadata_by_url["https://www.bilibili.com/video/BVnone"] = DanmakuSearchItem(
+        provider="bilibili",
+        name="空页面",
+        url="https://www.bilibili.com/video/BVnone",
+        bvid="BVnone",
+        search_type="video",
+    )
+
+    with pytest.raises(DanmakuResolveError, match="missing cid"):
+        provider.resolve("https://www.bilibili.com/video/BVnone")

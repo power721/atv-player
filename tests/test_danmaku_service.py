@@ -131,7 +131,7 @@ def test_resolve_danmu_raises_for_unknown_provider_url() -> None:
 def test_default_service_has_fixed_provider_order() -> None:
     service = create_default_danmaku_service()
 
-    assert service.provider_order == ["tencent", "youku", "iqiyi", "mgtv"]
+    assert service.provider_order == ["tencent", "youku", "bilibili", "iqiyi", "mgtv"]
 
 
 def test_danmaku_search_item_accepts_bilibili_metadata() -> None:

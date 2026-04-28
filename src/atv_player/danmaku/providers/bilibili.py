@@ -257,7 +257,8 @@ class BilibiliDanmakuProvider:
         pages = payload.get("data") or []
         target = normalize_name(candidate.name)
         for page in pages:
-            if normalize_name(str(page.get("part") or "")) == target:
+            part = normalize_name(str(page.get("part") or ""))
+            if part and target and (part == target or part in target or target in part):
                 return self._to_int(page.get("cid"))
         if pages:
             return self._to_int(pages[0].get("cid"))
