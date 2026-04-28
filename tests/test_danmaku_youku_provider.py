@@ -273,6 +273,69 @@ def test_youku_provider_resolve_fetches_signed_segments_using_vid_from_url() -> 
     assert calls[0] == "https://v.youku.com/v_show/id_demo123.html"
 
 
+def test_youku_provider_resolve_tolerates_segment_timeout_when_other_segments_succeed() -> None:
+    def fake_get(
+        url: str,
+        params: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        if url == "https://v.youku.com/v_show/id_demo123.html":
+            return httpx.Response(200, text="<html><title>demo</title></html>")
+        if url == (
+            "https://openapi.youku.com/v2/videos/show.json"
+            "?client_id=53e6cc67237fc59a&video_id=demo123&package=com.huawei.hwvplayer.youku&ext=show"
+        ):
+            return httpx.Response(200, json={"duration": "61.0"})
+        if url == "https://log.mmstat.com/eg.js":
+            return httpx.Response(200, headers={"etag": '"demo-cna"'})
+        if url == "https://acs.youku.com/h5/mtop.com.youku.aplatform.weakget/1.0/?jsv=2.5.1&appKey=24679788":
+            return httpx.Response(
+                200,
+                headers={
+                    "set-cookie": (
+                        "_m_h5_tk=abcdefghijklmnopqrstuvwxyz123456_123;Path=/;Domain=youku.com;Max-Age=86400, "
+                        "_m_h5_tk_enc=enc-cookie;Path=/;Domain=youku.com;Max-Age=86400"
+                    )
+                },
+            )
+        raise AssertionError(url)
+
+    def fake_post(
+        url: str,
+        params: dict | None = None,
+        data: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        payload = __import__("json").loads((data or {})["data"])
+        if payload["mat"] == 0:
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "result": __import__("json").dumps(
+                            {
+                                "code": 1,
+                                "data": {"result": [{"playat": 1500, "propertis": '{"pos":1}', "content": "优酷第一条"}]},
+                            }
+                        )
+                    }
+                },
+            )
+        raise httpx.ReadTimeout("timed out")
+
+    provider = YoukuDanmakuProvider(get=fake_get, post=fake_post)
+
+    records = provider.resolve("https://v.youku.com/v_show/id_demo123.html")
+
+    assert [(record.time_offset, record.pos, record.color, record.content) for record in records] == [
+        (1.5, 1, "16777215", "优酷第一条"),
+    ]
+
+
 def test_youku_provider_supports_youku_urls() -> None:
     provider = YoukuDanmakuProvider()
 

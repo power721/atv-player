@@ -156,8 +156,14 @@ class YoukuDanmakuProvider:
     ) -> list[dict]:
         segment_count = max(1, math.ceil(duration_seconds / self._SEGMENT_SECONDS))
         items: list[dict] = []
+        failure_count = 0
         for mat in range(segment_count):
-            items.extend(self._fetch_segment_items(page_url, vid, mat, cna, tk, tk_enc))
+            try:
+                items.extend(self._fetch_segment_items(page_url, vid, mat, cna, tk, tk_enc))
+            except httpx.HTTPError:
+                failure_count += 1
+        if not items and failure_count >= segment_count:
+            raise DanmakuResolveError("优酷弹幕分段请求失败")
         return items
 
     def _fetch_segment_items(self, page_url: str, vid: str, mat: int, cna: str, tk: str, tk_enc: str) -> list[dict]:
