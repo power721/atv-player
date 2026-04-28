@@ -2726,6 +2726,80 @@ def test_player_window_context_menu_secondary_subtitle_and_audio_actions_call_vi
     assert window.audio_combo.currentText() == "English Dub"
 
 
+def test_player_window_context_menu_danmaku_actions_sync_bottom_combo(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_danmaku_paths: list[str] = []
+            self.removed_danmaku_track_ids: list[int] = []
+            self._next_track_id = 70
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append(path)
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            if track_id is not None:
+                self.removed_danmaku_track_ids.append(track_id)
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="http://m/1.m3u8",
+                danmaku_xml='<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>',
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    window.open_session(session)
+
+    initial_loaded_count = len(window.video.loaded_danmaku_paths)
+    menu = window._build_video_context_menu()
+    next(action for action in _submenu_actions(menu, "弹幕配置") if action.text() == "3行").trigger()
+
+    assert window.danmaku_combo.currentText() == "3行"
+    assert len(window.video.loaded_danmaku_paths) == initial_loaded_count + 1
+    assert window.video.removed_danmaku_track_ids == [70]
+    assert [action.text() for action in _submenu_actions(menu, "弹幕配置")] == [
+        "默认",
+        "关闭",
+        "1行",
+        "2行",
+        "3行",
+        "4行",
+        "5行",
+    ]
+
+
 def test_player_window_context_menu_position_actions_update_video_layer(qtbot) -> None:
     class FakeVideo:
         def __init__(self) -> None:
@@ -2858,6 +2932,7 @@ def test_player_window_context_menu_includes_primary_and_secondary_subtitle_size
         "主字幕大小",
         "次字幕大小",
         "音轨",
+        "弹幕配置",
         "弹幕源",
         "视频信息",
     ]

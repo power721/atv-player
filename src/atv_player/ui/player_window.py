@@ -2317,6 +2317,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         menu.addMenu(self._build_subtitle_scale_menu(menu, title="主字幕大小", secondary=False))
         menu.addMenu(self._build_subtitle_scale_menu(menu, title="次字幕大小", secondary=True))
         menu.addMenu(self._build_audio_menu(menu))
+        menu.addMenu(self._build_danmaku_menu(menu))
         action = menu.addAction("弹幕源", self._open_danmaku_source_dialog)
         menu.addAction("视频信息", self._toggle_video_info_from_menu)
         return menu
@@ -2583,6 +2584,22 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
         return menu
 
+    def _build_danmaku_menu(self, parent: QWidget) -> QMenu:
+        menu = QMenu("弹幕配置", parent)
+        menu.setEnabled(self.danmaku_combo.isEnabled())
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+
+        for index in range(self.danmaku_combo.count()):
+            label = "默认" if index == 0 else self.danmaku_combo.itemText(index)
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(self.danmaku_combo.currentIndex() == index)
+            action.triggered.connect(lambda _checked=False, index=index: self._set_danmaku_from_menu(index))
+            group.addAction(action)
+
+        return menu
+
     def _build_subtitle_scale_menu(self, parent: QWidget, title: str, secondary: bool) -> QMenu:
         menu = QMenu(title, parent)
         if secondary and not self._secondary_subtitle_scale_supported:
@@ -2631,6 +2648,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             if self.audio_combo.itemData(index) == ("track", track_id):
                 self.audio_combo.setCurrentIndex(index)
                 return
+
+    def _set_danmaku_from_menu(self, index: int) -> None:
+        if 0 <= index < self.danmaku_combo.count():
+            self.danmaku_combo.setCurrentIndex(index)
 
     def _set_secondary_subtitle_from_menu(self, mode: str, track_id: int | None) -> None:
         try:
