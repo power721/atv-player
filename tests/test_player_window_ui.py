@@ -201,7 +201,7 @@ def test_player_window_shows_danmaku_source_button_with_custom_icon(qtbot) -> No
     qtbot.addWidget(window)
 
     assert window.danmaku_source_button.toolTip() == "弹幕源"
-    assert window.danmaku_source_button.isEnabled() is False
+    assert window.danmaku_source_button.isEnabled() is True
 
 
 def test_player_window_video_context_menu_contains_danmaku_source_action_when_candidates_exist(qtbot) -> None:
@@ -231,6 +231,31 @@ def test_player_window_video_context_menu_contains_danmaku_source_action_when_ca
     menu = window._build_video_context_menu()
 
     assert any(action.text() == "弹幕源" for action in menu.actions())
+
+
+def test_player_window_video_context_menu_keeps_danmaku_source_action_enabled_without_candidates(qtbot) -> None:
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/1.m3u8",
+        media_title="红果短剧",
+        danmaku_xml='<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">ok</d></i>',
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+    menu = window._build_video_context_menu()
+    danmaku_source_action = next(action for action in menu.actions() if action.text() == "弹幕源")
+
+    assert danmaku_source_action.isEnabled() is True
+    assert window.danmaku_source_button.isEnabled() is True
 
 
 def test_player_window_opens_danmaku_source_dialog_for_current_item(qtbot) -> None:
@@ -264,6 +289,56 @@ def test_player_window_opens_danmaku_source_dialog_for_current_item(qtbot) -> No
     window._open_danmaku_source_dialog()
 
     assert window._danmaku_source_dialog is not None
+    assert window._danmaku_source_query_edit.text() == "红果短剧 1集"
+    assert window._danmaku_source_provider_list.count() == 1
+
+
+def test_player_window_opens_danmaku_source_dialog_by_loading_cached_search_result(qtbot) -> None:
+    class FakeDanmakuController:
+        def __init__(self) -> None:
+            self.cache_load_calls = 0
+            self.refresh_calls = 0
+
+        def load_cached_danmaku_sources(self, item: PlayItem) -> bool:
+            self.cache_load_calls += 1
+            item.danmaku_search_query = "红果短剧 1集"
+            item.danmaku_candidates = [
+                DanmakuSourceGroup(
+                    provider="tencent",
+                    provider_label="腾讯",
+                    options=[DanmakuSourceOption(provider="tencent", name="红果短剧 第1集", url="https://v.qq.com/demo")],
+                )
+            ]
+            item.selected_danmaku_provider = "tencent"
+            item.selected_danmaku_url = "https://v.qq.com/demo"
+            item.selected_danmaku_title = "红果短剧 第1集"
+            return True
+
+        def refresh_danmaku_sources(self, item: PlayItem, query_override: str | None = None) -> None:
+            self.refresh_calls += 1
+
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/1.m3u8",
+        media_title="红果短剧",
+    )
+    controller = FakeDanmakuController()
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+    window._open_danmaku_source_dialog()
+
+    assert controller.cache_load_calls == 1
+    assert controller.refresh_calls == 0
     assert window._danmaku_source_query_edit.text() == "红果短剧 1集"
     assert window._danmaku_source_provider_list.count() == 1
 
@@ -302,6 +377,47 @@ def test_player_window_reset_danmaku_source_query_restores_default(qtbot) -> Non
 
     assert window._danmaku_source_query_edit.text() == "红果短剧 1集"
     assert item.danmaku_search_query_overridden is False
+
+
+def test_player_window_disables_rerun_danmaku_search_while_current_item_is_pending(qtbot) -> None:
+    class FakeDanmakuController:
+        def __init__(self) -> None:
+            self.calls: list[str | None] = []
+
+        def refresh_danmaku_sources(self, item: PlayItem, query_override: str | None = None) -> None:
+            self.calls.append(query_override)
+
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/1.m3u8",
+        media_title="红果短剧",
+        danmaku_search_query="红果短剧 1集",
+        danmaku_pending=True,
+    )
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=FakeDanmakuController(),
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    window.open_session(session)
+    window._open_danmaku_source_dialog()
+
+    assert window._danmaku_source_rerun_button is not None
+    assert window._danmaku_source_rerun_button.isEnabled() is False
+
+    window._rerun_current_item_danmaku_search()
+    assert session.danmaku_controller.calls == []
+
+    item.danmaku_pending = False
+    window._refresh_danmaku_source_dialog_from_item(item)
+
+    assert window._danmaku_source_rerun_button.isEnabled() is True
 
 
 def test_player_window_manual_danmaku_source_switch_reconfigures_current_item(qtbot, monkeypatch) -> None:
@@ -6319,6 +6435,18 @@ def test_player_window_wide_button_hides_sidebar(qtbot) -> None:
 
     window.wide_button.click()
     assert window.sidebar_container.isHidden() is False
+
+
+def test_player_window_keeps_danmaku_source_button_visible_in_wide_mode(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+
+    window.wide_button.click()
+    qtbot.wait(10)
+
+    assert window.sidebar_container.isHidden() is True
+    assert window.danmaku_source_button.isVisible() is True
 
 
 def test_player_window_persists_pre_wide_splitter_state_when_saved_in_wide_mode(qtbot) -> None:

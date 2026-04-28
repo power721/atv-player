@@ -10,7 +10,12 @@ from collections.abc import Mapping
 from urllib.parse import urlparse
 
 from atv_player.api import ApiError
-from atv_player.danmaku.cache import load_cached_danmaku_xml, save_cached_danmaku_xml
+from atv_player.danmaku.cache import (
+    load_cached_danmaku_source_search_result,
+    load_cached_danmaku_xml,
+    save_cached_danmaku_source_search_result,
+    save_cached_danmaku_xml,
+)
 from atv_player.danmaku.models import DanmakuSeriesPreference, DanmakuSourceGroup, DanmakuSourceOption
 from atv_player.danmaku.service import build_danmaku_series_key
 from atv_player.danmaku.utils import infer_playlist_episode_number
@@ -356,6 +361,8 @@ class SpiderPluginController:
         search_name = _build_danmaku_search_name(item, playlist)
         if not search_name:
             return
+        if not item.danmaku_search_query_overridden or not item.danmaku_search_query:
+            item.danmaku_search_query = search_name
         reg_src = str(item.vod_id or url or "").strip()
         cached_xml = load_cached_danmaku_xml(search_name, reg_src)
         if cached_xml:
@@ -430,6 +437,8 @@ class SpiderPluginController:
         series_key = build_danmaku_series_key(item.media_title or query_name)
         item.danmaku_series_key = series_key
         item.danmaku_search_query = query_name
+        if self.load_cached_danmaku_sources(item):
+            return item.selected_danmaku_url
         preference = self._danmaku_preference_store.load(series_key) if self._danmaku_preference_store is not None else None
         if hasattr(self._danmaku_service, "search_danmu_sources"):
             result = self._danmaku_service.search_danmu_sources(
@@ -441,12 +450,30 @@ class SpiderPluginController:
         else:
             candidates = self._danmaku_service.search_danmu(query_name, reg_src)
             result = self._legacy_source_search_result(candidates)
+        save_cached_danmaku_source_search_result(query_name, reg_src, result)
+        self._apply_danmaku_source_search_result(item, result)
+        return result.default_option_url
+
+    def _apply_danmaku_source_search_result(self, item: PlayItem, result) -> None:
         item.danmaku_candidates = result.groups
         item.selected_danmaku_provider = result.default_provider
         item.selected_danmaku_url = result.default_option_url
         item.selected_danmaku_title = self._lookup_selected_danmaku_title(result.groups, result.default_option_url)
         item.danmaku_error = ""
-        return result.default_option_url
+
+    def load_cached_danmaku_sources(self, item: PlayItem, playlist: list[PlayItem] | None = None) -> bool:
+        query_name = (item.danmaku_search_query or _build_danmaku_search_name(item, playlist)).strip()
+        if not query_name:
+            return False
+        series_key = build_danmaku_series_key(item.media_title or query_name)
+        item.danmaku_series_key = series_key
+        item.danmaku_search_query = query_name
+        reg_src = str(item.vod_id or item.url or "").strip()
+        cached_result = load_cached_danmaku_source_search_result(query_name, reg_src)
+        if cached_result is None:
+            return False
+        self._apply_danmaku_source_search_result(item, cached_result)
+        return True
 
     def _legacy_source_search_result(self, candidates: list) -> object:
         groups: dict[str, list[DanmakuSourceOption]] = {}

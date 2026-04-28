@@ -2,6 +2,7 @@ import os
 import time
 
 import atv_player.danmaku.cache as danmaku_cache_module
+from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
 
 
 def test_load_or_create_danmaku_ass_cache_reuses_existing_file(monkeypatch, tmp_path) -> None:
@@ -44,3 +45,37 @@ def test_save_and_load_cached_danmaku_xml(monkeypatch, tmp_path) -> None:
 
     assert cache_path is not None
     assert danmaku_cache_module.load_cached_danmaku_xml("剑来 10集", "/play/10") == xml_text
+
+
+def test_save_and_load_cached_danmaku_source_search_result(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="tencent",
+                provider_label="腾讯",
+                preferred_by_history=True,
+                options=[
+                    DanmakuSourceOption(
+                        provider="tencent",
+                        name="剑来 第10集",
+                        url="https://v.qq.com/demo",
+                        ratio=0.98,
+                        simi=0.97,
+                        duration_seconds=1320,
+                        episode_match=True,
+                        preferred_by_history=True,
+                        resolve_ready=True,
+                    )
+                ],
+            )
+        ],
+        default_option_url="https://v.qq.com/demo",
+        default_provider="tencent",
+    )
+
+    cache_path = danmaku_cache_module.save_cached_danmaku_source_search_result("剑来 10集", "/play/10", result)
+    loaded = danmaku_cache_module.load_cached_danmaku_source_search_result("剑来 10集", "/play/10")
+
+    assert cache_path is not None
+    assert loaded == result

@@ -23,6 +23,8 @@ def _wait_until(predicate, timeout: float = 1.0) -> None:
 def _disable_persistent_danmaku_cache(monkeypatch) -> None:
     monkeypatch.setattr(controller_module, "load_cached_danmaku_xml", lambda name, reg_src: "")
     monkeypatch.setattr(controller_module, "save_cached_danmaku_xml", lambda name, reg_src, xml_text: None)
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_source_search_result", lambda name, reg_src: None)
+    monkeypatch.setattr(controller_module, "save_cached_danmaku_source_search_result", lambda name, reg_src, result: None)
 
 
 class FakeSpider:
@@ -532,6 +534,46 @@ def test_controller_research_danmaku_uses_temporary_query_only_for_current_item(
     assert calls[-1] == "红果短剧 腾讯版"
 
 
+def test_controller_uses_cached_danmaku_source_search_result_without_network_lookup(monkeypatch) -> None:
+    calls: list[str] = []
+    cached_result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="tencent",
+                provider_label="腾讯",
+                options=[DanmakuSourceOption(provider="tencent", name="红果短剧 第1集", url="https://v.qq.com/demo")],
+            )
+        ],
+        default_option_url="https://v.qq.com/demo",
+        default_provider="tencent",
+    )
+
+    class FakeDanmakuService:
+        def search_danmu_sources(
+            self, name: str, reg_src: str = "", preferred_provider: str = "", preferred_page_url: str = ""
+        ):
+            calls.append(name)
+            return DanmakuSourceSearchResult(groups=[], default_option_url="", default_provider="")
+
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_source_search_result", lambda name, reg_src: cached_result)
+
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+    )
+    item = PlayItem(title="第1集", url="https://stream.example/1.m3u8", media_title="红果短剧")
+
+    controller.refresh_danmaku_sources(item)
+
+    assert calls == []
+    assert item.danmaku_search_query == "红果短剧 1集"
+    assert item.selected_danmaku_provider == "tencent"
+    assert item.selected_danmaku_url == "https://v.qq.com/demo"
+    assert item.danmaku_candidates == cached_result.groups
+
+
 def test_controller_tries_next_danmaku_candidate_when_first_candidate_has_no_records() -> None:
     calls: list[tuple[str, str]] = []
 
@@ -660,6 +702,7 @@ def test_controller_uses_cached_danmaku_xml_without_network_lookup(monkeypatch) 
     _wait_until(lambda: first.danmaku_xml == xml_text)
 
     assert first.danmaku_xml == xml_text
+    assert first.danmaku_search_query == "红果短剧 1集"
     assert calls == []
 
 
