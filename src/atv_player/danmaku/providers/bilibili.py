@@ -14,6 +14,7 @@ from atv_player.danmaku.utils import normalize_name, similarity_score
 
 
 _SEARCH_TYPE_PRIORITY = {"media_bangumi": 0, "media_ft": 1, "video": 2}
+_RISK_CONTROL_CODES = {-352, -412}
 _MIXIN_KEY_ENC_TAB = [
     46,
     47,
@@ -109,6 +110,17 @@ class BilibiliDanmakuProvider:
     def _search_payload(self, keyword: str, search_type: str) -> dict:
         params = {"keyword": keyword, "search_type": search_type}
         params.update(self._build_wbi_params(params))
+        payload = self._request_search(params)
+        if payload.get("code") in _RISK_CONTROL_CODES:
+            self._refresh_ticket()
+            retry_params = {"keyword": keyword, "search_type": search_type}
+            retry_params.update(self._build_wbi_params(retry_params))
+            payload = self._request_search(retry_params)
+        if payload.get("code") != 0:
+            raise DanmakuSearchError(f"Bilibili search failed: {payload.get('code')}")
+        return payload
+
+    def _request_search(self, params: dict[str, str]) -> dict:
         response = self._get(
             "https://api.bilibili.com/x/web-interface/wbi/search/type",
             params=params,
@@ -120,10 +132,7 @@ class BilibiliDanmakuProvider:
             timeout=10.0,
             follow_redirects=True,
         )
-        payload = response.json()
-        if payload.get("code") != 0:
-            raise DanmakuSearchError(f"Bilibili search failed: {payload.get('code')}")
-        return payload
+        return response.json()
 
     def _build_wbi_params(self, params: dict[str, str]) -> dict[str, str]:
         nav = self._get(
@@ -141,6 +150,15 @@ class BilibiliDanmakuProvider:
         query = urlencode(sorted(signed.items()))
         signed["w_rid"] = hashlib.md5(f"{query}{mixin}".encode()).hexdigest()
         return signed
+
+    def _refresh_ticket(self) -> None:
+        self._get(
+            "https://api.bilibili.com/bapis/bilibili.api.ticket.v1.Ticket/GenWebTicket",
+            params={"key_id": "ec02", "hexsign": "ignored", "context[ts]": str(int(time.time()))},
+            headers={"user-agent": "Mozilla/5.0", "referer": "https://www.bilibili.com/"},
+            timeout=10.0,
+            follow_redirects=True,
+        )
 
     def _parse_search_results(self, payload: dict, query_name: str, search_type: str) -> list[DanmakuSearchItem]:
         output: list[DanmakuSearchItem] = []
