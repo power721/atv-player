@@ -260,6 +260,13 @@ Recommended layout:
 - right column: candidates for the selected provider
 - action area: `切换并加载`
 
+Entry points:
+
+- a toolbar button with a dedicated danmaku icon and tooltip `弹幕源`
+- a video right-click context-menu action labeled `弹幕源`
+
+Both entry points should open the same dialog and share the same state-refresh logic. The context-menu action is not a separate workflow.
+
 Candidate rows should show enough context to disambiguate similarly named results:
 
 - title
