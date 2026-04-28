@@ -499,6 +499,44 @@ def test_tencent_provider_search_expands_short_numeric_movie_variants_for_title_
     ]
 
 
+def test_tencent_provider_search_relabels_short_numeric_movie_variants_from_search_payload() -> None:
+    def fake_get(
+        url: str,
+        headers: dict | None = None,
+        params: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        assert url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch"
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "normalList": {
+                        "itemList": [
+                            {"videoInfo": {"title": "立即播放", "url": "https://v.qq.com/x/cover/demo/playnow.html"}},
+                            {"videoInfo": {"title": "1", "url": "https://v.qq.com/x/cover/demo/movie001.html"}},
+                            {"videoInfo": {"title": "2", "url": "https://v.qq.com/x/cover/demo/movie002.html"}},
+                            {"videoInfo": {"title": "3", "url": "https://v.qq.com/x/cover/demo/movie003.html"}},
+                            {"videoInfo": {"title": "4", "url": "https://v.qq.com/x/cover/demo/movie004.html"}},
+                        ]
+                    }
+                }
+            },
+        )
+
+    provider = TencentDanmakuProvider(get=fake_get)
+
+    items = provider.search("疯狂动物城2")
+
+    assert ("疯狂动物城2 1集", "https://v.qq.com/x/cover/demo/movie001.html") in [
+        (item.name, item.url) for item in items
+    ]
+    assert ("疯狂动物城2 4集", "https://v.qq.com/x/cover/demo/movie004.html") in [
+        (item.name, item.url) for item in items
+    ]
+
+
 def test_tencent_provider_search_prefers_full_episode_over_preview_from_union_detail_data() -> None:
     def fake_get(
         url: str,

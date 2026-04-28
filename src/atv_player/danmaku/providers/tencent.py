@@ -210,7 +210,10 @@ class TencentDanmakuProvider:
                     walk(item)
 
         walk(data)
-        return self._to_search_items(self._dedupe_items(found), query_name)
+        deduped = self._dedupe_items(found)
+        if extract_episode_number(query_name) is None:
+            self._mark_short_numeric_movie_variants(deduped)
+        return self._to_search_items(deduped, query_name)
 
     def _is_main_content_title(self, title: str) -> bool:
         candidate = str(title or "")
@@ -627,6 +630,30 @@ class TencentDanmakuProvider:
             seen.add(url)
             output.append(item)
         return output
+
+    def _mark_short_numeric_movie_variants(self, items: list[dict[str, str]]) -> None:
+        groups: dict[str, list[dict[str, str]]] = {}
+        fallback_key = "__all__"
+        for item in items:
+            name = str(item.get("name") or "").strip()
+            if re.fullmatch(r"\d+", name) is None:
+                continue
+            cover_id = self._extract_cover_id(str(item.get("url") or "")) or fallback_key
+            groups.setdefault(cover_id, []).append(item)
+        for group_items in groups.values():
+            episode_numbers = sorted(
+                {
+                    episode_number
+                    for item in group_items
+                    if (episode_number := extract_episode_number(str(item.get("name") or ""))) is not None
+                }
+            )
+            if len(episode_numbers) < 2 or len(episode_numbers) > 4:
+                continue
+            if episode_numbers != list(range(1, len(episode_numbers) + 1)):
+                continue
+            for item in group_items:
+                item["numeric_title_trusted"] = "1"
 
     def _prefer_main_episode_variants(self, items: list[dict[str, str]]) -> list[dict[str, str]]:
         best_by_episode: dict[int, dict[str, str]] = {}
