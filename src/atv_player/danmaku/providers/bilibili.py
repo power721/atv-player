@@ -240,7 +240,8 @@ class BilibiliDanmakuProvider:
             ep_id = self._to_int(episode.get("ep_id"))
             if ep_id is None or ep_id == 0:
                 continue
-            if self._to_int(episode.get("section_type")) != 0:
+            section_type = self._to_int(episode.get("section_type"))
+            if section_type is not None and section_type != 0:
                 continue
             name = self._season_episode_name(item.name, episode)
             if not name or "预告" in name:

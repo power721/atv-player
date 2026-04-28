@@ -1,6 +1,6 @@
 import pytest
 
-from atv_player.danmaku.errors import ProviderNotSupportedError
+from atv_player.danmaku.errors import DanmakuResolveError, ProviderNotSupportedError
 from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
 from atv_player.danmaku.service import DanmakuService, create_default_danmaku_service
 
@@ -49,6 +49,20 @@ def test_search_danmu_prefers_provider_from_reg_src() -> None:
     assert [item.provider for item in results] == ["tencent"]
     assert tencent.search_calls == ["剑来"]
     assert youku.search_calls == []
+
+
+def test_service_resolve_danmu_uses_mgtv_provider_for_mgtv_urls() -> None:
+    mgtv = FakeProvider(
+        "mgtv",
+        [DanmakuSearchItem(provider="mgtv", name="歌手2026 第1期", url="https://www.mgtv.com/b/555/1001.html")],
+        [DanmakuRecord(time_offset=1.5, pos=1, color="16777215", content="芒果弹幕")],
+    )
+    service = DanmakuService({"mgtv": mgtv}, provider_order=["mgtv"])
+
+    xml_text = service.resolve_danmu("https://www.mgtv.com/b/555/1001.html")
+
+    assert '<d p="1.5,1,25,16777215">芒果弹幕</d>' in xml_text
+    assert mgtv.resolve_calls == ["https://www.mgtv.com/b/555/1001.html"]
 
 
 def test_search_danmu_falls_through_to_other_providers_when_reg_src_provider_misses_requested_episode() -> None:
@@ -336,10 +350,10 @@ def test_default_service_includes_iqiyi_provider_in_fixed_order() -> None:
     assert "iqiyi" in service.provider_order
 
 
-def test_default_service_raises_clear_error_for_mgtv_resolution() -> None:
+def test_default_service_raises_clear_error_for_invalid_mgtv_resolution_url() -> None:
     service = create_default_danmaku_service()
 
-    with pytest.raises(NotImplementedError, match="MGTV.*signed"):
+    with pytest.raises(DanmakuResolveError, match="MGTV.*invalid play url"):
         service.resolve_danmu("https://www.mgtv.com/b/demo/1.html")
 
 
