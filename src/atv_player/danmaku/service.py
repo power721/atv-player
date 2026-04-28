@@ -6,6 +6,7 @@ import logging
 from atv_player.danmaku.errors import DanmakuEmptyResultError, ProviderNotSupportedError
 from atv_player.danmaku.models import DanmakuSearchItem
 from atv_player.danmaku.providers import (
+    BilibiliDanmakuProvider,
     IqiyiDanmakuProvider,
     MgtvDanmakuProvider,
     TencentDanmakuProvider,
@@ -70,7 +71,8 @@ def create_default_danmaku_service() -> DanmakuService:
     providers = {
         "tencent": TencentDanmakuProvider(),
         "youku": YoukuDanmakuProvider(),
+        "bilibili": BilibiliDanmakuProvider(),
         "iqiyi": IqiyiDanmakuProvider(),
         "mgtv": MgtvDanmakuProvider(),
     }
-    return DanmakuService(providers, provider_order=["tencent", "youku", "iqiyi", "mgtv"])
+    return DanmakuService(providers, provider_order=["tencent", "youku", "bilibili", "iqiyi", "mgtv"])
