@@ -51,6 +51,38 @@ def test_search_danmu_prefers_provider_from_reg_src() -> None:
     assert youku.search_calls == []
 
 
+def test_search_danmu_falls_through_to_other_providers_when_reg_src_provider_misses_requested_episode() -> None:
+    bilibili = FakeProvider(
+        "bilibili",
+        [DanmakuSearchItem(provider="bilibili", name="蜜语纪 24集", url="https://www.bilibili.com/video/BV24")],
+        [],
+    )
+    tencent = FakeProvider(
+        "tencent",
+        [DanmakuSearchItem(provider="tencent", name="蜜语纪 15集", url="https://v.qq.com/x/cover/demo15.html")],
+        [],
+    )
+    youku = FakeProvider(
+        "youku",
+        [DanmakuSearchItem(provider="youku", name="蜜语纪 特别篇", url="https://v.youku.com/v_show/id_demo.html")],
+        [],
+    )
+    service = DanmakuService(
+        {"bilibili": bilibili, "tencent": tencent, "youku": youku},
+        provider_order=["tencent", "youku", "bilibili"],
+    )
+
+    results = service.search_danmu("蜜语纪 15集", "https://www.bilibili.com/video/BV1xx411c7mD")
+
+    assert [item.url for item in results] == [
+        "https://v.qq.com/x/cover/demo15.html",
+        "https://v.youku.com/v_show/id_demo.html",
+    ]
+    assert bilibili.search_calls == ["蜜语纪 15集"]
+    assert tencent.search_calls == ["蜜语纪 15集"]
+    assert youku.search_calls == ["蜜语纪 15集"]
+
+
 def test_search_danmu_aggregates_and_sorts_results_without_reg_src() -> None:
     tencent = FakeProvider(
         "tencent",
@@ -153,7 +185,7 @@ def test_search_danmu_keeps_fallback_ranking_when_no_candidate_matches_requested
 
     results = service.search_danmu("剑来 第二季 10集")
 
-    assert [item.url for item in results] == ["https://youku/special", "https://tencent/9"]
+    assert results == []
 
 
 def test_search_danmu_does_not_fall_back_to_stripped_keyword_when_episode_search_misses() -> None:
@@ -172,7 +204,7 @@ def test_search_danmu_does_not_fall_back_to_stripped_keyword_when_episode_search
 
     results = service.search_danmu("蜜语纪 15集")
 
-    assert [item.url for item in results] == ["https://tencent/10", "https://tencent/11"]
+    assert results == []
     assert tencent.search_calls == ["蜜语纪 15集"]
 
 

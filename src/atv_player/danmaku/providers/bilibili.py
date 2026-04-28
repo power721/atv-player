@@ -15,7 +15,7 @@ from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
 from atv_player.danmaku.utils import normalize_name, similarity_score
 
 
-_SEARCH_TYPE_PRIORITY = {"media_bangumi": 0, "media_ft": 1, "video": 2}
+_SEARCH_TYPE_PRIORITY = {"media_bangumi": 0, "media_ft": 1}
 _RISK_CONTROL_CODES = {-352, -412}
 _BROWSER_HEADERS = {
     "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
@@ -104,7 +104,7 @@ class BilibiliDanmakuProvider:
         normalized = normalize_name(name)
         self._prime_web_state()
         items: list[DanmakuSearchItem] = []
-        for search_type in ("media_bangumi", "media_ft", "video"):
+        for search_type in ("media_bangumi", "media_ft"):
             payload = self._search_payload(normalized, search_type)
             items.extend(self._parse_search_results(payload, normalized, search_type))
         items.sort(key=lambda item: (_SEARCH_TYPE_PRIORITY[item.search_type], -item.ratio, -item.simi))

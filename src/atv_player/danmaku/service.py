@@ -33,9 +33,15 @@ class DanmakuService:
         self._provider_order = list(provider_order)
         self._provider_rank = {key: index for index, key in enumerate(self._provider_order)}
 
-    def _ordered_provider_keys(self, reg_src: str) -> list[str]:
+    def _preferred_provider_key(self, reg_src: str) -> str | None:
         matched = match_provider(reg_src)
         if matched and matched in self._providers:
+            return matched
+        return None
+
+    def _ordered_provider_keys(self, reg_src: str) -> list[str]:
+        matched = self._preferred_provider_key(reg_src)
+        if matched is not None:
             return [matched]
         return [key for key in self._provider_order if key in self._providers]
 
@@ -48,16 +54,23 @@ class DanmakuService:
         search_keyword = strip_episode_suffix(normalized) or normalized
         requested_episode = extract_episode_number(normalized)
         primary_query = normalized if requested_episode is not None else search_keyword
-        print(primary_query, requested_episode)
-        provider_keys = self._ordered_provider_keys(reg_src)
+        preferred_key = self._preferred_provider_key(reg_src)
+        provider_keys = [preferred_key] if preferred_key is not None else self._ordered_provider_keys(reg_src)
         results = self._collect_search_results(provider_keys, primary_query)
         if requested_episode is not None:
-            print(results)
             matching = [item for item in results if extract_episode_number(item.name) == requested_episode]
-            print(matching)
+            if not matching and preferred_key is not None:
+                fallback_keys = [
+                    key for key in self._provider_order if key in self._providers and key != preferred_key
+                ]
+                if fallback_keys:
+                    results.extend(self._collect_search_results(fallback_keys, primary_query))
+                    matching = [item for item in results if extract_episode_number(item.name) == requested_episode]
             if matching:
                 no_episode = [item for item in results if extract_episode_number(item.name) is None]
                 results = [*matching, *no_episode]
+            else:
+                results = []
         return sorted(
             results,
             key=lambda item: (

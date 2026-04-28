@@ -4,30 +4,32 @@ from atv_player.danmaku.providers.tencent import TencentDanmakuProvider
 
 
 def test_tencent_provider_search_maps_candidates_from_search_payload() -> None:
-    def fake_post(
+    def fake_get(
         url: str,
         content: str | None = None,
+        params: dict | None = None,
         headers: dict | None = None,
         follow_redirects: bool = True,
         timeout: float = 10.0,
     ):
-        assert (
-            url
-            == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch?vplatform=2"
-        )
-        assert content is not None
-        assert '"query":"剑来"' in content
-        assert '"pagenum":0' in content
-        assert '"pagesize":30' in content
+        assert url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch"
+        assert params == {
+            "q": "剑来",
+            "query": "剑来",
+            "vversion_platform": "2",
+            "page_num": "1",
+            "page_size": "20",
+            "req_from": "web",
+        }
         assert headers == {
             "User-Agent": (
-                "Mozilla/5.0 (Linux; Android 13; M2104K10AC Build/TP1A.220624.014) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/131.0.6778.200 "
-                "Mobile Safari/537.36"
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
             ),
-            "Content-Type": "application/json",
+            "Accept": "application/json",
             "Origin": "https://v.qq.com",
             "Referer": "https://v.qq.com/",
+            "trpc-trans-info": '{"trpc-env":""}',
         }
         return httpx.Response(
             200,
@@ -47,7 +49,7 @@ def test_tencent_provider_search_maps_candidates_from_search_payload() -> None:
             },
         )
 
-    provider = TencentDanmakuProvider(post=fake_post)
+    provider = TencentDanmakuProvider(get=fake_get)
 
     items = provider.search("剑来")
 
@@ -57,10 +59,53 @@ def test_tencent_provider_search_maps_candidates_from_search_payload() -> None:
     assert items[0].url == "https://v.qq.com/x/cover/demo/vid123.html"
 
 
-def test_tencent_provider_search_filters_txvideo_links_and_expands_numeric_episode_titles() -> None:
-    def fake_post(
+def test_tencent_provider_search_uses_stripped_keyword_for_episode_queries() -> None:
+    calls: list[dict[str, str]] = []
+
+    def fake_get(
         url: str,
-        content: str | None = None,
+        params: dict | None = None,
+        headers: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        assert params is not None
+        calls.append(params)
+        if params.get("query") == "蜜语纪":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "normalList": {
+                            "itemList": [
+                                {
+                                    "videoInfo": {
+                                        "title": "16",
+                                        "url": "https://v.qq.com/x/cover/mzc002006dzzunf/u4102abc016.html",
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                },
+            )
+        raise AssertionError(str(params))
+
+    provider = TencentDanmakuProvider(get=fake_get)
+
+    items = provider.search("蜜语纪 16集")
+
+    assert [(item.name, item.url) for item in items] == [
+        ("蜜语纪 16集", "https://v.qq.com/x/cover/mzc002006dzzunf/u4102abc016.html"),
+    ]
+    assert len(calls) == 1
+    assert calls[0]["query"] == "蜜语纪"
+
+
+def test_tencent_provider_search_filters_txvideo_links_and_expands_numeric_episode_titles() -> None:
+    def fake_get(
+        url: str,
+        params: dict | None = None,
         headers: dict | None = None,
         follow_redirects: bool = True,
         timeout: float = 10.0,
@@ -95,7 +140,7 @@ def test_tencent_provider_search_filters_txvideo_links_and_expands_numeric_episo
             },
         )
 
-    provider = TencentDanmakuProvider(post=fake_post)
+    provider = TencentDanmakuProvider(get=fake_get)
 
     items = provider.search("剑来 第二季 10集")
 
@@ -106,9 +151,9 @@ def test_tencent_provider_search_filters_txvideo_links_and_expands_numeric_episo
 
 
 def test_tencent_provider_search_filters_preview_episode_candidates_from_episode_info_list() -> None:
-    def fake_post(
+    def fake_get(
         url: str,
-        content: str | None = None,
+        params: dict | None = None,
         headers: dict | None = None,
         follow_redirects: bool = True,
         timeout: float = 10.0,
@@ -146,7 +191,7 @@ def test_tencent_provider_search_filters_preview_episode_candidates_from_episode
             },
         )
 
-    provider = TencentDanmakuProvider(post=fake_post)
+    provider = TencentDanmakuProvider(get=fake_get)
 
     items = provider.search("剑来 第二季 10集")
 
@@ -155,16 +200,187 @@ def test_tencent_provider_search_filters_preview_episode_candidates_from_episode
     ]
 
 
-def test_tencent_provider_search_falls_back_to_web_when_mbsearch_returns_business_error() -> None:
-    def fake_post(
+def test_tencent_provider_search_expands_episode_list_from_candidate_detail_page() -> None:
+    def fake_get(
         url: str,
-        content: str | None = None,
+        headers: dict | None = None,
+        params: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        if url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "normalList": {
+                            "itemList": [
+                                {
+                                    "videoInfo": {
+                                        "title": "蜜语纪",
+                                        "url": "https://v.qq.com/x/cover/mzc002006dzzunf/k410266zdm1.html",
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                },
+            )
+        assert url == "https://v.qq.com/x/cover/mzc002006dzzunf/k410266zdm1.html"
+        return httpx.Response(
+            200,
+            text=(
+                '<script>window.__STATE__={"vsite_episode_list":[{"title":"15","url":"https://v.qq.com/x/cover/'
+                'mzc002006dzzunf/u4102abc015.html","duration":"1826"},{"title":"16","url":"https://v.qq.com/x/cover/'
+                'mzc002006dzzunf/u4102abc016.html","duration":"1826"}]};</script>'
+            ),
+        )
+
+    provider = TencentDanmakuProvider(get=fake_get)
+
+    items = provider.search("蜜语纪 15集")
+
+    assert ("蜜语纪 15集", "https://v.qq.com/x/cover/mzc002006dzzunf/u4102abc015.html") in [
+        (item.name, item.url) for item in items
+    ]
+
+
+def test_tencent_provider_search_extracts_episode_links_from_detail_html_items() -> None:
+    def fake_get(
+        url: str,
+        headers: dict | None = None,
+        params: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        if url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch":
+            assert params is not None
+            assert params["query"] == "蜜语纪"
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "normalList": {
+                            "itemList": [
+                                {
+                                    "videoInfo": {
+                                        "title": "蜜语纪 1集",
+                                        "url": "https://v.qq.com/x/cover/mzc002006dzzunf/h4102lz1osw.html",
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                },
+            )
+        assert url == "https://v.qq.com/x/cover/mzc002006dzzunf/h4102lz1osw.html"
+        return httpx.Response(
+            200,
+            text=(
+                '<div id="video-pc_web_episode_list_mzc002006dzzunf_v41021ycs9o_33_main" '
+                'data-video-idx="33" class="episode-item normal-font" '
+                'title="明星即将入住！纪总拿捏小段总，让出总统套房" '
+                'dt-params="cid=mzc002006dzzunf&amp;item_idx=33&amp;vid=v41021ycs9o">'
+                '<span class="episode-item-text">16</span>'
+                '<div class="corner-wrap"><span class="text">VIP</span></div>'
+                "</div>"
+            ),
+        )
+
+    provider = TencentDanmakuProvider(get=fake_get)
+
+    items = provider.search("蜜语纪 16集")
+
+    assert ("蜜语纪 16集", "https://v.qq.com/x/cover/mzc002006dzzunf/v41021ycs9o.html") in [
+        (item.name, item.url) for item in items
+    ]
+
+
+def test_tencent_provider_search_prefers_full_episode_over_preview_from_union_detail_data() -> None:
+    def fake_get(
+        url: str,
+        headers: dict | None = None,
+        params: dict | None = None,
+        follow_redirects: bool = True,
+        timeout: float = 10.0,
+    ):
+        if url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch":
+            assert params is not None
+            assert params["query"] == "蜜语纪"
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "normalList": {
+                            "itemList": [
+                                {
+                                    "videoInfo": {
+                                        "title": "蜜语纪",
+                                        "url": "https://v.qq.com/x/cover/mzc002006dzzunf/h4102lz1osw.html",
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                },
+            )
+        if url == "https://v.qq.com/x/cover/mzc002006dzzunf/h4102lz1osw.html":
+            return httpx.Response(
+                200,
+                text=(
+                    '<script>window.__vikor__context__.ssrPayloads=(function(a,b){return {_piniaState:{union:{'
+                    'coverInfoMap:{mzc002006dzzunf:{video_ids:["z4102434xj2","v41021ycs9o"],cid:"mzc002006dzzunf"}}'
+                    "}}}}({},{}));</script>"
+                ),
+            )
+        if url == "https://union.video.qq.com/fcgi-bin/data":
+            assert params == {
+                "otype": "json",
+                "tid": "1804",
+                "appid": "20001238",
+                "appkey": "6c03bbe9658448a4",
+                "union_platform": "1",
+                "idlist": "z4102434xj2,v41021ycs9o",
+            }
+            return httpx.Response(
+                200,
+                text=(
+                    'QZOutputJson={"errorno":0,"results":['
+                    '{"id":"z4102434xj2","retcode":0,"fields":{"vid":"z4102434xj2","c_covers":"mzc002006dzzunf",'
+                    '"c_title_output":"16集预告","title":"《蜜语纪》预告片_16","category_map":[10479,"预告片"]}},'
+                    '{"id":"v41021ycs9o","retcode":0,"fields":{"vid":"v41021ycs9o","c_covers":"mzc002006dzzunf",'
+                    '"c_title_output":"16","title":"蜜语纪_16","category_map":[10470,"正片"]}}]};'
+                ),
+            )
+        raise AssertionError(url)
+
+    provider = TencentDanmakuProvider(get=fake_get)
+
+    items = provider.search("蜜语纪 16集")
+
+    matching = [(item.name, item.url) for item in items if item.name == "蜜语纪 16集"]
+    assert matching == [("蜜语纪 16集", "https://v.qq.com/x/cover/mzc002006dzzunf/v41021ycs9o.html")]
+
+
+def test_tencent_provider_search_returns_empty_when_mbsearch_returns_business_error() -> None:
+    def fake_get(
+        url: str,
+        params: dict | None = None,
         headers: dict | None = None,
         follow_redirects: bool = True,
         timeout: float = 10.0,
     ):
+        assert url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch"
         return httpx.Response(200, json={"ret": 1001, "msg": "rate limited"})
 
+    provider = TencentDanmakuProvider(get=fake_get)
+
+    items = provider.search("剑来")
+
+    assert items == []
+
+
+def test_tencent_provider_search_returns_empty_when_mbsearch_http_fails() -> None:
     def fake_get(
         url: str,
         params: dict | None = None,
@@ -172,59 +388,14 @@ def test_tencent_provider_search_falls_back_to_web_when_mbsearch_returns_busines
         follow_redirects: bool = True,
         timeout: float = 10.0,
     ):
-        assert url == "https://v.qq.com/x/search/?q=%E5%89%91%E6%9D%A5"
-        return httpx.Response(
-            200,
-            text=(
-                '<html><body>'
-                '<a href="https://v.qq.com/x/cover/demo/vid123.html" title="剑来 第1集"></a>'
-                "</body></html>"
-            ),
-        )
-
-    provider = TencentDanmakuProvider(get=fake_get, post=fake_post)
-
-    items = provider.search("剑来")
-
-    assert len(items) == 1
-    assert items[0].name == "剑来 第1集"
-    assert items[0].url == "https://v.qq.com/x/cover/demo/vid123.html"
-
-
-def test_tencent_provider_search_falls_back_to_web_when_mbsearch_http_fails() -> None:
-    def fake_post(
-        url: str,
-        content: str | None = None,
-        headers: dict | None = None,
-        follow_redirects: bool = True,
-        timeout: float = 10.0,
-    ):
+        assert url == "https://pbaccess.video.qq.com/trpc.videosearch.mobile_search.MultiTerminalSearch/MbSearch"
         raise httpx.HTTPError("boom")
 
-    def fake_get(
-        url: str,
-        params: dict | None = None,
-        headers: dict | None = None,
-        follow_redirects: bool = True,
-        timeout: float = 10.0,
-    ):
-        assert url == "https://v.qq.com/x/search/?q=%E5%89%91%E6%9D%A5"
-        return httpx.Response(
-            200,
-            text=(
-                '<html><body>'
-                '<a href="https://v.qq.com/x/cover/demo/vid123.html" title="剑来 第1集"></a>'
-                "</body></html>"
-            ),
-        )
-
-    provider = TencentDanmakuProvider(get=fake_get, post=fake_post)
+    provider = TencentDanmakuProvider(get=fake_get)
 
     items = provider.search("剑来")
 
-    assert len(items) == 1
-    assert items[0].name == "剑来 第1集"
-    assert items[0].url == "https://v.qq.com/x/cover/demo/vid123.html"
+    assert items == []
 
 
 def test_tencent_provider_resolve_extracts_video_id_and_merges_segments() -> None:
