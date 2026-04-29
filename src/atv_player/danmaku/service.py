@@ -58,6 +58,7 @@ _SUPPLEMENTAL_MOVIE_TOKENS = (
     "专访",
 )
 
+_MIN_DANMAKU_CANDIDATE_DURATION_SECONDS = 300
 _LONG_FORM_DURATION_SECONDS = 3000
 _SHORT_FORM_DURATION_RATIO = 0.55
 _SHORT_FORM_MIN_DURATION_SECONDS = 1200
@@ -108,6 +109,14 @@ def _filter_short_duration_candidates_for_implicit_request(
         if item.duration_seconds <= 0 or item.duration_seconds >= min_duration
     ]
     return filtered or items
+
+
+def _filter_too_short_duration_candidates(items: list[DanmakuSearchItem]) -> list[DanmakuSearchItem]:
+    return [
+        item
+        for item in items
+        if item.duration_seconds <= 0 or item.duration_seconds >= _MIN_DANMAKU_CANDIDATE_DURATION_SECONDS
+    ]
 
 
 class DanmakuService:
@@ -210,6 +219,7 @@ class DanmakuService:
         preferred_key = self._preferred_provider_key(reg_src)
         provider_keys = [preferred_key] if preferred_key is not None else self._ordered_provider_keys(reg_src)
         results = self._collect_search_results(provider_keys, primary_query, normalized)
+        results = _filter_too_short_duration_candidates(results)
         if requested_episode is not None:
             matching = [
                 item
@@ -223,6 +233,7 @@ class DanmakuService:
                 ]
                 if fallback_keys:
                     results.extend(self._collect_search_results(fallback_keys, primary_query, normalized))
+                    results = _filter_too_short_duration_candidates(results)
                     matching = [
                         item
                         for item in results

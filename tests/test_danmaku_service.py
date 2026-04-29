@@ -162,6 +162,74 @@ def test_search_danmu_sources_preserves_existing_order_when_media_duration_unkno
     ]
 
 
+def test_search_danmu_filters_out_known_candidates_shorter_than_five_minutes() -> None:
+    tencent = FakeProvider(
+        "tencent",
+        [
+            DanmakuSearchItem(
+                provider="tencent",
+                name="疯狂动物城2",
+                url="https://v.qq.com/short",
+                ratio=0.99,
+                simi=0.99,
+                duration_seconds=299,
+            ),
+            DanmakuSearchItem(
+                provider="tencent",
+                name="疯狂动物城2",
+                url="https://v.qq.com/keep",
+                ratio=0.95,
+                simi=0.95,
+                duration_seconds=5935,
+            ),
+            DanmakuSearchItem(
+                provider="tencent",
+                name="疯狂动物城2",
+                url="https://v.qq.com/unknown",
+                ratio=0.90,
+                simi=0.90,
+                duration_seconds=0,
+            ),
+        ],
+        [],
+    )
+    service = DanmakuService({"tencent": tencent}, provider_order=["tencent"])
+
+    results = service.search_danmu("疯狂动物城2")
+
+    assert [item.url for item in results] == ["https://v.qq.com/keep", "https://v.qq.com/unknown"]
+
+
+def test_search_danmu_keeps_candidates_at_five_minutes_or_longer() -> None:
+    tencent = FakeProvider(
+        "tencent",
+        [
+            DanmakuSearchItem(
+                provider="tencent",
+                name="疯狂动物城2",
+                url="https://v.qq.com/exact",
+                ratio=0.99,
+                simi=0.99,
+                duration_seconds=300,
+            ),
+            DanmakuSearchItem(
+                provider="tencent",
+                name="疯狂动物城2",
+                url="https://v.qq.com/long",
+                ratio=0.95,
+                simi=0.95,
+                duration_seconds=600,
+            ),
+        ],
+        [],
+    )
+    service = DanmakuService({"tencent": tencent}, provider_order=["tencent"])
+
+    results = service.search_danmu("疯狂动物城2")
+
+    assert [item.url for item in results] == ["https://v.qq.com/long", "https://v.qq.com/exact"]
+
+
 def test_service_resolve_danmu_uses_mgtv_provider_for_mgtv_urls() -> None:
     mgtv = FakeProvider(
         "mgtv",
