@@ -16,6 +16,7 @@ from atv_player.danmaku.utils import extract_episode_number
 class TencentDanmakuProvider:
     key = "tencent"
     _SEARCH_WALK_SKIP_KEYS = {"nestedDocs", "nestedBoxes", "richDocs"}
+    _GENERIC_PLAY_TITLES = {"立即播放", "正片", "播放"}
     _BARRAGE_BASE_URL = "https://dm.video.qq.com/barrage/base"
     _BARRAGE_SEGMENT_URL = "https://dm.video.qq.com/barrage/segment"
     _NON_MAIN_CONTENT_KEYWORDS = (
@@ -177,16 +178,23 @@ class TencentDanmakuProvider:
                 continue
             if not self._is_qq_platform(video_info.get("playSites")):
                 continue
-            if not self._has_episode_sites(video_info.get("episodeSites")):
-                continue
-            episode_info_list = video_info.get("episodeInfoList") or []
+            episode_info_list = self._video_info_episode_info_list(video_info)
+            cover_duration = self._video_info_cover_duration(video_info)
             for episode in episode_info_list:
                 if self._is_preview_episode_candidate(episode):
                     continue
                 url = str(episode.get("url") or "").replace("\\/", "/").strip()
                 title = self._clean_text(str(episode.get("title") or ""))
                 if url and title:
-                    found.append({"name": title, "url": url, "numeric_title_trusted": "1"})
+                    found.append(
+                        {
+                            "name": title,
+                            "url": url,
+                            "duration": str(episode.get("duration") or cover_duration or ""),
+                            "numeric_title_trusted": "1",
+                            "generic_title_trusted": "1" if self._is_generic_play_title(title) else "",
+                        }
+                    )
 
         def walk(obj) -> None:
             if isinstance(obj, dict):
@@ -236,6 +244,40 @@ class TencentDanmakuProvider:
         if not isinstance(episode_sites, dict):
             return False
         return bool(episode_sites)
+
+    def _video_info_episode_info_list(self, video_info: dict) -> list[dict]:
+        results: list[dict] = []
+
+        def extend_from(value) -> None:
+            if not isinstance(value, list):
+                return
+            for entry in value:
+                if isinstance(entry, dict):
+                    results.append(entry)
+
+        extend_from(video_info.get("episodeInfoList"))
+        for key in ("playSites", "episodeSites"):
+            sites = video_info.get(key)
+            if isinstance(sites, list):
+                for site in sites:
+                    if not isinstance(site, dict):
+                        continue
+                    extend_from(site.get("episodeInfoList"))
+            elif isinstance(sites, dict):
+                for site in sites.values():
+                    if not isinstance(site, dict):
+                        continue
+                    extend_from(site.get("episodeInfoList"))
+        return results
+
+    def _video_info_cover_duration(self, video_info: dict) -> int:
+        cover_doc = video_info.get("coverDoc") or {}
+        duration = cover_doc.get("timeLong")
+        if isinstance(duration, (int, float)):
+            return int(duration)
+        if isinstance(duration, str) and duration.isdigit():
+            return int(duration)
+        return 0
 
     def _is_preview_episode_candidate(self, episode: dict) -> bool:
         marker_text = " ".join(
@@ -553,6 +595,8 @@ class TencentDanmakuProvider:
             url = item.get("url", "").strip()
             if not raw_name or not url or not url.startswith("https://v.qq.com/"):
                 continue
+            if self._is_generic_play_title(raw_name) and episode_keyword_base and self._generic_title_is_trusted(item):
+                raw_name = episode_keyword_base
             match = re.fullmatch(r"(\d+)", raw_name)
             if match is not None and episode_keyword_base and self._numeric_title_is_trusted(item):
                 raw_name = f"{episode_keyword_base} {match.group(1)}集"
@@ -568,6 +612,12 @@ class TencentDanmakuProvider:
 
     def _numeric_title_is_trusted(self, item: dict[str, str]) -> bool:
         return str(item.get("numeric_title_trusted") or "").strip() == "1"
+
+    def _generic_title_is_trusted(self, item: dict[str, str]) -> bool:
+        return str(item.get("generic_title_trusted") or "").strip() == "1"
+
+    def _is_generic_play_title(self, title: str) -> bool:
+        return self._clean_text(title) in self._GENERIC_PLAY_TITLES
 
     def _matches_requested_episode_item(self, item: DanmakuSearchItem, requested_episode: int) -> bool:
         if extract_episode_number(item.name) != requested_episode:

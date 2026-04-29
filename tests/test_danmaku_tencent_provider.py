@@ -514,11 +514,57 @@ def test_tencent_provider_search_relabels_short_numeric_movie_variants_from_sear
                 "data": {
                     "normalList": {
                         "itemList": [
-                            {"videoInfo": {"title": "立即播放", "url": "https://v.qq.com/x/cover/demo/playnow.html"}},
-                            {"videoInfo": {"title": "1", "url": "https://v.qq.com/x/cover/demo/movie001.html"}},
-                            {"videoInfo": {"title": "2", "url": "https://v.qq.com/x/cover/demo/movie002.html"}},
-                            {"videoInfo": {"title": "3", "url": "https://v.qq.com/x/cover/demo/movie003.html"}},
-                            {"videoInfo": {"title": "4", "url": "https://v.qq.com/x/cover/demo/movie004.html"}},
+                            {
+                                "videoInfo": {
+                                    "title": "疯狂动物城2",
+                                    "playSites": [
+                                        {
+                                            "enName": "qq",
+                                            "episodeInfoList": [
+                                                {
+                                                    "title": "立即播放",
+                                                    "url": "https://v.qq.com/x/cover/demo/playnow.html",
+                                                    "duration": "6223",
+                                                }
+                                            ],
+                                        }
+                                    ],
+                                    "coverDoc": {"timeLong": 6223},
+                                }
+                            },
+                            {
+                                "videoInfo": {
+                                    "title": "疯狂动物城2绘本版",
+                                    "episodeSites": [
+                                        {
+                                            "enName": "qq",
+                                            "episodeInfoList": [
+                                                {
+                                                    "title": "1",
+                                                    "url": "https://v.qq.com/x/cover/demo/movie001.html",
+                                                    "duration": "628",
+                                                },
+                                                {
+                                                    "title": "2",
+                                                    "url": "https://v.qq.com/x/cover/demo/movie002.html",
+                                                    "duration": "628",
+                                                },
+                                                {
+                                                    "title": "3",
+                                                    "url": "https://v.qq.com/x/cover/demo/movie003.html",
+                                                    "duration": "628",
+                                                },
+                                                {
+                                                    "title": "4",
+                                                    "url": "https://v.qq.com/x/cover/demo/movie004.html",
+                                                    "duration": "628",
+                                                },
+                                            ],
+                                        }
+                                    ],
+                                    "coverDoc": {"timeLong": 628},
+                                }
+                            },
                         ]
                     }
                 }
@@ -529,11 +575,17 @@ def test_tencent_provider_search_relabels_short_numeric_movie_variants_from_sear
 
     items = provider.search("疯狂动物城2")
 
+    assert ("疯狂动物城2", "https://v.qq.com/x/cover/demo/playnow.html", 6223) in [
+        (item.name, item.url, item.duration_seconds) for item in items
+    ]
     assert ("疯狂动物城2 1集", "https://v.qq.com/x/cover/demo/movie001.html") in [
         (item.name, item.url) for item in items
     ]
     assert ("疯狂动物城2 4集", "https://v.qq.com/x/cover/demo/movie004.html") in [
         (item.name, item.url) for item in items
+    ]
+    assert ("疯狂动物城2 1集", "https://v.qq.com/x/cover/demo/movie001.html", 628) in [
+        (item.name, item.url, item.duration_seconds) for item in items
     ]
 
 
