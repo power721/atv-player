@@ -1,6 +1,8 @@
 import sys
 import types
 
+import pytest
+
 from atv_player.player.mpv_widget import AudioTrack, MpvWidget, SubtitleTrack
 
 
@@ -298,7 +300,6 @@ def test_mpv_widget_disables_mpv_keyboard_bindings_for_embedded_player(qtbot, mo
     assert captured["input_default_bindings"] is False
     assert captured["input_vo_keyboard"] is False
     assert captured["hwdec"] == "auto-safe"
-    assert captured["vo"] == "gpu"
     assert captured["cache"] is True
     assert captured["cache_pause_initial"] is True
     assert captured["cache_pause_wait"] == 3
@@ -306,6 +307,25 @@ def test_mpv_widget_disables_mpv_keyboard_bindings_for_embedded_player(qtbot, mo
     assert captured["demuxer_max_back_bytes"] == "128M"
     assert captured["stream_buffer_size"] == "4M"
     assert captured["network_timeout"] == 15
+
+
+def test_mpv_widget_uses_linux_audio_output_fallbacks_without_forcing_device_name(qtbot, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeMPV:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    monkeypatch.setitem(sys.modules, "mpv", types.SimpleNamespace(MPV=FakeMPV))
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    widget._create_player()
+
+    assert "vo" not in captured
+    assert captured["ao"] == "pulse,pipewire,alsa,"
+    assert "audio_device" not in captured
 
 
 def test_mpv_widget_emits_playback_finished_only_for_natural_end(qtbot, monkeypatch) -> None:
@@ -443,6 +463,38 @@ def test_mpv_widget_emits_playback_failed_with_unknown_error_fallback(qtbot, mon
     player._end_file_callback(types.SimpleNamespace(data=types.SimpleNamespace(reason=4, error="")))
 
     assert failures == ["播放失败: 未知错误"]
+
+
+def test_mpv_widget_formats_numeric_mpv_error_codes_from_end_file_event(qtbot, monkeypatch) -> None:
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.play_calls: list[str] = []
+            self.pause = False
+            self._end_file_callback = None
+
+        def event_callback(self, *event_types):
+            assert event_types == ("end-file",)
+
+            def register(callback):
+                self._end_file_callback = callback
+                return callback
+
+            return register
+
+        def play(self, url: str) -> None:
+            self.play_calls.append(url)
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = FakePlayer()
+    monkeypatch.setattr(widget, "_create_player", lambda: player)
+    failures: list[str] = []
+    widget.playback_failed.connect(failures.append)
+
+    widget.load("http://m/1.m3u8")
+    player._end_file_callback(types.SimpleNamespace(data=types.SimpleNamespace(reason=4, error=-20)))
+
+    assert failures == ["播放失败: 未指定错误 (-20)"]
 
 
 def test_mpv_widget_registers_right_click_binding_and_emits_context_menu_requested(qtbot, monkeypatch) -> None:
@@ -742,6 +794,64 @@ def test_mpv_widget_can_load_and_remove_external_secondary_subtitle(qtbot, tmp_p
         ("sub-add", str(subtitle_path), "auto"),
         ("sub-remove", 99),
     ]
+
+
+def test_mpv_widget_ignores_removing_stale_external_subtitle_track(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.command_calls: list[tuple[object, ...]] = []
+            self.track_list: list[dict[str, object]] = []
+            self.secondary_sid: object = 99
+
+        def command(self, *args) -> None:
+            self.command_calls.append(args)
+            raise RuntimeError(
+                (
+                    "Error running mpv command",
+                    -12,
+                    (object(), object(), object()),
+                )
+            )
+
+    player = FakePlayer()
+    widget._player = player
+
+    widget.remove_subtitle_track(99)
+
+    assert player.secondary_sid == "no"
+    assert player.command_calls == []
+
+
+def test_mpv_widget_still_raises_when_removing_existing_subtitle_track_fails(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class FakePlayer:
+        def __init__(self) -> None:
+            self.command_calls: list[tuple[object, ...]] = []
+            self.track_list: list[dict[str, object]] = [{"id": 99, "type": "sub", "external": True}]
+            self.secondary_sid: object = "no"
+
+        def command(self, *args) -> None:
+            self.command_calls.append(args)
+            raise RuntimeError(
+                (
+                    "Error running mpv command",
+                    -12,
+                    (object(), object(), object()),
+                )
+            )
+
+    player = FakePlayer()
+    widget._player = player
+
+    with pytest.raises(RuntimeError, match="Error running mpv command"):
+        widget.remove_subtitle_track(99)
+
+    assert player.command_calls == [("sub-remove", 99)]
 
 
 def test_mpv_widget_reads_and_writes_primary_subtitle_position(qtbot) -> None:

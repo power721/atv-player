@@ -8,6 +8,29 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QCloseEvent, QMouseEvent
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
+_MPV_ERROR_MESSAGES = {
+    -1: "事件队列已满",
+    -2: "内存分配失败",
+    -3: "播放器未初始化",
+    -4: "参数无效",
+    -5: "选项不存在",
+    -6: "选项格式错误",
+    -7: "选项值无效",
+    -8: "属性不存在",
+    -9: "属性格式错误",
+    -10: "属性当前不可用",
+    -11: "属性访问失败",
+    -12: "执行播放器命令失败",
+    -13: "媒体加载失败",
+    -14: "音频输出初始化失败",
+    -15: "视频输出初始化失败",
+    -16: "没有可播放的音视频流",
+    -17: "无法识别媒体格式",
+    -18: "当前系统不支持该操作",
+    -19: "功能尚未实现",
+    -20: "未指定错误",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class SubtitleTrack:
@@ -54,7 +77,6 @@ class MpvWidget(QWidget):
 
         common = dict(
             wid=str(int(self.winId())),
-            vo="gpu",
             hwdec="auto-safe",
             audio_spdif="no",
             ad="ffmpeg",
@@ -90,7 +112,7 @@ class MpvWidget(QWidget):
         else:
             return mpv.MPV(
                 **common,
-                audio_device="pulse",  # Linux关键
+                ao="pulse,pipewire,alsa,",
             )
 
     def _ensure_player(self) -> None:
@@ -204,8 +226,24 @@ class MpvWidget(QWidget):
     def _is_missing_mpv_property_error(self, exc: Exception) -> bool:
         return "property does not exist" in str(exc)
 
+    def _format_mpv_error(self, error: object | None) -> str:
+        if isinstance(error, bool):
+            return str(error)
+        if isinstance(error, int):
+            message = _MPV_ERROR_MESSAGES.get(error)
+            return f"{message} ({error})" if message else str(error)
+        normalized = str(error or "").strip()
+        if not normalized:
+            return ""
+        try:
+            error_code = int(normalized)
+        except ValueError:
+            return normalized
+        message = _MPV_ERROR_MESSAGES.get(error_code)
+        return f"{message} ({error_code})" if message else normalized
+
     def _format_end_file_failure_message(self, event_data: object | None) -> str:
-        error = str(getattr(event_data, "error", "") or "").strip()
+        error = self._format_mpv_error(getattr(event_data, "error", ""))
         if error:
             return f"播放失败: {error}"
         return "播放失败: 未知错误"
@@ -587,6 +625,8 @@ class MpvWidget(QWidget):
             current_secondary_sid = self._player_property("secondary-sid", None)
             if str(current_secondary_sid) == str(track_id):
                 self.apply_secondary_subtitle_mode("off")
+            if track_id not in self._subtitle_track_ids():
+                return
             self._player.command("sub-remove", track_id)
         except Exception:
             if getattr(self._player, "core_shutdown", False):
