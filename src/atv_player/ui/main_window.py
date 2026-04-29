@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, QRect, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -179,6 +179,8 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._media_request_id = 0
         self._restore_request_id = 0
         self._player_session_request_id = 0
+        self._main_window_geometry_before_player: QRect | None = None
+        self._main_window_was_maximized_before_player = False
         self._open_request_signals = _AsyncRequestSignals()
         self._connect_async_signal(self._open_request_signals.succeeded, self._handle_open_request_succeeded)
         self._connect_async_signal(self._open_request_signals.failed, self._handle_open_request_failed)
@@ -616,6 +618,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         start_paused = self.config.last_player_paused if restore_paused_state else False
         if not restore_paused_state:
             self.config.last_player_paused = False
+        self._remember_main_window_state_for_player()
         self.config.main_window_geometry = qbytearray_to_bytes(self.saveGeometry())
         self._save_config()
         self.player_window.open_session(session, start_paused=start_paused)
@@ -658,9 +661,47 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             self.player_window = None
         self.config.last_active_window = "main"
         self._save_config()
-        self.show()
+        self._restore_main_window_after_player()
         self.raise_()
         self.activateWindow()
+
+    def _remember_main_window_state_for_player(self) -> None:
+        self._main_window_was_maximized_before_player = self.isMaximized()
+        geometry = self.normalGeometry() if self._main_window_was_maximized_before_player else self.geometry()
+        if geometry.isValid():
+            self._main_window_geometry_before_player = QRect(geometry)
+        else:
+            self._main_window_geometry_before_player = None
+
+    def _restore_main_window_after_player(self) -> None:
+        geometry = self._main_window_geometry_before_player
+        if geometry is not None and geometry.isValid():
+            self.setGeometry(geometry)
+            if self._main_window_was_maximized_before_player:
+                self.showMaximized()
+            else:
+                self.showNormal()
+            self._refresh_main_window_layout()
+            return
+        self._restore_saved_geometry()
+        self.show()
+        self._refresh_main_window_layout()
+
+    def _restore_saved_geometry(self) -> None:
+        geometry = self.config.main_window_geometry
+        if not geometry:
+            return
+        self.restoreGeometry(to_qbytearray(geometry))
+
+    def _refresh_main_window_layout(self) -> None:
+        central_widget = self.centralWidget()
+        if central_widget is None:
+            return
+        central_widget.updateGeometry()
+        layout = central_widget.layout()
+        if layout is not None:
+            layout.invalidate()
+            layout.activate()
 
     def show_or_restore_player(self) -> PlayerWindow | None:
         if self.player_window is not None and getattr(self.player_window, "session", None) is not None:
