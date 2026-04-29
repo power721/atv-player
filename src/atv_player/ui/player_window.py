@@ -342,12 +342,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.forward_button = self._create_icon_button("seek-forward.svg", "前进", "Right")
         self.refresh_button = self._create_icon_button("refresh.svg", "重新播放")
         self.mute_button = self._create_icon_button("volume-on.svg", "静音", "M")
-        self.wide_button = self._create_icon_button("grid.svg", "宽屏")
+        self.wide_button = self._create_icon_button("grid.svg", "宽屏", "W")
         self.fullscreen_button = self._create_icon_button("maximize.svg", "全屏", "Enter")
         self.wide_button.setCheckable(True)
         self.toggle_playlist_button = self._create_icon_button("queue.svg", "播放列表")
         self.toggle_details_button = self._create_icon_button("info.svg", "详情")
-        self.danmaku_source_button = self._create_icon_button("danmaku.svg", "弹幕源")
+        self.danmaku_source_button = self._create_icon_button("danmaku.svg", "弹幕源", "D")
         self.toggle_playlist_button.setCheckable(True)
         self.toggle_details_button.setCheckable(True)
         self.toggle_playlist_button.setChecked(True)
@@ -2628,6 +2628,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         current_item = self.session.playlist[self.current_index]
         query = self._danmaku_source_query_edit.text().strip()
+        current_item.danmaku_search_query = query
+        current_item.danmaku_search_query_overridden = True
         media_duration_seconds = self._current_media_duration_seconds()
         self._start_danmaku_source_task(
             current_item,
@@ -2965,6 +2967,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             (QKeySequence(Qt.Key.Key_Space), self.toggle_playback),
             (QKeySequence(Qt.Key.Key_Return), self.toggle_fullscreen),
             (QKeySequence(Qt.Key.Key_Enter), self.toggle_fullscreen),
+            (QKeySequence("W"), self.wide_button.click),
+            (QKeySequence("D"), self._open_danmaku_source_dialog),
             (QKeySequence("M"), self._toggle_mute),
             (QKeySequence("-"), lambda: self._step_speed(-1)),
             (QKeySequence("+"), lambda: self._step_speed(1)),
@@ -3393,6 +3397,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         key_text = event.text().lower()
         if key_text == "m":
             self._toggle_mute()
+            event.accept()
+            return
+        if key_text == "w":
+            self.wide_button.click()
+            event.accept()
+            return
+        if key_text == "d":
+            self._open_danmaku_source_dialog()
             event.accept()
             return
         if key_text == "-":

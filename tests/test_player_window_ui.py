@@ -223,7 +223,7 @@ def test_player_window_shows_danmaku_source_button_with_custom_icon(qtbot) -> No
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
 
-    assert window.danmaku_source_button.toolTip() == "弹幕源"
+    assert window.danmaku_source_button.toolTip() == "弹幕源 (D)"
     assert window.danmaku_source_button.isEnabled() is True
 
 
@@ -634,6 +634,7 @@ def test_player_window_rerun_danmaku_search_runs_async_with_force_refresh(qtbot)
     window._rerun_current_item_danmaku_search()
 
     assert item.danmaku_pending is True
+    assert window._danmaku_source_query_edit.text() == "红果短剧 腾讯版"
     qtbot.waitUntil(lambda: controller.calls == [("红果短剧 腾讯版", True, 120)])
     qtbot.waitUntil(lambda: item.danmaku_pending is False)
     qtbot.waitUntil(lambda: window._danmaku_source_option_list is not None and window._danmaku_source_option_list.count() == 1)
@@ -2717,6 +2718,7 @@ def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> N
         "主字幕大小",
         "次字幕大小",
         "音轨",
+        "弹幕配置",
         "弹幕源",
         "视频信息",
     ]
@@ -6572,6 +6574,8 @@ def test_player_window_playback_controls_show_shortcuts_and_pointing_cursor(qtbo
     assert window.backward_button.toolTip() == "后退 (Left)"
     assert window.forward_button.toolTip() == "前进 (Right)"
     assert window.mute_button.toolTip() == "静音 (M)"
+    assert window.wide_button.toolTip() == "宽屏 (W)"
+    assert window.danmaku_source_button.toolTip() == "弹幕源 (D)"
     assert window.fullscreen_button.toolTip() == "全屏 (Enter)"
     assert window.play_button.cursor().shape() == Qt.CursorShape.PointingHandCursor
     assert window.refresh_button.cursor().shape() == Qt.CursorShape.PointingHandCursor
@@ -7078,6 +7082,16 @@ def visible_shortcut_help_dialogs() -> list[QDialog]:
     ]
 
 
+def visible_danmaku_source_dialogs() -> list[QDialog]:
+    return [
+        widget
+        for widget in QApplication.topLevelWidgets()
+        if isinstance(widget, QDialog)
+        and widget.windowTitle() == "弹幕源"
+        and widget.isVisible()
+    ]
+
+
 def shortcut_table_rows(dialog: QDialog) -> list[tuple[str, str]]:
     table = dialog.findChild(QTableWidget, "shortcutHelpTable")
     assert table is not None
@@ -7107,6 +7121,8 @@ def test_player_window_f1_opens_shortcut_help_dialog(qtbot) -> None:
     assert ("Ctrl+Right", "前进 60 秒") in rows
     assert ("M", "静音") in rows
     assert ("Enter", "切换全屏") in rows
+    assert ("W", "切换宽屏") in rows
+    assert ("D", "打开弹幕源") in rows
 
 
 def test_player_window_reuses_existing_shortcut_help_dialog(qtbot) -> None:
@@ -7204,6 +7220,15 @@ def test_player_window_keyboard_shortcuts_control_playback_navigation_and_view(q
 
     send_key(window, Qt.Key.Key_M, text="m")
     assert video.toggle_mute_calls == 1
+
+    send_key(window, Qt.Key.Key_W, text="w")
+    assert window.wide_button.isChecked() is True
+
+    send_key(window, Qt.Key.Key_W, text="w")
+    assert window.wide_button.isChecked() is False
+
+    send_key(window, Qt.Key.Key_D, text="d")
+    qtbot.waitUntil(lambda: len(visible_danmaku_source_dialogs()) == 1)
 
     send_key(window, Qt.Key.Key_Minus, text="-")
     assert window.current_speed == 0.75
