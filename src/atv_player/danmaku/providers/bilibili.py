@@ -117,7 +117,7 @@ class BilibiliDanmakuProvider:
         return items
 
     def resolve(self, page_url: str) -> list[DanmakuRecord]:
-        candidate = self._metadata_by_url.get(page_url) or DanmakuSearchItem(provider=self.key, name="", url=page_url)
+        candidate = self._metadata_by_url.get(page_url) or self._candidate_from_page_url(page_url)
         cid = self._resolve_cid(candidate)
         xml_text = self._get(
             f"https://comment.bilibili.com/{cid}.xml",
@@ -382,6 +382,19 @@ class BilibiliDanmakuProvider:
         if match is not None:
             return int(match.group(1))
         return None
+
+    def _candidate_from_page_url(self, page_url: str) -> DanmakuSearchItem:
+        ep_match = re.search(r"/bangumi/play/ep(\d+)", page_url)
+        ss_match = re.search(r"/bangumi/play/ss(\d+)", page_url)
+        bv_match = re.search(r"/video/([Bb][Vv][A-Za-z0-9]+)", page_url)
+        return DanmakuSearchItem(
+            provider=self.key,
+            name="",
+            url=page_url,
+            ep_id=int(ep_match.group(1)) if ep_match is not None else None,
+            season_id=int(ss_match.group(1)) if ss_match is not None else None,
+            bvid=bv_match.group(1) if bv_match is not None else "",
+        )
 
     def _parse_xml_records(self, xml_text: str) -> list[DanmakuRecord]:
         try:

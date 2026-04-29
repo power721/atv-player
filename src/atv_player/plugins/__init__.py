@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
 from atv_player.models import SpiderPluginConfig
 from atv_player.plugins.controller import SpiderPluginController
 from atv_player.plugins.loader import LoadedSpiderPlugin, SpiderPluginLoader
@@ -42,6 +43,7 @@ class SpiderPluginManager:
         self._playback_parser_service = None
         self._preferred_parse_key_loader = None
         self._danmaku_service = None
+        self._danmaku_preference_store = DanmakuSeriesPreferenceStore()
 
     def list_plugins(self) -> list[SpiderPluginConfig]:
         return self._repository.list_plugins()
@@ -156,6 +158,7 @@ class SpiderPluginManager:
                 playback_parser_service=self._playback_parser_service,
                 preferred_parse_key_loader=self._preferred_parse_key_loader,
                 danmaku_service=self._danmaku_service,
+                danmaku_preference_store=self._danmaku_preference_store,
                 playback_history_loader=None
                 if self._playback_history_repository is None
                 else lambda vod_id, plugin_id=plugin.id: self._playback_history_repository.get_history(

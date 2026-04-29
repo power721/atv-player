@@ -8,10 +8,13 @@ from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QIcon, QI
 from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QMenu, QTableWidget, QWidget
 from PySide6.QtWidgets import QSplitter, QToolTip
 from atv_player.controllers.player_controller import PlayerSession
-from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption
+from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
 from atv_player.models import AppConfig, PlayItem, PlaybackLoadResult, VodItem
+from atv_player.plugins.controller import SpiderPluginController
 from atv_player.player.mpv_widget import AudioTrack, SubtitleTrack
 
+import atv_player.danmaku.cache as danmaku_cache_module
+import atv_player.plugins.controller as spider_controller_module
 import atv_player.ui.poster_loader as poster_loader_module
 import atv_player.ui.player_window as player_window_module
 from atv_player.ui.player_window import PlayerWindow
@@ -5543,6 +5546,92 @@ def test_player_window_retries_danmaku_load_after_initial_mpv_command_failure(qt
     assert "弹幕加载失败" not in window.log_view.toPlainText()
 
 
+def test_player_window_keeps_retrying_danmaku_load_until_player_is_ready(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_danmaku_paths: list[tuple[str, bool]] = []
+            self.set_secondary_subtitle_ass_override_calls: list[str] = []
+            self._next_track_id = 110
+            self._remaining_failures = 4
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return True
+
+        def secondary_subtitle_ass_override(self) -> str:
+            return "strip"
+
+        def set_secondary_subtitle_ass_override(self, value: str) -> None:
+            self.set_secondary_subtitle_ass_override_calls.append(value)
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append((path, select_for_secondary))
+            if self._remaining_failures > 0:
+                self._remaining_failures -= 1
+                raise RuntimeError("Error running mpv command")
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return True
+
+        def set_secondary_subtitle_position(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(
+                title="第1集",
+                url="http://m/1.m3u8",
+                danmaku_xml='<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>',
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_danmaku_paths) >= 5, timeout=3000)
+
+    assert [select_for_secondary for _path, select_for_secondary in window.video.loaded_danmaku_paths] == [
+        True,
+        True,
+        True,
+        True,
+        True,
+    ]
+    assert "弹幕加载失败" not in window.log_view.toPlainText()
+
+
 def test_player_window_does_not_disable_danmaku_when_track_list_refresh_arrives_during_load(qtbot) -> None:
     class FakeVideo:
         def __init__(self, window: PlayerWindow) -> None:
@@ -5957,6 +6046,172 @@ def test_player_window_applies_saved_danmaku_line_count_after_async_resolution(q
 
     qtbot.waitUntil(lambda: len(window.video.loaded_danmaku_paths) == 1)
     assert window.danmaku_combo.currentText() == "3行"
+
+
+def test_player_window_auto_loads_cached_danmaku_after_restart_with_manual_override(qtbot, monkeypatch, tmp_path) -> None:
+    class FakeSpider:
+        def detailContent(self, ids):
+            return {
+                "list": [
+                    {
+                        "vod_id": ids[0],
+                        "vod_name": "玄界之门3D版",
+                        "vod_pic": "poster-detail",
+                        "vod_play_from": "默认线",
+                        "vod_play_url": "第1集$/play/1",
+                    }
+                ]
+            }
+
+        def playerContent(self, flag, id, vipFlags):
+            return {"parse": 0, "url": f"https://stream.example{id}.m3u8", "header": {"Referer": "https://site.example"}}
+
+        def danmaku(self):
+            return True
+
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.loaded_danmaku_paths: list[str] = []
+            self._next_track_id = 150
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers=None) -> None:
+            return None
+
+        def set_speed(self, speed: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def subtitle_tracks(self) -> list[SubtitleTrack]:
+            return []
+
+        def audio_tracks(self) -> list[AudioTrack]:
+            return []
+
+        def load_external_subtitle(self, path: str, *, select_for_secondary: bool = False) -> int | None:
+            self.loaded_danmaku_paths.append(path)
+            track_id = self._next_track_id
+            self._next_track_id += 1
+            return track_id
+
+        def remove_subtitle_track(self, track_id: int | None) -> None:
+            return None
+
+        def supports_secondary_subtitle_ass_override(self) -> bool:
+            return False
+
+        def supports_subtitle_ass_override(self) -> bool:
+            return False
+
+        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
+            return track_id
+
+        def supports_secondary_subtitle_position(self) -> bool:
+            return False
+
+        def position_seconds(self) -> int:
+            return 0
+
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(spider_controller_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(spider_controller_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+    monkeypatch.setattr(
+        spider_controller_module,
+        "load_cached_danmaku_source_search_result",
+        danmaku_cache_module.load_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(
+        spider_controller_module,
+        "save_cached_danmaku_source_search_result",
+        danmaku_cache_module.save_cached_danmaku_source_search_result,
+    )
+    xml_text = '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>'
+
+    class FirstDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[DanmakuSourceOption(provider="tencent", name="玄界之门 第1集", url="https://v.qq.com/demo")],
+                    )
+                ],
+                default_option_url="https://v.qq.com/demo",
+                default_provider="tencent",
+            )
+
+        def resolve_danmu(self, page_url: str) -> str:
+            return xml_text
+
+    class SecondDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            return DanmakuSourceSearchResult(groups=[], default_option_url="", default_provider="")
+
+        def search_danmu(self, name: str, reg_src: str = ""):
+            return []
+
+        def resolve_danmu(self, page_url: str) -> str:
+            raise AssertionError("restart should use cached danmaku xml")
+
+    first_controller = SpiderPluginController(
+        FakeSpider(),
+        plugin_name="玄界之门3D版",
+        search_enabled=True,
+        danmaku_service=FirstDanmakuService(),
+    )
+    first_request = first_controller.build_request("/detail/1")
+    assert first_request.playback_loader is not None
+    seeded_item = first_request.playlist[0]
+    first_request.playback_loader(seeded_item)
+    seeded_item.danmaku_search_query = "玄界之门 1集"
+    seeded_item.danmaku_search_query_overridden = True
+    first_controller.refresh_danmaku_sources(seeded_item, query_override="玄界之门 1集", force_refresh=True)
+    first_controller.switch_danmaku_source(seeded_item, "https://v.qq.com/demo")
+
+    second_controller = SpiderPluginController(
+        FakeSpider(),
+        plugin_name="玄界之门3D版",
+        search_enabled=True,
+        danmaku_service=SecondDanmakuService(),
+    )
+    second_request = second_controller.build_request("/detail/1")
+    session = PlayerSession(
+        vod=second_request.vod,
+        playlist=second_request.playlist,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        playlists=second_request.playlists,
+        playlist_index=second_request.playlist_index,
+        playback_loader=second_request.playback_loader,
+        async_playback_loader=second_request.async_playback_loader,
+        danmaku_controller=second_request.danmaku_controller,
+    )
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: len(window.video.loaded_danmaku_paths) == 1)
+    assert window.danmaku_combo.currentText() == "弹幕"
 
 
 def test_player_window_uses_distinct_seek_icons(qtbot) -> None:

@@ -577,6 +577,68 @@ def test_bilibili_resolve_prefers_matching_pagelist_part_before_first_entry() ->
     assert [record.content for record in records] == ["matched"]
 
 
+def test_bilibili_resolve_extracts_cid_from_bangumi_initial_state_ep_info() -> None:
+    def fake_get(url: str, **kwargs):
+        if "bangumi/play/ep2401902" in url:
+            return JsonResponse(
+                {"code": 0},
+                text=(
+                    '<script>window.__INITIAL_STATE__='
+                    '{"epInfo":{"id":2401902,"cid":987654321,"bvid":"BV1ep2401902"}}'
+                    "</script>"
+                ),
+            )
+        if "comment.bilibili.com/987654321.xml" in url:
+            return JsonResponse(
+                {"code": 0},
+                text='<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215,0,0,0,0">ep-info</d></i>',
+            )
+        return JsonResponse({"code": 0, "data": {}})
+
+    provider = BilibiliDanmakuProvider(get=fake_get)
+
+    records = provider.resolve("https://www.bilibili.com/bangumi/play/ep2401902")
+
+    assert [record.content for record in records] == ["ep-info"]
+
+
+def test_bilibili_resolve_extracts_ep_id_from_bare_bangumi_url_when_cached_metadata_is_missing() -> None:
+    seen: list[tuple[str, dict]] = []
+
+    def fake_get(url: str, **kwargs):
+        seen.append((url, kwargs))
+        params = kwargs.get("params") or {}
+        if "pgc/view/web/season" in url and params.get("ep_id") == 2401902:
+            return JsonResponse(
+                {
+                    "code": 0,
+                    "result": {
+                        "episodes": [
+                            {
+                                "ep_id": 2401902,
+                                "cid": 987654321,
+                                "share_copy": "玄界之门 第4集",
+                            }
+                        ]
+                    },
+                }
+            )
+        if "comment.bilibili.com/987654321.xml" in url:
+            return JsonResponse(
+                {"code": 0},
+                text='<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215,0,0,0,0">season-api</d></i>',
+            )
+        raise AssertionError(f"unexpected url: {url}")
+
+    provider = BilibiliDanmakuProvider(get=fake_get)
+
+    records = provider.resolve("https://www.bilibili.com/bangumi/play/ep2401902")
+
+    assert [record.content for record in records] == ["season-api"]
+    season_request = next(kwargs for url, kwargs in seen if "pgc/view/web/season" in url)
+    assert season_request["params"]["ep_id"] == 2401902
+
+
 def test_bilibili_resolve_raises_clear_error_when_no_cid_can_be_found() -> None:
     def fake_get(url: str, **kwargs):
         params = kwargs.get("params") or {}

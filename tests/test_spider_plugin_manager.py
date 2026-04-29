@@ -1,6 +1,11 @@
 from pathlib import Path
 
+import atv_player.danmaku.cache as danmaku_cache_module
+import atv_player.danmaku.preferences as danmaku_preferences_module
+import atv_player.plugins.controller as spider_controller_module
 from atv_player.local_playback_history import LocalPlaybackHistoryRepository
+from atv_player.models import PlayItem
+from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
 from atv_player.models import SpiderPluginConfig
 from atv_player.plugins import SpiderPluginManager
 from atv_player.plugins.loader import LoadedSpiderPlugin
@@ -236,3 +241,99 @@ def test_manager_load_enabled_plugins_wires_danmaku_service(tmp_path: Path) -> N
     definitions = manager.load_enabled_plugins()
 
     assert getattr(definitions[0].controller, "_danmaku_service", None) is manager._danmaku_service
+
+
+def test_manager_load_enabled_plugins_persists_manual_danmaku_source_preference_across_restart(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(danmaku_preferences_module, "app_data_dir", lambda: tmp_path / "app-data")
+    monkeypatch.setattr(
+        spider_controller_module,
+        "load_cached_danmaku_source_search_result",
+        danmaku_cache_module.load_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(
+        spider_controller_module,
+        "save_cached_danmaku_source_search_result",
+        danmaku_cache_module.save_cached_danmaku_source_search_result,
+    )
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    repository.add_plugin("local", "/plugins/玄界之门3D版.py", "玄界之门3D版")
+    result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="tencent",
+                provider_label="腾讯",
+                options=[
+                    DanmakuSourceOption(provider="tencent", name="默认结果", url="https://v.qq.com/default"),
+                    DanmakuSourceOption(provider="tencent", name="手工选择", url="https://v.qq.com/manual"),
+                ],
+            )
+        ],
+        default_option_url="https://v.qq.com/default",
+        default_provider="tencent",
+    )
+
+    class FakeDanmakuService:
+        def _preferred_result(self) -> DanmakuSourceSearchResult:
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[
+                            DanmakuSourceOption(provider="tencent", name="手工选择", url="https://v.qq.com/manual"),
+                            DanmakuSourceOption(provider="tencent", name="默认结果", url="https://v.qq.com/default"),
+                        ],
+                    )
+                ],
+                default_option_url="https://v.qq.com/manual",
+                default_provider="tencent",
+            )
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            if preferred_page_url == "https://v.qq.com/manual":
+                return self._preferred_result()
+            return result
+
+        def rerank_danmaku_source_search_result(
+            self,
+            cached_result,
+            *,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            if preferred_page_url == "https://v.qq.com/manual":
+                return self._preferred_result()
+            return cached_result
+
+        def resolve_danmu(self, page_url: str) -> str:
+            return '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">ok</d></i>'
+
+    first_manager = SpiderPluginManager(repository, FakeLoader())
+    first_manager._danmaku_service = FakeDanmakuService()
+    first_controller = first_manager.load_enabled_plugins()[0].controller
+    first_item = PlayItem(title="第1集", url="https://stream.example/1.m3u8", media_title="玄界之门3D版")
+
+    first_controller.refresh_danmaku_sources(first_item, query_override="玄界之门 1集", force_refresh=True)
+    first_controller.switch_danmaku_source(first_item, "https://v.qq.com/manual")
+
+    second_manager = SpiderPluginManager(repository, FakeLoader())
+    second_manager._danmaku_service = FakeDanmakuService()
+    second_controller = second_manager.load_enabled_plugins()[0].controller
+    restarted_item = PlayItem(title="第1集", url="https://stream.example/1.m3u8", media_title="玄界之门3D版")
+
+    second_controller.refresh_danmaku_sources(restarted_item)
+
+    assert restarted_item.selected_danmaku_url == "https://v.qq.com/manual"
