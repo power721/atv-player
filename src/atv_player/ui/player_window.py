@@ -146,6 +146,11 @@ class _PlaybackPrepareSignals(QObject):
     failed = Signal(int, str)
 
 
+class _PlaybackLoaderSignals(QObject):
+    succeeded = Signal(int, object)
+    failed = Signal(int, str)
+
+
 @dataclass(slots=True)
 class SubtitlePreference:
     mode: str = "auto"
@@ -184,6 +189,14 @@ class _PendingPlayItemLoad:
 
 @dataclass(slots=True)
 class _PendingPlaybackPrepare:
+    index: int
+    previous_index: int
+    start_position_seconds: int
+    pause: bool
+
+
+@dataclass(slots=True)
+class _PendingPlaybackLoader:
     index: int
     previous_index: int
     start_position_seconds: int
@@ -246,8 +259,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._last_cursor_activity_ms = 0
         self._poster_request_id = 0
         self._play_item_request_id = 0
+        self._playback_loader_request_id = 0
         self._playback_prepare_request_id = 0
         self._pending_play_item_load: _PendingPlayItemLoad | None = None
+        self._pending_playback_loader: _PendingPlaybackLoader | None = None
         self._pending_playback_prepare: _PendingPlaybackPrepare | None = None
         self._video_context_menu: QMenu | None = None
         self._danmaku_source_dialog: QDialog | None = None
@@ -278,6 +293,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._play_item_resolve_signals = _PlayItemResolveSignals()
         self._connect_async_signal(self._play_item_resolve_signals.succeeded, self._handle_play_item_resolve_succeeded)
         self._connect_async_signal(self._play_item_resolve_signals.failed, self._handle_play_item_resolve_failed)
+        self._playback_loader_signals = _PlaybackLoaderSignals()
+        self._connect_async_signal(self._playback_loader_signals.succeeded, self._handle_playback_loader_succeeded)
+        self._connect_async_signal(self._playback_loader_signals.failed, self._handle_playback_loader_failed)
         self._playback_prepare_signals = _PlaybackPrepareSignals()
         self._connect_async_signal(self._playback_prepare_signals.succeeded, self._handle_playback_prepare_succeeded)
         self._connect_async_signal(self._playback_prepare_signals.failed, self._handle_playback_prepare_failed)
@@ -776,6 +794,13 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._reset_subtitle_combo()
         self._reset_danmaku_combo()
         self._reset_audio_combo()
+        if session.initial_log_message:
+            self._append_log(session.initial_log_message)
+        if not session.playlist:
+            self.report_timer.start()
+            self.progress_timer.start()
+            self._sync_video_cursor_autohide()
+            return
         try:
             self._play_item_at_index(self.current_index, start_position_seconds=session.start_position_seconds, pause=start_paused)
         except Exception as exc:
@@ -800,6 +825,55 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                     raise
         self.video.load(url, pause=pause, start_seconds=start_seconds)
 
+    def _apply_playback_loader_result(self, load_result: PlaybackLoadResult | None) -> None:
+        if self.session is None:
+            return
+        if not isinstance(load_result, PlaybackLoadResult) or not load_result.replacement_playlist:
+            return
+        replacement = list(load_result.replacement_playlist)
+        self.session.playlists[self.session.playlist_index] = replacement
+        self.session.playlist = replacement
+        self.current_index = max(
+            0,
+            min(load_result.replacement_start_index, len(replacement) - 1),
+        )
+        self._render_playlist_group_combo()
+        self._render_playlist_items()
+
+    def _start_playback_loader(
+        self,
+        *,
+        previous_index: int,
+        start_position_seconds: int,
+        pause: bool,
+    ) -> None:
+        if self.session is None or self.session.playback_loader is None:
+            return
+        current_item = self.session.playlist[self.current_index]
+        playback_loader = self.session.playback_loader
+        self._append_log(f"正在加载播放地址: {current_item.title}")
+        self._playback_loader_request_id += 1
+        request_id = self._playback_loader_request_id
+        self._pending_playback_loader = _PendingPlaybackLoader(
+            index=self.current_index,
+            previous_index=previous_index,
+            start_position_seconds=start_position_seconds,
+            pause=pause,
+        )
+
+        def run() -> None:
+            try:
+                load_result = playback_loader(current_item)
+            except Exception as exc:
+                if self._is_window_alive():
+                    self._playback_loader_signals.failed.emit(request_id, str(exc))
+                return
+            if not self._is_window_alive():
+                return
+            self._playback_loader_signals.succeeded.emit(request_id, load_result)
+
+        threading.Thread(target=run, daemon=True).start()
+
     def _prepare_current_play_item(
         self,
         *,
@@ -812,18 +886,16 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         current_item = self.session.playlist[self.current_index]
         resolved_vod = self._resolve_current_play_item()
         if self.session.playback_loader is not None:
-            load_result = self.session.playback_loader(current_item)
-            if isinstance(load_result, PlaybackLoadResult) and load_result.replacement_playlist:
-                replacement = list(load_result.replacement_playlist)
-                self.session.playlists[self.session.playlist_index] = replacement
-                self.session.playlist = replacement
-                self.current_index = max(
-                    0,
-                    min(load_result.replacement_start_index, len(replacement) - 1),
+            if self.session.async_playback_loader and not current_item.url:
+                self._start_playback_loader(
+                    previous_index=previous_index,
+                    start_position_seconds=start_position_seconds,
+                    pause=pause,
                 )
-                self._render_playlist_group_combo()
-                self._render_playlist_items()
-                current_item = self.session.playlist[self.current_index]
+                return False
+            load_result = self.session.playback_loader(current_item)
+            self._apply_playback_loader_result(load_result)
+            current_item = self.session.playlist[self.current_index]
         if current_item.url:
             if resolved_vod is None and current_item.vod_id and self.session.detail_resolver is not None:
                 self._start_play_item_resolution(
@@ -1071,6 +1143,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         self.log_view.setPlainText(message)
 
+    def append_status_log(self, message: str) -> None:
+        self._append_log(message)
+
     def _set_last_player_paused(self, paused: bool) -> None:
         if self.config is None:
             return
@@ -1083,6 +1158,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _invalidate_play_item_resolution(self) -> None:
         self._play_item_request_id += 1
         self._pending_play_item_load = None
+        self._playback_loader_request_id += 1
+        self._pending_playback_loader = None
         self._playback_prepare_request_id += 1
         self._pending_playback_prepare = None
 
@@ -1224,6 +1301,46 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._append_log(f"播放失败: {message}")
             return
         self._append_log(f"详情加载失败: {message}")
+
+    def _handle_playback_loader_succeeded(self, request_id: int, load_result: PlaybackLoadResult | None) -> None:
+        if request_id != self._playback_loader_request_id:
+            return
+        pending_loader = self._pending_playback_loader
+        self._pending_playback_loader = None
+        if pending_loader is None:
+            return
+        if self.session is None or self.current_index != pending_loader.index:
+            return
+        self._apply_playback_loader_result(load_result)
+        current_item = self.session.playlist[self.current_index]
+        if not current_item.url:
+            self._restore_current_index(pending_loader.previous_index)
+            self._append_log(f"播放失败: 没有可用的播放地址: {current_item.title}")
+            return
+        try:
+            if self._start_playback_prepare(
+                previous_index=pending_loader.previous_index,
+                start_position_seconds=pending_loader.start_position_seconds,
+                pause=pending_loader.pause,
+            ):
+                return
+            self._start_current_item_playback(
+                start_position_seconds=pending_loader.start_position_seconds,
+                pause=pending_loader.pause,
+            )
+        except Exception as exc:
+            self._restore_current_index(pending_loader.previous_index)
+            self._append_log(f"播放失败: {exc}")
+
+    def _handle_playback_loader_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._playback_loader_request_id:
+            return
+        pending_loader = self._pending_playback_loader
+        self._pending_playback_loader = None
+        if pending_loader is None:
+            return
+        self._restore_current_index(pending_loader.previous_index)
+        self._append_log(f"播放失败: {message}")
 
     def _handle_playback_prepare_succeeded(self, request_id: int, prepared_url: str) -> None:
         if request_id != self._playback_prepare_request_id:
@@ -2498,11 +2615,20 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return ""
         return str(current_item.data(Qt.ItemDataRole.UserRole) or "")
 
+    def _current_media_duration_seconds(self) -> int:
+        if not hasattr(self, "video") or not hasattr(self.video, "duration_seconds"):
+            return 0
+        try:
+            return max(0, int(self.video.duration_seconds() or 0))
+        except Exception:
+            return 0
+
     def _rerun_current_item_danmaku_search(self) -> None:
         if self.session is None or self.session.danmaku_controller is None or self._danmaku_source_query_edit is None:
             return
         current_item = self.session.playlist[self.current_index]
         query = self._danmaku_source_query_edit.text().strip()
+        media_duration_seconds = self._current_media_duration_seconds()
         self._start_danmaku_source_task(
             current_item,
             error_prefix="弹幕源重新搜索失败",
@@ -2510,6 +2636,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 current_item,
                 query_override=query,
                 force_refresh=True,
+                media_duration_seconds=media_duration_seconds,
             ),
         )
 
@@ -2517,6 +2644,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self.session is None or self.session.danmaku_controller is None:
             return
         current_item = self.session.playlist[self.current_index]
+        media_duration_seconds = self._current_media_duration_seconds()
         self._start_danmaku_source_task(
             current_item,
             error_prefix="弹幕源恢复默认搜索失败",
@@ -2524,6 +2652,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 current_item,
                 query_override=None,
                 force_refresh=True,
+                media_duration_seconds=media_duration_seconds,
             ),
         )
 

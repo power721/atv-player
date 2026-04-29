@@ -127,6 +127,29 @@ def make_player_session(start_index: int = 1, speed: float = 1.0) -> PlayerSessi
     )
 
 
+def test_player_window_can_open_placeholder_session_without_playlist(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = PlayerSession(
+        vod=VodItem(vod_id="plugin-1", vod_name="占位电影", vod_pic="poster-card"),
+        playlist=[],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        initial_log_message="正在加载详情...",
+        is_placeholder=True,
+    )
+
+    window.open_session(session)
+
+    assert window.session is session
+    assert window.playlist.count() == 0
+    assert window.metadata_view.toPlainText().startswith("名称: 占位电影")
+    assert window.log_view.toPlainText() == "正在加载详情..."
+    assert window.video.load_calls == []
+
+
 def send_key(window: PlayerWindow, key: int, modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier, text: str = "") -> None:
     QApplication.sendEvent(window, QKeyEvent(QEvent.Type.KeyPress, key, modifiers, text))
     QApplication.sendEvent(window, QKeyEvent(QEvent.Type.KeyRelease, key, modifiers, text))
@@ -431,7 +454,11 @@ def test_player_window_opens_danmaku_source_dialog_by_loading_cached_search_resu
             return True
 
         def refresh_danmaku_sources(
-            self, item: PlayItem, query_override: str | None = None, force_refresh: bool = False
+            self,
+            item: PlayItem,
+            query_override: str | None = None,
+            force_refresh: bool = False,
+            media_duration_seconds: int = 0,
         ) -> None:
             self.refresh_calls += 1
 
@@ -467,7 +494,11 @@ def test_player_window_reset_danmaku_source_query_restores_default(qtbot) -> Non
             self.calls: list[str | None] = []
 
         def refresh_danmaku_sources(
-            self, item: PlayItem, query_override: str | None = None, force_refresh: bool = False
+            self,
+            item: PlayItem,
+            query_override: str | None = None,
+            force_refresh: bool = False,
+            media_duration_seconds: int = 0,
         ) -> None:
             self.calls.append(query_override)
             item.danmaku_search_query = "红果短剧 1集" if query_override is None else query_override
@@ -505,7 +536,11 @@ def test_player_window_disables_rerun_danmaku_search_while_current_item_is_pendi
             self.calls: list[str | None] = []
 
         def refresh_danmaku_sources(
-            self, item: PlayItem, query_override: str | None = None, force_refresh: bool = False
+            self,
+            item: PlayItem,
+            query_override: str | None = None,
+            force_refresh: bool = False,
+            media_duration_seconds: int = 0,
         ) -> None:
             self.calls.append(query_override)
 
@@ -545,12 +580,16 @@ def test_player_window_disables_rerun_danmaku_search_while_current_item_is_pendi
 def test_player_window_rerun_danmaku_search_runs_async_with_force_refresh(qtbot) -> None:
     class FakeDanmakuController:
         def __init__(self) -> None:
-            self.calls: list[tuple[str | None, bool]] = []
+            self.calls: list[tuple[str | None, bool, int]] = []
 
         def refresh_danmaku_sources(
-            self, item: PlayItem, query_override: str | None = None, force_refresh: bool = False
+            self,
+            item: PlayItem,
+            query_override: str | None = None,
+            force_refresh: bool = False,
+            media_duration_seconds: int = 0,
         ) -> None:
-            self.calls.append((query_override, force_refresh))
+            self.calls.append((query_override, force_refresh, media_duration_seconds))
             time.sleep(0.05)
             item.danmaku_search_query = query_override or ""
             item.danmaku_candidates = [
@@ -585,6 +624,7 @@ def test_player_window_rerun_danmaku_search_runs_async_with_force_refresh(qtbot)
     )
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
+    window.video = RecordingVideo()
 
     window.open_session(session)
     window._open_danmaku_source_dialog()
@@ -594,10 +634,53 @@ def test_player_window_rerun_danmaku_search_runs_async_with_force_refresh(qtbot)
     window._rerun_current_item_danmaku_search()
 
     assert item.danmaku_pending is True
-    qtbot.waitUntil(lambda: controller.calls == [("红果短剧 腾讯版", True)])
+    qtbot.waitUntil(lambda: controller.calls == [("红果短剧 腾讯版", True, 120)])
     qtbot.waitUntil(lambda: item.danmaku_pending is False)
     qtbot.waitUntil(lambda: window._danmaku_source_option_list is not None and window._danmaku_source_option_list.count() == 1)
     assert window._danmaku_source_option_list.item(0).text() == "刷新结果"
+
+
+def test_player_window_reset_danmaku_source_query_passes_runtime_duration(qtbot) -> None:
+    class FakeDanmakuController:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str | None, int]] = []
+
+        def refresh_danmaku_sources(
+            self,
+            item: PlayItem,
+            query_override: str | None = None,
+            force_refresh: bool = False,
+            media_duration_seconds: int = 0,
+        ) -> None:
+            self.calls.append((query_override, media_duration_seconds))
+            item.danmaku_search_query = "红果短剧 1集" if query_override is None else query_override
+            item.danmaku_search_query_overridden = query_override is not None
+
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/1.m3u8",
+        media_title="红果短剧",
+        danmaku_search_query="红果短剧 腾讯版",
+        danmaku_search_query_overridden=True,
+    )
+    controller = FakeDanmakuController()
+    session = PlayerSession(
+        vod=VodItem(vod_id="1", vod_name="红果短剧"),
+        playlist=[item],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        danmaku_controller=controller,
+    )
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+    window._open_danmaku_source_dialog()
+    window._reset_current_item_danmaku_search_query()
+
+    qtbot.waitUntil(lambda: controller.calls == [(None, 120)])
 
 
 def test_player_window_manual_danmaku_source_switch_reconfigures_current_item(qtbot, monkeypatch) -> None:
@@ -6262,6 +6345,56 @@ def test_player_window_loads_play_item_via_session_loader_and_passes_headers(qtb
     window.open_session(session)
 
     assert window.video.load_calls == [("http://emby/1.mp4", False, 0, {"User-Agent": "Yamby"})]
+
+
+def test_player_window_loads_play_item_via_async_session_loader_without_blocking_open_session(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int, dict[str, str]]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            self.load_calls.append((url, pause, start_seconds, headers or {}))
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    ready = threading.Event()
+
+    def load_item(item: PlayItem) -> None:
+        assert ready.wait(timeout=1)
+        item.url = "http://emby/1.mp4"
+        item.headers = {"User-Agent": "Yamby"}
+
+    controller = RecordingPlayerController()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    session = make_player_session(start_index=0)
+    session.playlist = [PlayItem(title="Episode 1", url="", vod_id="1-3458")]
+    session.use_local_history = False
+    session.playback_loader = load_item
+    session.async_playback_loader = True
+
+    started_at = time.perf_counter()
+    window.open_session(session)
+    elapsed_seconds = time.perf_counter() - started_at
+
+    assert elapsed_seconds < 0.1
+    assert window.video.load_calls == []
+    assert "正在加载播放地址: Episode 1" in window.log_view.toPlainText()
+
+    ready.set()
+
+    qtbot.waitUntil(
+        lambda: window.video.load_calls == [("http://emby/1.mp4", False, 0, {"User-Agent": "Yamby"})],
+        timeout=1000,
+    )
 
 
 def test_player_window_replaces_active_route_playlist_when_playback_loader_returns_replacement(qtbot) -> None:

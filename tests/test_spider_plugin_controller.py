@@ -475,7 +475,12 @@ def test_controller_resolves_danmaku_when_spider_enables_plugin_level_danmaku() 
 def test_controller_populates_grouped_danmaku_candidates_on_successful_search() -> None:
     class FakeDanmakuService:
         def search_danmu_sources(
-            self, name: str, reg_src: str = "", preferred_provider: str = "", preferred_page_url: str = ""
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
         ):
             return DanmakuSourceSearchResult(
                 groups=[
@@ -514,7 +519,12 @@ def test_controller_research_danmaku_uses_temporary_query_only_for_current_item(
 
     class FakeDanmakuService:
         def search_danmu_sources(
-            self, name: str, reg_src: str = "", preferred_provider: str = "", preferred_page_url: str = ""
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
         ):
             calls.append(name)
             return DanmakuSourceSearchResult(groups=[], default_option_url="", default_provider="")
@@ -550,7 +560,12 @@ def test_controller_uses_cached_danmaku_source_search_result_without_network_loo
 
     class FakeDanmakuService:
         def search_danmu_sources(
-            self, name: str, reg_src: str = "", preferred_provider: str = "", preferred_page_url: str = ""
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
         ):
             calls.append(name)
             return DanmakuSourceSearchResult(groups=[], default_option_url="", default_provider="")
@@ -601,7 +616,12 @@ def test_controller_refresh_danmaku_sources_can_bypass_cached_search_result(monk
 
     class FakeDanmakuService:
         def search_danmu_sources(
-            self, name: str, reg_src: str = "", preferred_provider: str = "", preferred_page_url: str = ""
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
         ):
             calls.append(name)
             return fresh_result
@@ -622,6 +642,89 @@ def test_controller_refresh_danmaku_sources_can_bypass_cached_search_result(monk
     assert item.selected_danmaku_provider == "bilibili"
     assert item.selected_danmaku_url == "https://www.bilibili.com/video/BV1x"
     assert item.danmaku_candidates == fresh_result.groups
+
+
+def test_controller_passes_playitem_duration_to_search_danmu_sources() -> None:
+    calls: list[int] = []
+
+    class FakeDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            calls.append(media_duration_seconds)
+            return DanmakuSourceSearchResult(groups=[], default_option_url="", default_provider="")
+
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+    )
+    item = PlayItem(title="第1集", url="https://stream.example/1.m3u8", media_title="红果短剧", duration_seconds=1240)
+
+    controller.refresh_danmaku_sources(item, force_refresh=True)
+
+    assert calls == [1240]
+
+
+def test_controller_reranks_cached_danmaku_source_results_by_media_duration(monkeypatch) -> None:
+    cached_result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="tencent",
+                provider_label="腾讯",
+                options=[
+                    DanmakuSourceOption(provider="tencent", name="遮天 88集", url="https://v.qq.com/long", duration_seconds=1560),
+                    DanmakuSourceOption(provider="tencent", name="遮天 88集", url="https://v.qq.com/best", duration_seconds=1242),
+                ],
+            )
+        ],
+        default_option_url="https://v.qq.com/long",
+        default_provider="tencent",
+    )
+
+    class FakeDanmakuService:
+        def rerank_danmaku_source_search_result(self, result, **kwargs):
+            assert result == cached_result
+            assert kwargs["media_duration_seconds"] == 1240
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[
+                            DanmakuSourceOption(provider="tencent", name="遮天 88集", url="https://v.qq.com/best", duration_seconds=1242),
+                            DanmakuSourceOption(provider="tencent", name="遮天 88集", url="https://v.qq.com/long", duration_seconds=1560),
+                        ],
+                    )
+                ],
+                default_option_url="https://v.qq.com/best",
+                default_provider="tencent",
+            )
+
+    monkeypatch.setattr(controller_module, "load_cached_danmaku_source_search_result", lambda name, reg_src: cached_result)
+
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="红果短剧",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+    )
+    item = PlayItem(title="第1集", url="https://stream.example/1.m3u8", media_title="红果短剧", duration_seconds=1240)
+
+    controller.refresh_danmaku_sources(item)
+
+    assert item.selected_danmaku_provider == "tencent"
+    assert item.selected_danmaku_url == "https://v.qq.com/best"
+    assert [option.url for option in item.danmaku_candidates[0].options] == [
+        "https://v.qq.com/best",
+        "https://v.qq.com/long",
+    ]
 
 
 def test_controller_tries_next_danmaku_candidate_when_first_candidate_has_no_records() -> None:

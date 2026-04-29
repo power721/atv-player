@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.ui.browse_page import BrowsePage
-from atv_player.models import HistoryRecord, OpenPlayerRequest
+from atv_player.models import HistoryRecord, OpenPlayerRequest, VodItem
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.poster_grid_page import PosterGridPage
@@ -183,6 +183,16 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._open_request_signals = _AsyncRequestSignals()
         self._connect_async_signal(self._open_request_signals.succeeded, self._handle_open_request_succeeded)
         self._connect_async_signal(self._open_request_signals.failed, self._handle_open_request_failed)
+        self._plugin_open_request_id = 0
+        self._plugin_open_request_signals = _AsyncRequestSignals()
+        self._connect_async_signal(
+            self._plugin_open_request_signals.succeeded,
+            self._handle_plugin_open_request_succeeded,
+        )
+        self._connect_async_signal(
+            self._plugin_open_request_signals.failed,
+            self._handle_plugin_open_request_failed,
+        )
         self._media_request_signals = _AsyncRequestSignals()
         self._connect_async_signal(self._media_request_signals.succeeded, self._handle_media_load_succeeded)
         self._connect_async_signal(self._media_request_signals.failed, self._handle_media_load_failed)
@@ -368,17 +378,56 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 click_action="open",
                 search_enabled=bool(_plugin_value(definition, "search_enabled")),
             )
-            page.open_requested.connect(
-                lambda vod_id, controller=controller, plugin_id=plugin_id: self._open_spider_request(
+            page.item_open_requested.connect(
+                lambda item, controller=controller, plugin_id=plugin_id: self._open_spider_item(
                     controller,
                     plugin_id,
-                    vod_id,
+                    item,
                 )
             )
             page.unauthorized.connect(self.logout_requested.emit)
             self.nav_tabs.insertTab(insert_index, page, str(_plugin_value(definition, "title") or "插件"))
             self._plugin_pages.append((page, controller, plugin_id))
             insert_index += 1
+
+    def _build_placeholder_player_request(self, plugin_id: str, item: Any) -> OpenPlayerRequest:
+        placeholder_vod = VodItem(
+            vod_id=getattr(item, "vod_id", ""),
+            vod_name=getattr(item, "vod_name", ""),
+            vod_pic=getattr(item, "vod_pic", ""),
+            vod_remarks=getattr(item, "vod_remarks", ""),
+            type_name=getattr(item, "type_name", ""),
+            vod_content=getattr(item, "vod_content", ""),
+            vod_year=getattr(item, "vod_year", ""),
+            vod_area=getattr(item, "vod_area", ""),
+            vod_lang=getattr(item, "vod_lang", ""),
+            vod_director=getattr(item, "vod_director", ""),
+            vod_actor=getattr(item, "vod_actor", ""),
+        )
+        return OpenPlayerRequest(
+            vod=placeholder_vod,
+            playlist=[],
+            clicked_index=0,
+            source_kind="plugin",
+            source_key=plugin_id,
+            source_mode="detail",
+            source_vod_id=placeholder_vod.vod_id,
+            use_local_history=False,
+            initial_log_message="正在加载详情...",
+            is_placeholder=True,
+        )
+
+    def _open_spider_item(self, controller, plugin_id: str, item: Any) -> None:
+        placeholder_request = self._build_placeholder_player_request(plugin_id, item)
+        self._open_player_immediately(placeholder_request)
+
+        def build_request() -> OpenPlayerRequest:
+            request = controller.build_request(getattr(item, "vod_id", ""))
+            request.source_kind = "plugin"
+            request.source_key = plugin_id
+            return request
+
+        self._start_plugin_open_request(build_request)
 
     def _open_spider_request(self, controller, plugin_id: str, vod_id: str) -> None:
         def build_request() -> OpenPlayerRequest:
@@ -500,6 +549,23 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         threading.Thread(target=run, daemon=True).start()
         return request_id
 
+    def _start_plugin_open_request(self, builder) -> int:
+        self._plugin_open_request_id += 1
+        request_id = self._plugin_open_request_id
+
+        def run() -> None:
+            try:
+                request = builder()
+            except Exception as exc:
+                if self._is_window_alive():
+                    self._plugin_open_request_signals.failed.emit(request_id, str(exc))
+                return
+            if self._is_window_alive():
+                self._plugin_open_request_signals.succeeded.emit(request_id, request)
+
+        threading.Thread(target=run, daemon=True).start()
+        return request_id
+
     def _handle_open_request_succeeded(self, request_id: int, request: OpenPlayerRequest) -> None:
         if request_id != self._open_request_id:
             return
@@ -509,6 +575,16 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if request_id != self._open_request_id:
             return
         self.show_error(message)
+
+    def _handle_plugin_open_request_succeeded(self, request_id: int, request: OpenPlayerRequest) -> None:
+        if request_id != self._plugin_open_request_id:
+            return
+        self.open_player(request)
+
+    def _handle_plugin_open_request_failed(self, request_id: int, message: str) -> None:
+        if request_id != self._plugin_open_request_id:
+            return
+        self._append_player_status_log(f"详情加载失败: {message}")
 
     def _start_media_load(
         self,
@@ -579,12 +655,33 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             use_local_history=request.use_local_history,
             restore_history=request.restore_history,
             playback_loader=request.playback_loader,
+            async_playback_loader=request.async_playback_loader,
             danmaku_controller=request.danmaku_controller,
             playback_progress_reporter=request.playback_progress_reporter,
             playback_stopper=request.playback_stopper,
             playback_history_loader=request.playback_history_loader,
             playback_history_saver=request.playback_history_saver,
+            initial_log_message=request.initial_log_message,
+            is_placeholder=request.is_placeholder,
         )
+
+    def _append_player_status_log(self, message: str) -> None:
+        if not message:
+            return
+        if self.player_window is None:
+            return
+        append_status_log = getattr(self.player_window, "append_status_log", None)
+        if callable(append_status_log):
+            append_status_log(message)
+
+    def _open_player_immediately(self, request, restore_paused_state: bool = False) -> None:
+        try:
+            session = self._create_player_session(request)
+        except Exception as exc:
+            self.show_error(str(exc))
+            return
+        self._next_player_session_request_id()
+        self._apply_open_player(request, session, restore_paused_state=restore_paused_state)
 
     def _apply_open_player(self, request, session, restore_paused_state: bool = False) -> None:
         if self.player_window is None:

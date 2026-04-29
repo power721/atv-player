@@ -95,6 +95,73 @@ def test_search_danmu_sources_prefers_exact_historical_page_url() -> None:
     assert result.groups[0].options[1].preferred_by_history is True
 
 
+def test_search_danmu_sources_reorders_candidates_by_media_duration() -> None:
+    tencent = FakeProvider(
+        "tencent",
+        [
+            DanmakuSearchItem(
+                provider="tencent",
+                name="遮天 88集",
+                url="https://v.qq.com/x/cover/ep88-long.html",
+                ratio=0.98,
+                simi=0.98,
+                duration_seconds=1560,
+            ),
+            DanmakuSearchItem(
+                provider="tencent",
+                name="遮天 88集",
+                url="https://v.qq.com/x/cover/ep88-best.html",
+                ratio=0.96,
+                simi=0.96,
+                duration_seconds=1242,
+            ),
+        ],
+        [],
+    )
+    service = DanmakuService({"tencent": tencent}, provider_order=["tencent"])
+
+    result = service.search_danmu_sources("遮天 88集", media_duration_seconds=1240)
+
+    assert [option.url for option in result.groups[0].options] == [
+        "https://v.qq.com/x/cover/ep88-best.html",
+        "https://v.qq.com/x/cover/ep88-long.html",
+    ]
+    assert result.default_option_url == "https://v.qq.com/x/cover/ep88-best.html"
+
+
+def test_search_danmu_sources_preserves_existing_order_when_media_duration_unknown() -> None:
+    tencent = FakeProvider(
+        "tencent",
+        [
+            DanmakuSearchItem(
+                provider="tencent",
+                name="遮天 88集",
+                url="https://v.qq.com/x/cover/first.html",
+                ratio=0.98,
+                simi=0.98,
+                duration_seconds=1560,
+            ),
+            DanmakuSearchItem(
+                provider="tencent",
+                name="遮天 88集",
+                url="https://v.qq.com/x/cover/second.html",
+                ratio=0.96,
+                simi=0.96,
+                duration_seconds=1242,
+            ),
+        ],
+        [],
+    )
+    service = DanmakuService({"tencent": tencent}, provider_order=["tencent"])
+
+    result = service.search_danmu_sources("遮天 88集", media_duration_seconds=0)
+
+    assert [option.url for option in result.groups[0].options] == [
+        "https://v.qq.com/x/cover/first.html",
+        "https://v.qq.com/x/cover/second.html",
+    ]
+
+
 def test_service_resolve_danmu_uses_mgtv_provider_for_mgtv_urls() -> None:
     mgtv = FakeProvider(
         "mgtv",
@@ -240,6 +307,39 @@ def test_search_danmu_filters_to_candidates_with_matching_episode_number() -> No
     results = service.search_danmu("剑来 第二季 10集")
 
     assert [item.url for item in results] == ["https://tencent/10"]
+
+
+def test_search_danmu_prefers_exact_episode_over_title_only_candidate_for_explicit_episode_request() -> None:
+    tencent = FakeProvider(
+        "tencent",
+        [
+            DanmakuSearchItem(
+                provider="tencent",
+                name="遮天",
+                url="https://v.qq.com/x/cover/series.html",
+                ratio=1.0,
+                simi=1.0,
+                duration_seconds=1560,
+            ),
+            DanmakuSearchItem(
+                provider="tencent",
+                name="遮天 88集",
+                url="https://v.qq.com/x/cover/ep88.html",
+                ratio=0.96,
+                simi=0.96,
+                duration_seconds=1240,
+            ),
+        ],
+        [],
+    )
+    service = DanmakuService({"tencent": tencent}, provider_order=["tencent"])
+
+    results = service.search_danmu("遮天 88集")
+
+    assert [item.url for item in results] == [
+        "https://v.qq.com/x/cover/ep88.html",
+        "https://v.qq.com/x/cover/series.html",
+    ]
 
 
 def test_search_danmu_matches_youku_titles_with_trailing_numeric_episode_suffix() -> None:

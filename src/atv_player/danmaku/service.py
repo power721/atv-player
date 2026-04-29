@@ -138,6 +138,7 @@ class DanmakuService:
         reg_src: str = "",
         preferred_provider: str = "",
         preferred_page_url: str = "",
+        media_duration_seconds: int = 0,
     ) -> DanmakuSourceSearchResult:
         flat_results = self.search_danmu(name, reg_src)
         requested_episode = extract_episode_number(normalize_name(name))
@@ -164,12 +165,41 @@ class DanmakuService:
             )
             for provider, options in grouped.items()
         ]
-        default_option = self._pick_default_source_option(groups, preferred_provider, preferred_page_url, reg_src)
-        return DanmakuSourceSearchResult(
-            groups=groups,
-            default_option_url=default_option.url if default_option is not None else "",
-            default_provider=default_option.provider if default_option is not None else "",
+        return self.rerank_danmaku_source_search_result(
+            DanmakuSourceSearchResult(groups=groups),
+            reg_src=reg_src,
+            preferred_provider=preferred_provider,
+            preferred_page_url=preferred_page_url,
+            media_duration_seconds=media_duration_seconds,
         )
+
+    def rerank_danmaku_source_search_result(
+        self,
+        result: DanmakuSourceSearchResult,
+        *,
+        reg_src: str = "",
+        preferred_provider: str = "",
+        preferred_page_url: str = "",
+        media_duration_seconds: int = 0,
+    ) -> DanmakuSourceSearchResult:
+        ranked_rows: list[tuple[DanmakuSourceGroup, DanmakuSourceOption, int]] = []
+        stable_index = 0
+        for group in result.groups:
+            for option in group.options:
+                ranked_rows.append((group, option, stable_index))
+                stable_index += 1
+        if media_duration_seconds > 0:
+            ranked_rows.sort(
+                key=lambda row: self._danmaku_source_option_sort_key(
+                    row[1],
+                    preferred_provider=preferred_provider,
+                    preferred_page_url=preferred_page_url,
+                    reg_src=reg_src,
+                    media_duration_seconds=media_duration_seconds,
+                    stable_index=row[2],
+                )
+            )
+        return self._group_ranked_source_rows(ranked_rows, preferred_provider, preferred_page_url, reg_src)
 
     def search_danmu(self, name: str, reg_src: str = "") -> list[DanmakuSearchItem]:
         normalized = normalize_name(name)
@@ -217,9 +247,11 @@ class DanmakuService:
             movie_variant_priority = 0
             supplemental_penalty = 0
             duration_priority = item.duration_seconds
+            explicit_episode_priority = 0
             if requested_episode is not None:
                 if explicit_episode_request:
                     episode_priority = int(item_episode == requested_episode)
+                    explicit_episode_priority = episode_priority
                 else:
                     no_episode_priority = int(item_episode is None)
                     episode_priority = int(item_episode == requested_episode)
@@ -231,6 +263,7 @@ class DanmakuService:
                 -movie_exact_priority,
                 -movie_variant_priority,
                 supplemental_penalty,
+                -explicit_episode_priority,
                 -duration_priority,
                 -episode_priority,
                 -item.ratio,
@@ -260,6 +293,64 @@ class DanmakuService:
                 simi = item.simi or ratio
                 results.append(replace(item, ratio=ratio, simi=simi))
         return results
+
+    def _danmaku_source_option_sort_key(
+        self,
+        option: DanmakuSourceOption,
+        *,
+        preferred_provider: str,
+        preferred_page_url: str,
+        reg_src: str,
+        media_duration_seconds: int,
+        stable_index: int,
+    ) -> tuple[int, int, int, int, int, int, int]:
+        preferred_page = int(bool(preferred_page_url) and option.url == preferred_page_url)
+        preferred_provider_match = int(bool(preferred_provider) and option.provider == preferred_provider)
+        reg_src_provider_match = int(option.provider == self._preferred_provider_key(reg_src))
+        duration_known = int(option.duration_seconds > 0 and media_duration_seconds > 0)
+        duration_gap = abs(option.duration_seconds - media_duration_seconds) if duration_known else 10**9
+        return (
+            -preferred_page,
+            -preferred_provider_match,
+            -reg_src_provider_match,
+            -int(option.episode_match),
+            -duration_known,
+            duration_gap,
+            stable_index,
+        )
+
+    def _group_ranked_source_rows(
+        self,
+        ranked_rows: list[tuple[DanmakuSourceGroup, DanmakuSourceOption, int]],
+        preferred_provider: str,
+        preferred_page_url: str,
+        reg_src: str,
+    ) -> DanmakuSourceSearchResult:
+        grouped_options: dict[str, list[DanmakuSourceOption]] = {}
+        group_meta: dict[str, DanmakuSourceGroup] = {}
+        ordered_providers: list[str] = []
+        for source_group, option, _ in ranked_rows:
+            provider = source_group.provider
+            if provider not in grouped_options:
+                grouped_options[provider] = []
+                group_meta[provider] = source_group
+                ordered_providers.append(provider)
+            grouped_options[provider].append(option)
+        groups = [
+            DanmakuSourceGroup(
+                provider=provider,
+                provider_label=group_meta[provider].provider_label,
+                options=grouped_options[provider],
+                preferred_by_history=group_meta[provider].preferred_by_history,
+            )
+            for provider in ordered_providers
+        ]
+        default_option = self._pick_default_source_option(groups, preferred_provider, preferred_page_url, reg_src)
+        return DanmakuSourceSearchResult(
+            groups=groups,
+            default_option_url=default_option.url if default_option is not None else "",
+            default_provider=default_option.provider if default_option is not None else "",
+        )
 
     def _pick_default_source_option(
         self,

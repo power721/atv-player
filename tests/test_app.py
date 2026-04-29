@@ -388,10 +388,14 @@ class FakePlayerController:
         use_local_history=True,
         restore_history=False,
         playback_loader=None,
+        danmaku_controller=None,
         playback_progress_reporter=None,
         playback_stopper=None,
         playback_history_loader=None,
         playback_history_saver=None,
+        async_playback_loader=False,
+        initial_log_message="",
+        is_placeholder=False,
     ):
         return {
             "vod": vod,
@@ -404,10 +408,14 @@ class FakePlayerController:
             "use_local_history": use_local_history,
             "restore_history": restore_history,
             "playback_loader": playback_loader,
+            "danmaku_controller": danmaku_controller,
             "playback_progress_reporter": playback_progress_reporter,
             "playback_stopper": playback_stopper,
             "playback_history_loader": playback_history_loader,
             "playback_history_saver": playback_history_saver,
+            "async_playback_loader": async_playback_loader,
+            "initial_log_message": initial_log_message,
+            "is_placeholder": is_placeholder,
         }
 
 
@@ -1667,10 +1675,11 @@ def test_main_window_plugin_card_signal_opens_player_asynchronously(qtbot, monke
 
     opened: list[OpenPlayerRequest] = []
     monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    monkeypatch.setattr(window, "_open_player_immediately", lambda request, restore_paused_state=False: None)
     monkeypatch.setattr(window, "show_error", lambda message: None)
     plugin_page = window._plugin_pages[0][0]
 
-    plugin_page.open_requested.emit("plugin-vod-1")
+    plugin_page.item_open_requested.emit(VodItem(vod_id="plugin-vod-1", vod_name="插件电影"))
     _wait_for_request_call(qtbot, controller, "plugin-vod-1")
     controller.finish_request("plugin-vod-1", request=_make_telegram_request("plugin-vod-1", vod_name="插件电影"))
 
@@ -1679,6 +1688,130 @@ def test_main_window_plugin_card_signal_opens_player_asynchronously(qtbot, monke
     assert opened[0].vod.vod_name == "插件电影"
     assert opened[0].source_kind == "plugin"
     assert opened[0].source_key == "plugin-1"
+
+
+def test_main_window_plugin_card_opens_placeholder_player_immediately_and_hydrates_later(qtbot, monkeypatch) -> None:
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.session = None
+            self.opened: list[tuple[object, bool]] = []
+            self.logs: list[str] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.session = session
+            self.opened.append((session, start_paused))
+            message = session.get("initial_log_message", "")
+            if message:
+                self.logs.append(message)
+
+        def append_status_log(self, message: str) -> None:
+            self.logs.append(message)
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    controller = AsyncPluginController(_make_telegram_request)
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[{"id": "plugin-1", "title": "插件一", "controller": controller, "search_enabled": False}],
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    plugin_page = window._plugin_pages[0][0]
+    plugin_page.item_open_requested.emit(
+        VodItem(vod_id="plugin-vod-1", vod_name="占位电影", vod_pic="poster-card")
+    )
+
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) == 1, timeout=1000)
+    assert window.player_window.opened[0][0]["vod"].vod_name == "占位电影"
+    assert window.player_window.opened[0][0]["vod"].vod_pic == "poster-card"
+    assert window.player_window.opened[0][0]["playlist"] == []
+    assert window.player_window.logs == ["正在加载详情..."]
+
+    _wait_for_request_call(qtbot, controller, "plugin-vod-1")
+    assert len(window.player_window.opened) == 1
+
+    controller.finish_request("plugin-vod-1", request=_make_telegram_request("plugin-vod-1", vod_name="插件电影"))
+
+    qtbot.waitUntil(lambda: len(window.player_window.opened) == 2, timeout=1000)
+    assert window.player_window.opened[1][0]["vod"].vod_name == "插件电影"
+    assert window.player_window.opened[1][0]["playlist"][0].title == "Episode 1"
+
+
+def test_main_window_plugin_card_failure_keeps_placeholder_player_open_and_logs_error(qtbot, monkeypatch) -> None:
+    class RecordingPlayerWindow:
+        def __init__(self, controller, config, save_config) -> None:
+            self.session = None
+            self.opened: list[tuple[object, bool]] = []
+            self.logs: list[str] = []
+
+        def open_session(self, session, start_paused: bool = False) -> None:
+            self.session = session
+            self.opened.append((session, start_paused))
+            message = session.get("initial_log_message", "")
+            if message:
+                self.logs.append(message)
+
+        def append_status_log(self, message: str) -> None:
+            self.logs.append(message)
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    controller = AsyncPluginController(_make_telegram_request)
+    errors: list[str] = []
+    monkeypatch.setattr(main_window_module, "PlayerWindow", RecordingPlayerWindow)
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=[{"id": "plugin-1", "title": "插件一", "controller": controller, "search_enabled": False}],
+    )
+    qtbot.addWidget(window)
+    window.show()
+    monkeypatch.setattr(window, "show_error", lambda message: errors.append(message))
+
+    plugin_page = window._plugin_pages[0][0]
+    plugin_page.item_open_requested.emit(
+        VodItem(vod_id="plugin-vod-1", vod_name="占位电影", vod_pic="poster-card")
+    )
+
+    qtbot.waitUntil(lambda: window.player_window is not None and len(window.player_window.opened) == 1, timeout=1000)
+    _wait_for_request_call(qtbot, controller, "plugin-vod-1")
+
+    controller.finish_request("plugin-vod-1", exc=RuntimeError("detail boom"))
+
+    qtbot.waitUntil(lambda: window.player_window.logs[-1] == "详情加载失败: detail boom", timeout=1000)
+    assert len(window.player_window.opened) == 1
+    assert errors == []
 
 
 def test_main_window_opens_remote_history_detail_asynchronously(qtbot, monkeypatch) -> None:

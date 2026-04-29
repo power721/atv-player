@@ -41,6 +41,7 @@ class PlayItem:
     path: str = ""
     index: int = 0
     size: int = 0
+    duration_seconds: int = 0
     vod_id: str = ""
     headers: dict[str, str] = field(default_factory=dict)
     play_source: str = ""
@@ -205,8 +206,11 @@ class OpenPlayerRequest:
     use_local_history: bool = True
     restore_history: bool = False
     playback_loader: Callable[[PlayItem], PlaybackLoadResult | None] | None = None
+    async_playback_loader: bool = False
     danmaku_controller: object | None = None
     playback_progress_reporter: Callable[[PlayItem, int, bool], None] | None = None
     playback_stopper: Callable[[PlayItem], None] | None = None
     playback_history_loader: Callable[[], HistoryRecord | None] | None = None
     playback_history_saver: Callable[[dict[str, object]], None] | None = None
+    initial_log_message: str = ""
+    is_placeholder: bool = False
