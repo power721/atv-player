@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
-from PySide6.QtCore import QObject, QRect, Qt, Signal
+from PySide6.QtCore import QObject, QTimer, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -179,7 +179,6 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self._media_request_id = 0
         self._restore_request_id = 0
         self._player_session_request_id = 0
-        self._main_window_geometry_before_player: QRect | None = None
         self._main_window_was_maximized_before_player = False
         self._open_request_signals = _AsyncRequestSignals()
         self._connect_async_signal(self._open_request_signals.succeeded, self._handle_open_request_succeeded)
@@ -667,25 +666,14 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
     def _remember_main_window_state_for_player(self) -> None:
         self._main_window_was_maximized_before_player = self.isMaximized()
-        geometry = self.normalGeometry() if self._main_window_was_maximized_before_player else self.geometry()
-        if geometry.isValid():
-            self._main_window_geometry_before_player = QRect(geometry)
-        else:
-            self._main_window_geometry_before_player = None
 
     def _restore_main_window_after_player(self) -> None:
-        geometry = self._main_window_geometry_before_player
-        if geometry is not None and geometry.isValid():
-            self.setGeometry(geometry)
-            if self._main_window_was_maximized_before_player:
-                self.showMaximized()
-            else:
-                self.showNormal()
-            self._refresh_main_window_layout()
-            return
         self._restore_saved_geometry()
         self.show()
+        if self._main_window_was_maximized_before_player:
+            self.showMaximized()
         self._refresh_main_window_layout()
+        QTimer.singleShot(0, self._refresh_main_window_layout)
 
     def _restore_saved_geometry(self) -> None:
         geometry = self.config.main_window_geometry

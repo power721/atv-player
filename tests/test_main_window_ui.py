@@ -2,7 +2,6 @@ import threading
 import time
 
 import pytest
-from PySide6.QtCore import QRect
 
 from atv_player.models import AppConfig, OpenPlayerRequest, PlayItem, VodItem
 import atv_player.ui.main_window as main_window_module
@@ -490,7 +489,7 @@ def test_main_window_drops_closed_player_window_reference_when_returning_to_main
 
 def test_main_window_remaximizes_when_returning_from_player(qtbot, monkeypatch) -> None:
     calls: list[tuple[str, object]] = []
-    config = AppConfig(last_active_window="player")
+    config = AppConfig(last_active_window="player", main_window_geometry=b"saved-geometry")
     window = MainWindow(
         browse_controller=FakeStaticController(),
         history_controller=FakeStaticController(),
@@ -499,19 +498,19 @@ def test_main_window_remaximizes_when_returning_from_player(qtbot, monkeypatch) 
         save_config=lambda: None,
     )
     qtbot.addWidget(window)
-    window._main_window_geometry_before_player = QRect(40, 50, 1280, 720)
     window._main_window_was_maximized_before_player = True
 
-    monkeypatch.setattr(window, "setGeometry", lambda geometry: calls.append(("setGeometry", QRect(geometry))))
+    monkeypatch.setattr(main_window_module.QTimer, "singleShot", lambda _delay, callback: calls.append(("singleShot", callback)))
     monkeypatch.setattr(window, "showMaximized", lambda: calls.append(("showMaximized", None)))
     monkeypatch.setattr(window, "show", lambda: calls.append(("show", None)))
     monkeypatch.setattr(window, "restoreGeometry", lambda _geometry: calls.append(("restoreGeometry", None)) or True)
 
     window._show_main_again()
 
-    assert ("setGeometry", QRect(40, 50, 1280, 720)) in calls
+    assert ("restoreGeometry", None) in calls
+    assert ("show", None) in calls
     assert ("showMaximized", None) in calls
-    assert ("restoreGeometry", None) not in calls
+    assert calls.index(("show", None)) < calls.index(("showMaximized", None))
 
 
 def test_main_window_reapplies_saved_geometry_when_no_player_return_state(qtbot, monkeypatch) -> None:
