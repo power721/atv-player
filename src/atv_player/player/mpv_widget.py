@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import dataclass
 from typing import Any
@@ -90,9 +91,10 @@ class MpvWidget(QWidget):
             demuxer_readahead_secs=20,
             stream_buffer_size="4M",
             network_timeout=15,
-            log_handler=print,
-            loglevel="warn",
         )
+        if os.getenv("ATV_MPV_DEBUG"):
+            common["log_handler"] = print
+            common["loglevel"] = "warn"
 
         if sys.platform.startswith("win"):
             return mpv.MPV(

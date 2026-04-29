@@ -1,3 +1,4 @@
+import os
 import sys
 import types
 
@@ -307,6 +308,26 @@ def test_mpv_widget_disables_mpv_keyboard_bindings_for_embedded_player(qtbot, mo
     assert captured["demuxer_max_back_bytes"] == "128M"
     assert captured["stream_buffer_size"] == "4M"
     assert captured["network_timeout"] == 15
+    assert "log_handler" not in captured
+    assert "loglevel" not in captured
+
+
+def test_mpv_widget_enables_mpv_terminal_logging_only_when_debug_is_requested(qtbot, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeMPV:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    monkeypatch.setitem(sys.modules, "mpv", types.SimpleNamespace(MPV=FakeMPV))
+    monkeypatch.setenv("ATV_MPV_DEBUG", "1")
+
+    widget._create_player()
+
+    assert captured["log_handler"] is print
+    assert captured["loglevel"] == "warn"
 
 
 def test_mpv_widget_uses_linux_audio_output_fallbacks_without_forcing_device_name(qtbot, monkeypatch) -> None:
