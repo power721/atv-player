@@ -1,7 +1,13 @@
 import pytest
 
 from atv_player.danmaku.errors import DanmakuResolveError, ProviderNotSupportedError
-from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
+from atv_player.danmaku.models import (
+    DanmakuRecord,
+    DanmakuSearchItem,
+    DanmakuSourceGroup,
+    DanmakuSourceOption,
+    DanmakuSourceSearchResult,
+)
 from atv_player.danmaku.service import DanmakuService, create_default_danmaku_service
 
 
@@ -105,7 +111,7 @@ def test_search_danmu_sources_reorders_candidates_by_media_duration() -> None:
                 url="https://v.qq.com/x/cover/ep88-long.html",
                 ratio=0.98,
                 simi=0.98,
-                duration_seconds=1560,
+                duration_seconds=1490,
             ),
             DanmakuSearchItem(
                 provider="tencent",
@@ -127,6 +133,89 @@ def test_search_danmu_sources_reorders_candidates_by_media_duration() -> None:
         "https://v.qq.com/x/cover/ep88-long.html",
     ]
     assert result.default_option_url == "https://v.qq.com/x/cover/ep88-best.html"
+
+
+def test_search_danmu_sources_filters_out_candidates_with_duration_gap_over_five_minutes() -> None:
+    tencent = FakeProvider(
+        "tencent",
+        [
+            DanmakuSearchItem(
+                provider="tencent",
+                name="遮天 88集",
+                url="https://v.qq.com/x/cover/ep88-keep.html",
+                ratio=0.98,
+                simi=0.98,
+                duration_seconds=1242,
+            ),
+            DanmakuSearchItem(
+                provider="tencent",
+                name="遮天 88集",
+                url="https://v.qq.com/x/cover/ep88-drop.html",
+                ratio=0.99,
+                simi=0.99,
+                duration_seconds=1560,
+            ),
+            DanmakuSearchItem(
+                provider="tencent",
+                name="遮天 88集",
+                url="https://v.qq.com/x/cover/ep88-unknown.html",
+                ratio=0.90,
+                simi=0.90,
+                duration_seconds=0,
+            ),
+        ],
+        [],
+    )
+    service = DanmakuService({"tencent": tencent}, provider_order=["tencent"])
+
+    result = service.search_danmu_sources("遮天 88集", media_duration_seconds=1240)
+
+    assert [option.url for option in result.groups[0].options] == [
+        "https://v.qq.com/x/cover/ep88-keep.html",
+        "https://v.qq.com/x/cover/ep88-unknown.html",
+    ]
+    assert result.default_option_url == "https://v.qq.com/x/cover/ep88-keep.html"
+
+
+def test_rerank_danmaku_source_search_result_filters_cached_candidates_with_duration_gap_over_five_minutes() -> None:
+    service = DanmakuService({}, provider_order=[])
+
+    result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="tencent",
+                provider_label="腾讯",
+                options=[
+                    DanmakuSourceOption(
+                        provider="tencent",
+                        name="遮天 88集",
+                        url="https://v.qq.com/x/cover/ep88-drop.html",
+                        duration_seconds=1560,
+                    ),
+                    DanmakuSourceOption(
+                        provider="tencent",
+                        name="遮天 88集",
+                        url="https://v.qq.com/x/cover/ep88-keep.html",
+                        duration_seconds=1242,
+                    ),
+                    DanmakuSourceOption(
+                        provider="tencent",
+                        name="遮天 88集",
+                        url="https://v.qq.com/x/cover/ep88-unknown.html",
+                        duration_seconds=0,
+                    ),
+                ],
+            )
+        ]
+    )
+
+    reranked = service.rerank_danmaku_source_search_result(result, media_duration_seconds=1240)
+
+    assert [option.url for option in reranked.groups[0].options] == [
+        "https://v.qq.com/x/cover/ep88-keep.html",
+        "https://v.qq.com/x/cover/ep88-unknown.html",
+    ]
+    assert reranked.default_option_url == "https://v.qq.com/x/cover/ep88-keep.html"
 
 
 def test_search_danmu_sources_preserves_existing_order_when_media_duration_unknown() -> None:

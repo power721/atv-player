@@ -59,6 +59,7 @@ _SUPPLEMENTAL_MOVIE_TOKENS = (
 )
 
 _MIN_DANMAKU_CANDIDATE_DURATION_SECONDS = 300
+_MAX_MEDIA_DURATION_GAP_SECONDS = 300
 _LONG_FORM_DURATION_SECONDS = 3000
 _SHORT_FORM_DURATION_RATIO = 0.55
 _SHORT_FORM_MIN_DURATION_SECONDS = 1200
@@ -119,6 +120,34 @@ def _filter_too_short_duration_candidates(items: list[DanmakuSearchItem]) -> lis
     ]
 
 
+def _filter_search_items_by_media_duration_gap(
+    items: list[DanmakuSearchItem],
+    media_duration_seconds: int,
+) -> list[DanmakuSearchItem]:
+    if media_duration_seconds <= 0:
+        return items
+    return [
+        item
+        for item in items
+        if item.duration_seconds <= 0
+        or abs(item.duration_seconds - media_duration_seconds) <= _MAX_MEDIA_DURATION_GAP_SECONDS
+    ]
+
+
+def _filter_source_options_by_media_duration_gap(
+    options: list[DanmakuSourceOption],
+    media_duration_seconds: int,
+) -> list[DanmakuSourceOption]:
+    if media_duration_seconds <= 0:
+        return options
+    return [
+        option
+        for option in options
+        if option.duration_seconds <= 0
+        or abs(option.duration_seconds - media_duration_seconds) <= _MAX_MEDIA_DURATION_GAP_SECONDS
+    ]
+
+
 class DanmakuService:
     def __init__(self, providers: dict[str, DanmakuProvider], provider_order: list[str]) -> None:
         self._providers = dict(providers)
@@ -150,6 +179,7 @@ class DanmakuService:
         media_duration_seconds: int = 0,
     ) -> DanmakuSourceSearchResult:
         flat_results = self.search_danmu(name, reg_src)
+        flat_results = _filter_search_items_by_media_duration_gap(flat_results, media_duration_seconds)
         requested_episode = extract_episode_number(normalize_name(name))
         grouped: dict[str, list[DanmakuSourceOption]] = {}
         for item in flat_results:
@@ -194,7 +224,8 @@ class DanmakuService:
         ranked_rows: list[tuple[DanmakuSourceGroup, DanmakuSourceOption, int]] = []
         stable_index = 0
         for group in result.groups:
-            for option in group.options:
+            options = _filter_source_options_by_media_duration_gap(group.options, media_duration_seconds)
+            for option in options:
                 ranked_rows.append((group, option, stable_index))
                 stable_index += 1
         if media_duration_seconds > 0:
