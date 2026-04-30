@@ -282,6 +282,42 @@ def test_controller_maps_home_filters_to_matching_categories() -> None:
     assert [option.name for option in tv.filters[0].options] == ["不限", "连载中"]
 
 
+def test_controller_keeps_empty_filter_option_values() -> None:
+    class EmptyValueFilterSpider(FakeSpider):
+        def homeContent(self, filter):
+            return {
+                "class": [{"type_id": "movie", "type_name": "电影"}],
+                "filters": {
+                    "movie": [
+                        {
+                            "key": "class",
+                            "name": "类型",
+                            "value": [
+                                {"n": "全部", "v": ""},
+                                {"n": "爱情", "v": "爱情"},
+                            ],
+                        }
+                    ]
+                },
+                "list": [],
+            }
+
+    controller = SpiderPluginController(EmptyValueFilterSpider(), plugin_name="筛选插件", search_enabled=True)
+
+    categories = controller.load_categories()
+
+    assert categories[0].filters == [
+        CategoryFilter(
+            key="class",
+            name="类型",
+            options=[
+                CategoryFilterOption(name="全部", value=""),
+                CategoryFilterOption(name="爱情", value="爱情"),
+            ],
+        )
+    ]
+
+
 def test_controller_passes_selected_filters_into_category_content_extend() -> None:
     spider = FilterSpider()
     controller = SpiderPluginController(spider, plugin_name="筛选插件", search_enabled=True)

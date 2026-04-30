@@ -150,11 +150,46 @@ class FilterablePosterController(FakeDoubanController):
         return super().load_items(category_id, page, filters)
 
 
+class EmptyValueFilterPosterController(FakeDoubanController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.categories = [
+            DoubanCategory(
+                type_id="movie",
+                type_name="电影",
+                filters=[
+                    CategoryFilter(
+                        key="class",
+                        name="类型",
+                        options=[
+                            CategoryFilterOption(name="全部", value=""),
+                            CategoryFilterOption(name="爱情", value="爱情"),
+                        ],
+                    )
+                ],
+            )
+        ]
+
+    def load_items(self, category_id: str, page: int, filters: dict[str, str] | None = None):
+        return super().load_items(category_id, page, filters)
+
+
 def show_loaded_page(qtbot, page: PosterGridPage) -> PosterGridPage:
     qtbot.addWidget(page)
     page.show()
     page.ensure_loaded()
     return page
+
+
+def _checked_filter_value(page: PosterGridPage, key: str) -> str:
+    for button in page.filter_buttons[key]:
+        if button.isChecked():
+            return str(button.property("filterValue") or "")
+    return ""
+
+
+def _filter_button(page: PosterGridPage, key: str, value: str):
+    return next(button for button in page.filter_buttons[key] if button.property("filterValue") == value)
 
 
 def test_poster_grid_page_loads_categories_and_first_page(qtbot) -> None:
@@ -209,6 +244,39 @@ def test_poster_grid_page_can_show_search_controls_when_enabled(qtbot) -> None:
     assert page.keyword_edit.isHidden() is False
     assert page.search_button.isHidden() is False
     assert page.clear_button.isHidden() is False
+    assert page.search_button.isEnabled() is False
+    assert page.clear_button.isEnabled() is False
+
+
+def test_poster_grid_page_enables_search_and_clear_only_with_keyword(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(SearchableDoubanController(), click_action="open", search_enabled=True))
+    qtbot.waitUntil(lambda: page.category_list.count() == 2)
+
+    assert page.search_button.isEnabled() is False
+    assert page.clear_button.isEnabled() is False
+
+    page.keyword_edit.setText("黑袍纠察队")
+    qtbot.waitUntil(lambda: page.search_button.isEnabled() is True)
+    assert page.clear_button.isEnabled() is True
+
+    page.keyword_edit.clear()
+    qtbot.waitUntil(lambda: page.search_button.isEnabled() is False)
+    assert page.clear_button.isEnabled() is False
+
+
+def test_poster_grid_page_places_filter_button_after_clear_button(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(FilterablePosterController(), click_action="open", search_enabled=True))
+    qtbot.waitUntil(lambda: page.selected_category_id == "movie")
+
+    search_row = page._search_row
+    assert search_row is not None
+    indexes = {
+        page.search_button: search_row.indexOf(page.search_button),
+        page.clear_button: search_row.indexOf(page.clear_button),
+        page.filter_toggle_button: search_row.indexOf(page.filter_toggle_button),
+    }
+
+    assert indexes[page.search_button] < indexes[page.clear_button] < indexes[page.filter_toggle_button]
 
 
 def test_poster_grid_page_hides_filter_button_by_default(qtbot) -> None:
@@ -229,18 +297,73 @@ def test_poster_grid_page_shows_filter_button_for_filtered_category_and_stays_co
     assert page.filter_toggle_button.isHidden() is False
     assert page.filter_panel.isHidden() is True
 
+    page.filter_toggle_button.click()
+    qtbot.waitUntil(lambda: page.filter_panel.isHidden() is False)
+    buttons = page.filter_buttons["sc"]
+
+    assert [button.text() for button in buttons] == ["默认", "不限", "动作"]
+    assert buttons[0].isCheckable() is True
+    assert _checked_filter_value(page, "sc") == ""
+
+
+def test_poster_grid_page_renders_filter_options_as_checkable_buttons(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(FilterablePosterController(), click_action="open", search_enabled=True))
+
+    qtbot.waitUntil(lambda: page.selected_category_id == "movie")
+    page.filter_toggle_button.click()
+    qtbot.waitUntil(lambda: page.filter_panel.isHidden() is False)
+
+    buttons = page.filter_buttons["sc"]
+
+    assert [button.text() for button in buttons] == ["默认", "不限", "动作"]
+    assert buttons[0].isCheckable() is True
+    assert buttons[0].isChecked() is True
+
+
+def test_poster_grid_page_uses_plugin_empty_filter_button_without_extra_default(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(EmptyValueFilterPosterController(), click_action="open", search_enabled=True))
+
+    qtbot.waitUntil(lambda: page.selected_category_id == "movie")
+    page.filter_toggle_button.click()
+    qtbot.waitUntil(lambda: page.filter_panel.isHidden() is False)
+
+    buttons = page.filter_buttons["class"]
+
+    assert [button.text() for button in buttons] == ["全部", "爱情"]
+    assert buttons[0].isChecked() is True
+
+
+def test_poster_grid_page_clicking_filter_button_selects_it_and_reloads(qtbot) -> None:
+    controller = FilterablePosterController()
+    page = show_loaded_page(qtbot, PosterGridPage(controller, click_action="open", search_enabled=True))
+
+    qtbot.waitUntil(lambda: page.selected_category_id == "movie")
+    qtbot.waitUntil(lambda: controller.filtered_item_calls[0] == ("movie", 1, {}))
+    page.current_page = 3
+    page.filter_toggle_button.click()
+    qtbot.waitUntil(lambda: page.filter_panel.isHidden() is False)
+
+    default_button = _filter_button(page, "sc", "")
+    action_button = _filter_button(page, "sc", "6")
+    action_button.click()
+
+    qtbot.waitUntil(lambda: controller.filtered_item_calls[-1] == ("movie", 1, {"sc": "6"}))
+    assert default_button.isChecked() is False
+    assert action_button.isChecked() is True
+    assert page.current_page == 1
+
 
 def test_poster_grid_page_expands_filters_and_reloads_page_one_on_change(qtbot) -> None:
     controller = FilterablePosterController()
     page = show_loaded_page(qtbot, PosterGridPage(controller, click_action="open", search_enabled=True))
 
     qtbot.waitUntil(lambda: page.selected_category_id == "movie")
+    qtbot.waitUntil(lambda: controller.filtered_item_calls[0] == ("movie", 1, {}))
     page.current_page = 3
     page.filter_toggle_button.click()
     qtbot.waitUntil(lambda: page.filter_panel.isHidden() is False)
 
-    combo = page.filter_combos["sc"]
-    combo.setCurrentIndex(combo.findData("6"))
+    _filter_button(page, "sc", "6").click()
 
     qtbot.waitUntil(lambda: controller.filtered_item_calls[-1] == ("movie", 1, {"sc": "6"}))
     assert page.current_page == 1
@@ -282,20 +405,20 @@ def test_poster_grid_page_remembers_filter_state_per_category(qtbot) -> None:
 
     qtbot.waitUntil(lambda: page.selected_category_id == "movie")
     page.filter_toggle_button.click()
-    page.filter_combos["sc"].setCurrentIndex(page.filter_combos["sc"].findData("6"))
+    _filter_button(page, "sc", "6").click()
     qtbot.waitUntil(lambda: controller.filtered_item_calls[-1] == ("movie", 1, {"sc": "6"}))
 
     page.category_list.setCurrentRow(1)
-    qtbot.waitUntil(lambda: controller.filtered_item_calls[-1] == ("tv", 1, {"status": "0"}))
+    qtbot.waitUntil(lambda: controller.filtered_item_calls[-1] == ("tv", 1, {}))
     page.filter_toggle_button.click()
-    page.filter_combos["status"].setCurrentIndex(page.filter_combos["status"].findData("1"))
+    _filter_button(page, "status", "1").click()
     qtbot.waitUntil(lambda: controller.filtered_item_calls[-1] == ("tv", 1, {"status": "1"}))
 
     page.category_list.setCurrentRow(0)
     qtbot.waitUntil(lambda: page.selected_category_id == "movie")
     page.filter_toggle_button.click()
 
-    assert page.filter_combos["sc"].currentData() == "6"
+    assert _checked_filter_value(page, "sc") == "6"
 
 
 def test_poster_grid_page_hides_category_filters_during_search_and_restores_them_after_clear(qtbot) -> None:
@@ -321,7 +444,7 @@ def test_poster_grid_page_hides_category_filters_during_search_and_restores_them
 
     page.clear_search()
 
-    qtbot.waitUntil(lambda: controller.filtered_item_calls[-1] == ("movie", 1, {"sc": "0"}))
+    qtbot.waitUntil(lambda: controller.filtered_item_calls[-1] == ("movie", 1, {}))
     assert page.filter_toggle_button.isHidden() is False
 
 

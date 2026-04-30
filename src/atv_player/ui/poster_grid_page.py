@@ -4,16 +4,17 @@ import threading
 from threading import BoundedSemaphore
 from typing import cast
 
-from PySide6.QtCore import QObject, QSize, Qt, Signal
+from PySide6.QtCore import QObject, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QComboBox,
     QFormLayout,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLayout,
+    QLayoutItem,
     QLineEdit,
     QListWidget,
     QPushButton,
@@ -25,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.api import ApiError, UnauthorizedError
+from atv_player.models import CategoryFilterOption
 from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.poster_loader import load_local_poster_image, load_remote_poster_image, normalize_poster_url
 
@@ -35,6 +37,77 @@ class _PosterGridSignals(QObject):
     failed = Signal(str, int, str)
     unauthorized = Signal(int, str)
     poster_loaded = Signal(object, object)
+
+
+class _FlowLayout(QLayout):
+    def __init__(self, parent: QWidget | None = None, spacing: int = 8) -> None:
+        super().__init__(parent)
+        self._items: list[QLayoutItem] = []
+        self.setContentsMargins(0, 0, 0, 0)
+        self.setSpacing(spacing)
+
+    def __del__(self) -> None:
+        while self.count():
+            self.takeAt(0)
+
+    def addItem(self, item: QLayoutItem) -> None:
+        self._items.append(item)
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def itemAt(self, index: int) -> QLayoutItem | None:
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index: int) -> QLayoutItem | None:
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self) -> Qt.Orientations:
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, width: int) -> int:
+        return self._do_layout(QRect(0, 0, width, 0), test_only=True)
+
+    def setGeometry(self, rect: QRect) -> None:
+        super().setGeometry(rect)
+        self._do_layout(rect, test_only=False)
+
+    def sizeHint(self) -> QSize:
+        return self.minimumSize()
+
+    def minimumSize(self) -> QSize:
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        margins = self.contentsMargins()
+        size += QSize(margins.left() + margins.right(), margins.top() + margins.bottom())
+        return size
+
+    def _do_layout(self, rect: QRect, test_only: bool) -> int:
+        margins = self.contentsMargins()
+        effective_rect = rect.adjusted(margins.left(), margins.top(), -margins.right(), -margins.bottom())
+        x = effective_rect.x()
+        y = effective_rect.y()
+        line_height = 0
+        spacing = max(0, self.spacing())
+
+        for item in self._items:
+            hint = item.sizeHint()
+            next_x = x + hint.width()
+            if line_height > 0 and next_x > effective_rect.right() + 1:
+                x = effective_rect.x()
+                y += line_height + spacing
+                next_x = x + hint.width()
+                line_height = 0
+            if not test_only:
+                item.setGeometry(QRect(x, y, hint.width(), hint.height()))
+            x = next_x + spacing
+            line_height = max(line_height, hint.height())
+
+        return y + line_height - rect.y() + margins.bottom()
 
 
 class PosterGridPage(QWidget, AsyncGuardMixin):
@@ -66,6 +139,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._initial_load_started = False
         self._search_mode = False
         self._search_keyword = ""
+        self._search_row: QHBoxLayout | None = None
         self.category_list = QListWidget()
         self.keyword_edit = QLineEdit()
         self.search_button = QPushButton("搜索")
@@ -91,7 +165,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.cards_scroll.setWidget(self.cards_widget)
         self.card_buttons: list[QToolButton] = []
         self._folder_breadcrumbs: list[dict[str, str]] = []
-        self.filter_combos: dict[str, QComboBox] = {}
+        self.filter_buttons: dict[str, list[QPushButton]] = {}
         self.categories = []
         self.items = []
         self.selected_category_id = ""
@@ -120,10 +194,11 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         right = QVBoxLayout()
         if self._search_enabled:
             search_row = QHBoxLayout()
+            self._search_row = search_row
             search_row.addWidget(self.keyword_edit, 1)
             search_row.addWidget(self.search_button)
-            search_row.addWidget(self.filter_toggle_button)
             search_row.addWidget(self.clear_button)
+            search_row.addWidget(self.filter_toggle_button)
             right.addLayout(search_row)
         else:
             self.keyword_edit.hide()
@@ -166,6 +241,8 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             self.search_button.clicked.connect(self.search)
             self.clear_button.clicked.connect(self.clear_search)
             self.keyword_edit.returnPressed.connect(self.search)
+            self.keyword_edit.textChanged.connect(self._handle_keyword_text_changed)
+            self._update_search_action_buttons()
 
     def _is_widget_alive(self) -> bool:
         return self._can_deliver_async_result()
@@ -239,18 +316,17 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         return self.categories[row]
 
     def _default_filter_state(self, category) -> dict[str, str]:
-        defaults: dict[str, str] = {}
-        for group in getattr(category, "filters", []):
-            if group.options:
-                defaults[group.key] = group.options[0].value
-        return defaults
+        return {}
 
     def _selected_filter_values(self) -> dict[str, str]:
         selected: dict[str, str] = {}
-        for key, combo in self.filter_combos.items():
-            value = combo.currentData()
-            if value is not None:
-                selected[key] = str(value)
+        for key, buttons in self.filter_buttons.items():
+            checked = next((button for button in buttons if button.isChecked()), None)
+            if checked is None:
+                continue
+            normalized = str(checked.property("filterValue") or "")
+            if normalized:
+                selected[key] = normalized
         return selected
 
     def _remember_current_filter_state(self) -> None:
@@ -261,7 +337,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
     def _rebuild_filter_panel(self) -> None:
         while self.filter_panel_layout.rowCount():
             self.filter_panel_layout.removeRow(0)
-        self.filter_combos = {}
+        self.filter_buttons = {}
         category = self._current_category()
         filters = list(getattr(category, "filters", [])) if category is not None else []
         if not filters:
@@ -272,27 +348,63 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         for group in filters:
             if not group.options:
                 continue
-            combo = QComboBox()
-            for option in group.options:
-                combo.addItem(option.name, option.value)
-            combo.blockSignals(True)
-            index = combo.findData(state.get(group.key, group.options[0].value))
-            combo.setCurrentIndex(index if index >= 0 else 0)
-            combo.blockSignals(False)
-            combo.currentIndexChanged.connect(self._handle_filter_changed)
-            self.filter_panel_layout.addRow(group.name, combo)
-            self.filter_combos[group.key] = combo
-        if not self.filter_combos or self._search_mode:
+            selected_value = state.get(group.key, "")
+            buttons_widget = self._build_filter_buttons(group.key, group.options, selected_value)
+            self.filter_panel_layout.addRow(group.name, buttons_widget)
+        if not self.filter_buttons or self._search_mode:
             self.filter_toggle_button.setHidden(True)
             self.filter_panel.hide()
             return
         self.filter_toggle_button.show()
         self.filter_panel.hide()
 
+    def _build_filter_buttons(self, key: str, options, selected_value: str) -> QWidget:
+        container = QWidget(self.filter_panel)
+        layout = _FlowLayout(container, spacing=8)
+        merged_options = list(options)
+        if not any(option.value == "" for option in merged_options):
+            merged_options = [CategoryFilterOption(name="默认", value=""), *merged_options]
+        if selected_value not in {option.value for option in merged_options}:
+            selected_value = ""
+
+        buttons: list[QPushButton] = []
+        for option in merged_options:
+            button = QPushButton(option.name, container)
+            button.setCheckable(True)
+            button.setAutoExclusive(True)
+            button.setProperty("filterKey", key)
+            button.setProperty("filterValue", option.value)
+            button.setChecked(option.value == selected_value)
+            button.toggled.connect(self._handle_filter_button_toggled)
+            layout.addWidget(button)
+            buttons.append(button)
+
+        self.filter_buttons[key] = buttons
+        return container
+
     def _toggle_filters(self) -> None:
-        if not self.filter_combos or self._search_mode:
+        if not self.filter_buttons or self._search_mode:
             return
         self.filter_panel.setVisible(self.filter_panel.isHidden())
+
+    def _update_search_action_buttons(self) -> None:
+        if not self._search_enabled:
+            return
+        has_keyword = bool(self.keyword_edit.text().strip())
+        self.search_button.setEnabled(has_keyword)
+        self.clear_button.setEnabled(has_keyword)
+
+    def _handle_keyword_text_changed(self) -> None:
+        keyword = self.keyword_edit.text().strip()
+        if not keyword and self._search_mode:
+            self.clear_search()
+            return
+        self._update_search_action_buttons()
+
+    def _handle_filter_button_toggled(self, checked: bool) -> None:
+        if not checked:
+            return
+        self._handle_filter_changed()
 
     def _handle_filter_changed(self) -> None:
         if self._search_mode or not self.selected_category_id:
@@ -406,7 +518,6 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             return
         keyword = self.keyword_edit.text().strip()
         if not keyword:
-            self.clear_search()
             return
         self._search_mode = True
         self._search_keyword = keyword
@@ -421,6 +532,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.keyword_edit.clear()
         self._search_mode = False
         self._search_keyword = ""
+        self._update_search_action_buttons()
         self.current_page = 1
         self._rebuild_filter_panel()
         if self.selected_category_id:

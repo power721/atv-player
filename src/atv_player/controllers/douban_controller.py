@@ -8,7 +8,7 @@ def _map_filter_option(payload: object) -> CategoryFilterOption | None:
         return None
     name = str(payload.get("n") or "").strip()
     value = str(payload.get("v") or "").strip()
-    if not name or not value:
+    if not name:
         return None
     return CategoryFilterOption(name=name, value=value)
 
