@@ -99,6 +99,33 @@ Expanded filter content is rendered as one labeled single-select button group pe
 - Clicking an empty-value option such as `全部` clears that group's active filter.
 - If a group does not provide an explicit empty-value option, the page prepends a synthetic `默认` option with value `""`.
 
+### Poster-grid filter button styling
+
+`PosterGridPage` styles filter-option buttons locally instead of introducing a new shared theme layer.
+
+- Apply styling only to category filter option buttons, not to unrelated action buttons such as `搜索`, `清空`, `筛选`, or pagination.
+- Base the colors on the existing light theme tokens:
+  - default background: `#ffffff`
+  - hover background: `#e8e8e8`
+  - border: `#d0d0d0`
+  - primary text: `#1a1a1a`
+  - secondary text for future disabled styling: `#666666`
+  - selected accent: `#0066cc`
+  - selected hover accent: `#0080ff`
+- Use the restrained selected style:
+  - unselected: white background, gray border, dark text
+  - hovered: light-gray background
+  - selected: white background, blue border, blue text
+  - selected and hovered: brighter blue border and text
+- Keep the button silhouette compact and tag-like so the filters remain visually lighter than poster cards.
+
+### Poster-grid cursor behavior
+
+All clickable buttons in `PosterGridPage` use `setCursor(Qt.CursorShape.PointingHandCursor)`.
+
+- This includes filter option buttons, `搜索`, `清空`, `筛选`, pagination buttons, breadcrumb buttons, and poster card buttons.
+- Non-interactive widgets keep their default cursor so the page does not imply clickability where none exists.
+
 ### Filter state and reload behavior
 
 `PosterGridPage` keeps in-memory filter selections keyed by category id.
@@ -127,6 +154,8 @@ The page passes the selected category's current filter dictionary into `controll
 - `PosterGridPage` hides filter controls by default and shows the button only for categories with filters.
 - Expanding a filtered category renders button-style single-select controls from the category definition.
 - Plugin-provided empty-value options are displayed directly and do not get duplicated by the synthetic default option.
+- Filter option buttons expose the expected local stylesheet fragments for default, hover, and checked states.
+- All clickable buttons in `PosterGridPage` expose the pointing-hand cursor.
 - Changing a filter reloads page 1 with the selected filter dictionary.
 - Filter selections are remembered per category when switching categories.
 - Entering search mode hides category filters.
