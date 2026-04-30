@@ -5,7 +5,7 @@ import time
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QTableWidget
+from PySide6.QtWidgets import QApplication, QDialog, QLineEdit, QPushButton, QTableWidget, QToolButton
 
 import atv_player.app as app_module
 import atv_player.ui.main_window as main_window_module
@@ -41,7 +41,8 @@ class FakeDoubanController:
         self.category_calls += 1
         return self.categories
 
-    def load_items(self, category_id: str, page: int):
+    def load_items(self, category_id: str, page: int, filters: dict[str, str] | None = None):
+        del filters
         self.item_calls.append((category_id, page))
         return [], 0
 
@@ -286,7 +287,8 @@ class AsyncPluginController(AsyncRequestController):
     def load_categories(self):
         return []
 
-    def load_items(self, category_id: str, page: int):
+    def load_items(self, category_id: str, page: int, filters: dict[str, str] | None = None):
+        del filters
         return [], 0
 
 
@@ -352,7 +354,8 @@ class RecordingDoubanController(FakeDoubanController):
         self.category_calls += 1
         return [DoubanCategory(type_id="1", type_name="推荐")]
 
-    def load_items(self, category_id: str, page: int):
+    def load_items(self, category_id: str, page: int, filters: dict[str, str] | None = None):
+        del filters
         self.item_calls.append((category_id, page))
         return [], 0
 
@@ -1918,7 +1921,8 @@ def test_main_window_opens_plugin_history_detail_with_record_episode_and_playlis
         def load_categories(self):
             return []
 
-        def load_items(self, category_id: str, page: int):
+        def load_items(self, category_id: str, page: int, filters: dict[str, str] | None = None):
+            del filters
             return [], 0
 
         def build_request(self, vod_id: str):
@@ -1997,7 +2001,8 @@ def test_main_window_opens_plugin_history_detail_prefers_request_history_loader_
         def load_categories(self):
             return []
 
-        def load_items(self, category_id: str, page: int):
+        def load_items(self, category_id: str, page: int, filters: dict[str, str] | None = None):
+            del filters
             return [], 0
 
         def build_request(self, vod_id: str):
@@ -2356,6 +2361,48 @@ def test_build_application_uses_shared_app_path_helpers(monkeypatch, tmp_path) -
 
     assert (tmp_path / "app-data" / "app.db").exists()
     assert (tmp_path / "app-cache" / "posters").is_dir()
+
+
+def test_build_application_installs_pointing_hand_cursor_for_buttons(monkeypatch, tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+
+    monkeypatch.setattr(app_module, "QApplication", lambda args: app)
+    monkeypatch.setattr(app_module, "app_data_dir", lambda: tmp_path / "app-data")
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+
+    built_app, _repo = app_module.build_application()
+
+    assert built_app is app
+
+    push_button = QPushButton("Push")
+    tool_button = QToolButton()
+    push_button.show()
+    tool_button.show()
+    app.processEvents()
+
+    assert push_button.cursor().shape() == Qt.CursorShape.PointingHandCursor
+    assert tool_button.cursor().shape() == Qt.CursorShape.PointingHandCursor
+
+    push_button.close()
+    tool_button.close()
+
+
+def test_build_application_does_not_change_non_button_cursor(monkeypatch, tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+
+    monkeypatch.setattr(app_module, "QApplication", lambda args: app)
+    monkeypatch.setattr(app_module, "app_data_dir", lambda: tmp_path / "app-data")
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+
+    app_module.build_application()
+
+    line_edit = QLineEdit()
+    line_edit.show()
+    app.processEvents()
+
+    assert line_edit.cursor().shape() != Qt.CursorShape.PointingHandCursor
+
+    line_edit.close()
 
 
 def test_app_coordinator_start_does_not_require_vod_root_probe(monkeypatch) -> None:
@@ -3776,7 +3823,8 @@ def test_main_window_restore_last_player_routes_plugin_detail_to_plugin_controll
         def load_categories(self):
             return []
 
-        def load_items(self, category_id: str, page: int):
+        def load_items(self, category_id: str, page: int, filters: dict[str, str] | None = None):
+            del filters
             return [], 0
 
         def build_request(self, vod_id: str):

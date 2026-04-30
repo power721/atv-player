@@ -5,8 +5,8 @@ import time
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QObject
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtCore import QObject, Qt
+from PySide6.QtWidgets import QApplication, QPushButton, QToolButton, QWidget
 
 from atv_player.api import ApiClient, ApiError, UnauthorizedError
 from atv_player.danmaku.cache import purge_stale_danmaku_cache
@@ -78,6 +78,14 @@ class _HttpTextClient:
         return self._client.get_bytes(url)
 
 
+class _ButtonCursorEventFilter(QObject):
+    def eventFilter(self, watched, event) -> bool:
+        del event
+        if isinstance(watched, (QPushButton, QToolButton)) and watched.cursor().shape() != Qt.CursorShape.PointingHandCursor:
+            watched.setCursor(Qt.CursorShape.PointingHandCursor)
+        return False
+
+
 def decide_start_view(config: AppConfig) -> str:
     return "main" if config.token else "login"
 
@@ -100,8 +108,17 @@ def purge_stale_poster_cache(now: float | None = None) -> None:
             continue
 
 
+def _install_button_pointing_hand_cursor(app: QApplication) -> None:
+    if not hasattr(app, "installEventFilter"):
+        return
+    filter_obj = _ButtonCursorEventFilter(app)
+    app.installEventFilter(filter_obj)
+    setattr(app, "_button_cursor_event_filter", filter_obj)
+
+
 def build_application() -> tuple[QApplication, SettingsRepository]:
     app = QApplication([])
+    _install_button_pointing_hand_cursor(app)
     app.setApplicationName("atv-player")
     app.setWindowIcon(load_icon(_app_icon_path()))
     data_dir = app_data_dir()
