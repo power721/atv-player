@@ -76,6 +76,96 @@ def test_loader_downloads_remote_plugin_and_reuses_cached_file_on_refresh_failur
     ]
 
 
+def test_loader_resolves_one_indirect_remote_url_before_loading_plugin(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    def fake_get(url: str, timeout: float = 15.0, follow_redirects: bool = False) -> httpx.Response:
+        calls.append(url)
+        if url == "https://example.com/plugin.txt":
+            return httpx.Response(200, text="\nhttps://cdn.example.com/real-plugin.py\n")
+        if url == "https://cdn.example.com/real-plugin.py":
+            return httpx.Response(200, text=PLUGIN_SOURCE)
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    loader = SpiderPluginLoader(cache_dir=tmp_path / "cache", get=fake_get)
+    config = SpiderPluginConfig(
+        id=41,
+        source_type="remote",
+        source_value="https://example.com/plugin.txt",
+        display_name="",
+        enabled=True,
+        sort_order=0,
+    )
+
+    loaded = loader.load(config, force_refresh=True)
+
+    assert loaded.plugin_name == "红果短剧"
+    assert calls == [
+        "https://example.com/plugin.txt",
+        "https://cdn.example.com/real-plugin.py",
+    ]
+    assert "class Spider(Spider):" in Path(loaded.config.cached_file_path).read_text(encoding="utf-8")
+
+
+def test_loader_treats_python_text_as_source_instead_of_indirect_url(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    def fake_get(url: str, timeout: float = 15.0, follow_redirects: bool = False) -> httpx.Response:
+        calls.append(url)
+        return httpx.Response(200, text=PLUGIN_SOURCE)
+
+    loader = SpiderPluginLoader(cache_dir=tmp_path / "cache", get=fake_get)
+    config = SpiderPluginConfig(
+        id=42,
+        source_type="remote",
+        source_value="https://example.com/direct.py",
+        display_name="",
+        enabled=True,
+        sort_order=0,
+    )
+
+    loaded = loader.load(config, force_refresh=True)
+
+    assert loaded.plugin_name == "红果短剧"
+    assert calls == ["https://example.com/direct.py"]
+
+
+def test_loader_reuses_cached_plugin_when_indirect_second_fetch_fails(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    def fake_get(url: str, timeout: float = 15.0, follow_redirects: bool = False) -> httpx.Response:
+        calls.append(url)
+        if url == "https://example.com/plugin.txt":
+            return httpx.Response(200, text="https://cdn.example.com/real-plugin.py")
+        if url == "https://cdn.example.com/real-plugin.py":
+            if len(calls) == 2:
+                return httpx.Response(200, text=PLUGIN_SOURCE)
+            raise httpx.ConnectError("cdn down")
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    loader = SpiderPluginLoader(cache_dir=tmp_path / "cache", get=fake_get)
+    config = SpiderPluginConfig(
+        id=43,
+        source_type="remote",
+        source_value="https://example.com/plugin.txt",
+        display_name="",
+        enabled=True,
+        sort_order=0,
+    )
+
+    first = loader.load(config, force_refresh=True)
+    second = loader.load(first.config, force_refresh=True)
+
+    assert first.plugin_name == "红果短剧"
+    assert second.plugin_name == "红果短剧"
+    assert calls == [
+        "https://example.com/plugin.txt",
+        "https://cdn.example.com/real-plugin.py",
+        "https://example.com/plugin.txt",
+        "https://cdn.example.com/real-plugin.py",
+    ]
+
+
 def test_loader_reports_missing_spider_class(tmp_path: Path) -> None:
     bad_path = tmp_path / "bad.py"
     bad_path.write_text("class NotSpider:\n    pass\n", encoding="utf-8")
