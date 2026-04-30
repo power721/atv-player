@@ -8,6 +8,9 @@ from PySide6.QtCore import QObject, QSize, Qt, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
+    QComboBox,
+    QFormLayout,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -67,6 +70,9 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.keyword_edit = QLineEdit()
         self.search_button = QPushButton("搜索")
         self.clear_button = QPushButton("清空")
+        self.filter_toggle_button = QPushButton("筛选")
+        self.filter_panel = QFrame()
+        self.filter_panel_layout = QFormLayout(self.filter_panel)
         self.breadcrumb_bar = QWidget()
         self.breadcrumb_layout = QHBoxLayout(self.breadcrumb_bar)
         self.breadcrumb_layout.setContentsMargins(0, 0, 0, 0)
@@ -85,12 +91,14 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.cards_scroll.setWidget(self.cards_widget)
         self.card_buttons: list[QToolButton] = []
         self._folder_breadcrumbs: list[dict[str, str]] = []
+        self.filter_combos: dict[str, QComboBox] = {}
         self.categories = []
         self.items = []
         self.selected_category_id = ""
         self.current_page = 1
         self.page_size = 30
         self.total_items = 0
+        self._category_filter_state: dict[str, dict[str, str]] = {}
         self._current_card_columns = self._MIN_CARD_COLUMNS
         self._categories_request_id = 0
         self._items_request_id = 0
@@ -106,18 +114,23 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.category_list.setMinimumWidth(180)
         self.status_label.setWordWrap(True)
         self.breadcrumb_bar.setVisible(self._folder_navigation_enabled)
+        self.filter_panel.hide()
+        self.filter_toggle_button.hide()
 
         right = QVBoxLayout()
         if self._search_enabled:
             search_row = QHBoxLayout()
             search_row.addWidget(self.keyword_edit, 1)
             search_row.addWidget(self.search_button)
+            search_row.addWidget(self.filter_toggle_button)
             search_row.addWidget(self.clear_button)
             right.addLayout(search_row)
         else:
             self.keyword_edit.hide()
             self.search_button.hide()
             self.clear_button.hide()
+            right.addWidget(self.filter_toggle_button)
+        right.addWidget(self.filter_panel)
         right.addWidget(self.breadcrumb_bar)
         right.addWidget(self.status_label)
         right.addWidget(self.cards_scroll, 1)
@@ -148,6 +161,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.category_list.currentRowChanged.connect(self._handle_category_row_changed)
         self.prev_page_button.clicked.connect(self.previous_page)
         self.next_page_button.clicked.connect(self.next_page)
+        self.filter_toggle_button.clicked.connect(self._toggle_filters)
         if self._search_enabled:
             self.search_button.clicked.connect(self.search)
             self.clear_button.clicked.connect(self.clear_search)
@@ -186,11 +200,12 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
     def load_items(self, category_id: str, page: int) -> None:
         self._items_request_id += 1
         request_id = self._items_request_id
+        active_filters = dict(self._category_filter_state.get(category_id, {}))
         self.status_label.setText("加载中...")
 
         def run() -> None:
             try:
-                items, total = self.controller.load_items(category_id, page)
+                items, total = self.controller.load_items(category_id, page, filters=active_filters)
             except UnauthorizedError:
                 if self._is_widget_alive():
                     self._signals.unauthorized.emit(request_id, "items")
@@ -217,10 +232,84 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             return
         self.category_list.setCurrentRow(0)
 
+    def _current_category(self):
+        row = self.category_list.currentRow()
+        if not (0 <= row < len(self.categories)):
+            return None
+        return self.categories[row]
+
+    def _default_filter_state(self, category) -> dict[str, str]:
+        defaults: dict[str, str] = {}
+        for group in getattr(category, "filters", []):
+            if group.options:
+                defaults[group.key] = group.options[0].value
+        return defaults
+
+    def _selected_filter_values(self) -> dict[str, str]:
+        selected: dict[str, str] = {}
+        for key, combo in self.filter_combos.items():
+            value = combo.currentData()
+            if value is not None:
+                selected[key] = str(value)
+        return selected
+
+    def _remember_current_filter_state(self) -> None:
+        if not self.selected_category_id:
+            return
+        self._category_filter_state[self.selected_category_id] = self._selected_filter_values()
+
+    def _rebuild_filter_panel(self) -> None:
+        while self.filter_panel_layout.rowCount():
+            self.filter_panel_layout.removeRow(0)
+        self.filter_combos = {}
+        category = self._current_category()
+        filters = list(getattr(category, "filters", [])) if category is not None else []
+        if not filters:
+            self.filter_toggle_button.hide()
+            self.filter_panel.hide()
+            return
+        state = self._category_filter_state.setdefault(category.type_id, self._default_filter_state(category))
+        for group in filters:
+            if not group.options:
+                continue
+            combo = QComboBox()
+            for option in group.options:
+                combo.addItem(option.name, option.value)
+            combo.blockSignals(True)
+            index = combo.findData(state.get(group.key, group.options[0].value))
+            combo.setCurrentIndex(index if index >= 0 else 0)
+            combo.blockSignals(False)
+            combo.currentIndexChanged.connect(self._handle_filter_changed)
+            self.filter_panel_layout.addRow(group.name, combo)
+            self.filter_combos[group.key] = combo
+        if not self.filter_combos or self._search_mode:
+            self.filter_toggle_button.setHidden(True)
+            self.filter_panel.hide()
+            return
+        self.filter_toggle_button.show()
+        self.filter_panel.hide()
+
+    def _toggle_filters(self) -> None:
+        if not self.filter_combos or self._search_mode:
+            return
+        self.filter_panel.setVisible(self.filter_panel.isHidden())
+
+    def _handle_filter_changed(self) -> None:
+        if self._search_mode or not self.selected_category_id:
+            return
+        self._remember_current_filter_state()
+        self.current_page = 1
+        self.load_items(self.selected_category_id, self.current_page)
+
     def _handle_category_row_changed(self, row: int) -> None:
         if not (0 <= row < len(self.categories)):
             return
-        self.selected_category_id = self.categories[row].type_id
+        if self.selected_category_id:
+            self._remember_current_filter_state()
+        category = self.categories[row]
+        self.selected_category_id = category.type_id
+        self._category_filter_state.setdefault(category.type_id, self._default_filter_state(category))
+        self._rebuild_filter_panel()
         self.current_page = 1
         self.reset_folder_breadcrumbs_to_root()
         if self._search_mode:
@@ -322,6 +411,8 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._search_mode = True
         self._search_keyword = keyword
         self.current_page = 1
+        self.filter_toggle_button.hide()
+        self.filter_panel.hide()
         self._search_items(keyword, self.current_page)
 
     def clear_search(self) -> None:
@@ -331,6 +422,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._search_mode = False
         self._search_keyword = ""
         self.current_page = 1
+        self._rebuild_filter_panel()
         if self.selected_category_id:
             self.load_items(self.selected_category_id, self.current_page)
 

@@ -4,7 +4,7 @@ import pytest
 from PySide6.QtCore import Qt
 
 from atv_player.api import ApiError, UnauthorizedError
-from atv_player.models import DoubanCategory, VodItem
+from atv_player.models import CategoryFilter, CategoryFilterOption, DoubanCategory, VodItem
 import atv_player.ui.poster_grid_page as poster_grid_page_module
 from atv_player.ui.poster_grid_page import PosterGridPage
 
@@ -32,7 +32,7 @@ class FakeDoubanController:
         self.category_calls += 1
         return self.categories
 
-    def load_items(self, category_id: str, page: int):
+    def load_items(self, category_id: str, page: int, filters: dict[str, str] | None = None):
         self.item_calls.append((category_id, page))
         return self.items_by_category[category_id]
 
@@ -45,7 +45,7 @@ class AsyncDoubanController(FakeDoubanController):
             ("movie", 1): threading.Event(),
         }
 
-    def load_items(self, category_id: str, page: int):
+    def load_items(self, category_id: str, page: int, filters: dict[str, str] | None = None):
         self.item_calls.append((category_id, page))
         self._events[(category_id, page)].wait(timeout=5)
         return self.items_by_category[category_id]
@@ -55,10 +55,10 @@ class AsyncDoubanController(FakeDoubanController):
 
 
 class FailingDoubanController(FakeDoubanController):
-    def load_items(self, category_id: str, page: int):
+    def load_items(self, category_id: str, page: int, filters: dict[str, str] | None = None):
         if category_id == "movie":
             raise ApiError("获取列表失败")
-        return super().load_items(category_id, page)
+        return super().load_items(category_id, page, filters)
 
 
 class AsyncFailingDoubanController(FakeDoubanController):
@@ -69,7 +69,7 @@ class AsyncFailingDoubanController(FakeDoubanController):
             ("movie", 1): threading.Event(),
         }
 
-    def load_items(self, category_id: str, page: int):
+    def load_items(self, category_id: str, page: int, filters: dict[str, str] | None = None):
         self.item_calls.append((category_id, page))
         self._events[(category_id, page)].wait(timeout=5)
         if category_id == "suggestion":
@@ -88,7 +88,7 @@ class AsyncUnauthorizedDoubanController(FakeDoubanController):
             ("movie", 1): threading.Event(),
         }
 
-    def load_items(self, category_id: str, page: int):
+    def load_items(self, category_id: str, page: int, filters: dict[str, str] | None = None):
         self.item_calls.append((category_id, page))
         self._events[(category_id, page)].wait(timeout=5)
         if category_id == "suggestion":
@@ -111,6 +111,43 @@ class SearchableDoubanController(FakeDoubanController):
     def search_items(self, keyword: str, page: int):
         self.search_calls.append((keyword, page))
         return self.search_results
+
+
+class FilterablePosterController(FakeDoubanController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.categories = [
+            DoubanCategory(
+                type_id="movie",
+                type_name="电影",
+                filters=[
+                    CategoryFilter(
+                        key="sc",
+                        name="影视类型",
+                        options=[
+                            CategoryFilterOption(name="不限", value="0"),
+                            CategoryFilterOption(name="动作", value="6"),
+                        ],
+                    )
+                ],
+            ),
+            DoubanCategory(type_id="tv", type_name="剧集"),
+        ]
+        self.items_by_category = {
+            "movie": (
+                [VodItem(vod_id="m2", vod_name="活着", vod_pic="poster-2", vod_remarks="9.3")],
+                35,
+            ),
+            "tv": (
+                [VodItem(vod_id="t1", vod_name="漫长的季节", vod_pic="poster-3", vod_remarks="连载中")],
+                12,
+            ),
+        }
+        self.filtered_item_calls: list[tuple[str, int, dict[str, str] | None]] = []
+
+    def load_items(self, category_id: str, page: int, filters: dict[str, str] | None = None):
+        self.filtered_item_calls.append((category_id, page, None if filters is None else dict(filters)))
+        return super().load_items(category_id, page, filters)
 
 
 def show_loaded_page(qtbot, page: PosterGridPage) -> PosterGridPage:
@@ -172,6 +209,120 @@ def test_poster_grid_page_can_show_search_controls_when_enabled(qtbot) -> None:
     assert page.keyword_edit.isHidden() is False
     assert page.search_button.isHidden() is False
     assert page.clear_button.isHidden() is False
+
+
+def test_poster_grid_page_hides_filter_button_by_default(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(FakeDoubanController(), click_action="open", search_enabled=True))
+
+    qtbot.waitUntil(lambda: page.category_list.count() == 2)
+
+    assert page.filter_toggle_button.isHidden() is True
+    assert page.filter_panel.isHidden() is True
+
+
+def test_poster_grid_page_shows_filter_button_for_filtered_category_and_stays_collapsed(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(FilterablePosterController(), click_action="open", search_enabled=True))
+
+    qtbot.waitUntil(lambda: page.category_list.count() == 2)
+    qtbot.waitUntil(lambda: page.selected_category_id == "movie")
+
+    assert page.filter_toggle_button.isHidden() is False
+    assert page.filter_panel.isHidden() is True
+
+
+def test_poster_grid_page_expands_filters_and_reloads_page_one_on_change(qtbot) -> None:
+    controller = FilterablePosterController()
+    page = show_loaded_page(qtbot, PosterGridPage(controller, click_action="open", search_enabled=True))
+
+    qtbot.waitUntil(lambda: page.selected_category_id == "movie")
+    page.current_page = 3
+    page.filter_toggle_button.click()
+    qtbot.waitUntil(lambda: page.filter_panel.isHidden() is False)
+
+    combo = page.filter_combos["sc"]
+    combo.setCurrentIndex(combo.findData("6"))
+
+    qtbot.waitUntil(lambda: controller.filtered_item_calls[-1] == ("movie", 1, {"sc": "6"}))
+    assert page.current_page == 1
+
+
+def test_poster_grid_page_remembers_filter_state_per_category(qtbot) -> None:
+    controller = FilterablePosterController()
+    controller.categories = [
+        DoubanCategory(
+            type_id="movie",
+            type_name="电影",
+            filters=[
+                CategoryFilter(
+                    key="sc",
+                    name="影视类型",
+                    options=[
+                        CategoryFilterOption(name="不限", value="0"),
+                        CategoryFilterOption(name="动作", value="6"),
+                    ],
+                )
+            ],
+        ),
+        DoubanCategory(
+            type_id="tv",
+            type_name="剧集",
+            filters=[
+                CategoryFilter(
+                    key="status",
+                    name="剧集状态",
+                    options=[
+                        CategoryFilterOption(name="不限", value="0"),
+                        CategoryFilterOption(name="连载中", value="1"),
+                    ],
+                )
+            ],
+        ),
+    ]
+    page = show_loaded_page(qtbot, PosterGridPage(controller, click_action="open", search_enabled=False))
+
+    qtbot.waitUntil(lambda: page.selected_category_id == "movie")
+    page.filter_toggle_button.click()
+    page.filter_combos["sc"].setCurrentIndex(page.filter_combos["sc"].findData("6"))
+    qtbot.waitUntil(lambda: controller.filtered_item_calls[-1] == ("movie", 1, {"sc": "6"}))
+
+    page.category_list.setCurrentRow(1)
+    qtbot.waitUntil(lambda: controller.filtered_item_calls[-1] == ("tv", 1, {"status": "0"}))
+    page.filter_toggle_button.click()
+    page.filter_combos["status"].setCurrentIndex(page.filter_combos["status"].findData("1"))
+    qtbot.waitUntil(lambda: controller.filtered_item_calls[-1] == ("tv", 1, {"status": "1"}))
+
+    page.category_list.setCurrentRow(0)
+    qtbot.waitUntil(lambda: page.selected_category_id == "movie")
+    page.filter_toggle_button.click()
+
+    assert page.filter_combos["sc"].currentData() == "6"
+
+
+def test_poster_grid_page_hides_category_filters_during_search_and_restores_them_after_clear(qtbot) -> None:
+    class SearchableFilterController(FilterablePosterController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.search_calls: list[tuple[str, int]] = []
+
+        def search_items(self, keyword: str, page: int):
+            self.search_calls.append((keyword, page))
+            return ([VodItem(vod_id="search-1", vod_name="搜索结果")], 1)
+
+    controller = SearchableFilterController()
+    page = show_loaded_page(qtbot, PosterGridPage(controller, click_action="open", search_enabled=True))
+
+    qtbot.waitUntil(lambda: page.selected_category_id == "movie")
+    page.keyword_edit.setText("黑袍纠察队")
+    page.search()
+
+    qtbot.waitUntil(lambda: controller.search_calls == [("黑袍纠察队", 1)])
+    assert page.filter_toggle_button.isHidden() is True
+    assert page.filter_panel.isHidden() is True
+
+    page.clear_search()
+
+    qtbot.waitUntil(lambda: controller.filtered_item_calls[-1] == ("movie", 1, {"sc": "0"}))
+    assert page.filter_toggle_button.isHidden() is False
 
 
 def test_poster_grid_page_navigation_enabled_shows_root_breadcrumbs(qtbot) -> None:
