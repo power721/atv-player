@@ -3,6 +3,7 @@ from atv_player.main import main
 
 def test_main_configures_logging_before_start(monkeypatch) -> None:
     configured_levels: list[str] = []
+    closed = {"called": False}
 
     monkeypatch.setattr("atv_player.main.configure_logging", configured_levels.append, raising=False)
 
@@ -21,8 +22,12 @@ def test_main_configures_logging_before_start(monkeypatch) -> None:
         def start(self):
             return DummyWidget()
 
+        def close(self) -> None:
+            closed["called"] = True
+
     monkeypatch.setattr("atv_player.main.build_application", lambda: (DummyApp(), object()))
     monkeypatch.setattr("atv_player.main.AppCoordinator", DummyCoordinator)
 
     assert main() == 0
     assert configured_levels == ["INFO"]
+    assert closed["called"] is True
