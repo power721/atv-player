@@ -126,12 +126,15 @@ def test_build_pyinstaller_command_windows_uses_onefile_mode(monkeypatch, tmp_pa
     assert command[command.index("--icon") + 1] == str(build.PROJECT_ROOT / "packaging" / "icons" / "app.ico")
 
 
-def test_build_pyinstaller_command_windows_includes_spider_plugin_runtime_deps(monkeypatch, tmp_path) -> None:
-    dll_path = tmp_path / "libmpv-2.dll"
-    dll_path.write_bytes(b"dll")
-    monkeypatch.setattr(build, "find_libmpv", lambda target_platform: [(dll_path, ".")])
+@pytest.mark.parametrize("target_platform", ["linux", "windows", "macos"])
+def test_build_pyinstaller_command_includes_spider_plugin_runtime_deps(
+    monkeypatch, tmp_path, target_platform: str
+) -> None:
+    runtime_path = tmp_path / "runtime-lib"
+    runtime_path.write_bytes(b"lib")
+    monkeypatch.setattr(build, "find_libmpv", lambda platform: [(runtime_path, ".")])
 
-    command = build.build_pyinstaller_command("windows")
+    command = build.build_pyinstaller_command(target_platform)
 
     hidden_imports = [
         command[index + 1]
