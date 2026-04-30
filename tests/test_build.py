@@ -126,6 +126,23 @@ def test_build_pyinstaller_command_windows_uses_onefile_mode(monkeypatch, tmp_pa
     assert command[command.index("--icon") + 1] == str(build.PROJECT_ROOT / "packaging" / "icons" / "app.ico")
 
 
+def test_build_pyinstaller_command_windows_includes_spider_plugin_runtime_deps(monkeypatch, tmp_path) -> None:
+    dll_path = tmp_path / "libmpv-2.dll"
+    dll_path.write_bytes(b"dll")
+    monkeypatch.setattr(build, "find_libmpv", lambda target_platform: [(dll_path, ".")])
+
+    command = build.build_pyinstaller_command("windows")
+
+    hidden_imports = [
+        command[index + 1]
+        for index, value in enumerate(command[:-1])
+        if value == "--hidden-import"
+    ]
+
+    assert "pyquery" in hidden_imports
+    assert "bs4" in hidden_imports
+
+
 def test_build_pyinstaller_command_macos_uses_native_app_icon(monkeypatch, tmp_path) -> None:
     dylib_path = tmp_path / "libmpv.dylib"
     dylib_path.write_bytes(b"dylib")

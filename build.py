@@ -18,6 +18,10 @@ ICONS_DIR = PROJECT_ROOT / "src" / "atv_player" / "icons"
 PACKAGING_ICONS_DIR = PROJECT_ROOT / "packaging" / "icons"
 DIST_DIR = PROJECT_ROOT / "dist"
 BUILD_DIR = PROJECT_ROOT / "build"
+SPIDER_PLUGIN_RUNTIME_HIDDEN_IMPORTS = (
+    "bs4",
+    "pyquery",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,11 +241,17 @@ def build_pyinstaller_command(target_platform: str) -> list[str]:
         APP_NAME,
         "--paths",
         "src",
-        "--add-data",
-        data_mapping(ICONS_DIR, "atv_player/icons", target.platform_id),
-        "--add-binary",
-        data_mapping(find_libmpv(target.platform_id)[0][0], ".", target.platform_id),
     ]
+    for module_name in SPIDER_PLUGIN_RUNTIME_HIDDEN_IMPORTS:
+        command.extend(["--hidden-import", module_name])
+    command.extend(
+        [
+            "--add-data",
+            data_mapping(ICONS_DIR, "atv_player/icons", target.platform_id),
+            "--add-binary",
+            data_mapping(find_libmpv(target.platform_id)[0][0], ".", target.platform_id),
+        ]
+    )
     icon_path = pyinstaller_icon_path(target.platform_id)
     if icon_path is not None:
         command.extend(["--icon", str(icon_path)])
