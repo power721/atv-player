@@ -227,7 +227,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         if self.jellyfin_page is not None:
             self.nav_tabs.addTab(self.jellyfin_page, "Jellyfin")
         if self.feiniu_page is not None:
-            self.nav_tabs.addTab(self.feiniu_page, "Feiniu")
+            self.nav_tabs.addTab(self.feiniu_page, "飞牛影视")
         self.nav_tabs.addTab(self.browse_page, "文件浏览")
         self.nav_tabs.addTab(self.history_page, "播放记录")
         self._rebuild_spider_plugin_tabs()
