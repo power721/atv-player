@@ -154,6 +154,7 @@ def test_main_window_inserts_dynamic_spider_tabs_before_browse(qtbot) -> None:
         "网络直播",
         "Emby",
         "Jellyfin",
+        "Feiniu",
         "红果短剧",
         "短剧二号",
         "文件浏览",
