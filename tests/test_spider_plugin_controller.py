@@ -1357,6 +1357,7 @@ def test_controller_falls_back_to_first_episode_when_single_drive_item_has_no_ep
     result = request.playback_loader(request.playlists[0][0])
 
     assert result is not None
+    _wait_until(lambda: result.replacement_playlist[0].danmaku_pending is False)
     assert calls == [("search", "网盘剧集 1集|https://pan.quark.cn/s/f518510ef92a")]
 
 
@@ -1404,6 +1405,7 @@ def test_controller_extracts_episode_number_from_sxxexx_style_titles() -> None:
     result = request.playback_loader(request.playlists[0][0])
 
     assert result is not None
+    _wait_until(lambda: result.replacement_playlist[0].danmaku_pending is False)
     assert calls == [("search", "网盘剧集 25集|https://pan.quark.cn/s/f518510ef92a")]
 
 
@@ -1451,6 +1453,7 @@ def test_controller_extracts_episode_number_from_numeric_title_with_size_suffix(
     result = request.playback_loader(request.playlists[0][0])
 
     assert result is not None
+    _wait_until(lambda: result.replacement_playlist[0].danmaku_pending is False)
     assert calls == [("search", "网盘剧集 12集|https://pan.quark.cn/s/f518510ef92a")]
 
 
@@ -1552,6 +1555,10 @@ def test_controller_uses_replacement_playlist_index_when_drive_titles_have_no_ep
 
     assert result is not None
     request.playback_loader(result.replacement_playlist[1])
+    _wait_until(
+        lambda: result.replacement_playlist[0].danmaku_pending is False
+        and result.replacement_playlist[1].danmaku_pending is False
+    )
 
     assert calls == [
         ("search", "网盘剧集 1集|https://pan.quark.cn/s/f518510ef92a"),
