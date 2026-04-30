@@ -168,7 +168,7 @@ def test_history_controller_merges_remote_and_plugin_histories_in_descending_tim
     assert [record.source_kind for record in records] == ["spider_plugin", "remote"]
 
 
-def test_history_controller_merges_remote_and_emby_jellyfin_local_histories() -> None:
+def test_history_controller_merges_remote_and_emby_jellyfin_feiniu_local_histories() -> None:
     api = FakeApiClient()
     repository = FakeRepository(
         histories=[
@@ -223,15 +223,31 @@ def test_history_controller_merges_remote_and_emby_jellyfin_local_histories() ->
                 source_kind="jellyfin",
                 source_name="Jellyfin",
             ),
+            HistoryRecord(
+                id=0,
+                key="feiniu-1",
+                vod_name="Feiniu Movie",
+                vod_pic="fn-pic",
+                vod_remarks="Episode 2",
+                episode=1,
+                episode_url="fn-2.m3u8",
+                position=45000,
+                opening=0,
+                ending=0,
+                speed=1.0,
+                create_time=275000,
+                source_kind="feiniu",
+                source_name="飞牛影视",
+            ),
         ]
     )
     controller = HistoryController(api, repository)
 
     records, total = controller.load_page(page=1, size=20)
 
-    assert total == 4
-    assert [record.key for record in records] == ["emby-1", "jellyfin-1", "plugin-1", "movie-1"]
-    assert [record.source_kind for record in records] == ["emby", "jellyfin", "spider_plugin", "remote"]
+    assert total == 5
+    assert [record.key for record in records] == ["emby-1", "feiniu-1", "jellyfin-1", "plugin-1", "movie-1"]
+    assert [record.source_kind for record in records] == ["emby", "feiniu", "jellyfin", "spider_plugin", "remote"]
 
 
 def test_history_controller_deletes_one_or_many_by_source() -> None:
@@ -288,15 +304,32 @@ def test_history_controller_deletes_one_or_many_by_source() -> None:
         source_kind="emby",
         source_name="Emby",
     )
+    feiniu = HistoryRecord(
+        id=0,
+        key="feiniu-1",
+        vod_name="Feiniu Movie",
+        vod_pic="poster",
+        vod_remarks="Episode 2",
+        episode=1,
+        episode_url="2.m3u8",
+        position=3500,
+        opening=0,
+        ending=0,
+        speed=1.0,
+        create_time=123459,
+        source_kind="feiniu",
+        source_name="飞牛影视",
+    )
 
     controller.delete_one(remote)
-    controller.delete_many([remote, plugin, emby])
+    controller.delete_many([remote, plugin, emby, feiniu])
 
     assert api.deleted_one == [9]
     assert api.deleted_many == [[9]]
     assert repository.deleted == [
         ("spider_plugin", "3", "detail-1"),
         ("emby", "", "emby-1"),
+        ("feiniu", "", "feiniu-1"),
     ]
 
 
@@ -354,11 +387,28 @@ def test_history_controller_clear_page_deletes_current_records_by_source() -> No
         source_kind="jellyfin",
         source_name="Jellyfin",
     )
+    feiniu = HistoryRecord(
+        id=0,
+        key="fn-1",
+        vod_name="Feiniu Movie",
+        vod_pic="",
+        vod_remarks="Episode 3",
+        episode=2,
+        episode_url="3.m3u8",
+        position=13000,
+        opening=0,
+        ending=0,
+        speed=1.0,
+        create_time=1002,
+        source_kind="feiniu",
+        source_name="飞牛影视",
+    )
 
-    controller.clear_page([remote, plugin, jellyfin])
+    controller.clear_page([remote, plugin, jellyfin, feiniu])
 
     assert api.deleted_many == [[11]]
     assert repository.deleted == [
         ("spider_plugin", "4", "detail-2"),
         ("jellyfin", "", "jf-1"),
+        ("feiniu", "", "fn-1"),
     ]

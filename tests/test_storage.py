@@ -67,6 +67,36 @@ def test_local_playback_history_repository_lists_and_deletes_jellyfin_records(tm
     assert repo.get_history("jellyfin", "jf-1") is None
 
 
+def test_local_playback_history_repository_round_trip_feiniu_source_metadata(tmp_path: Path) -> None:
+    from atv_player.local_playback_history import LocalPlaybackHistoryRepository
+
+    repo = LocalPlaybackHistoryRepository(tmp_path / "app.db")
+    repo.save_history(
+        "feiniu",
+        "fn-1",
+        {
+            "vodName": "Feiniu Movie",
+            "vodPic": "poster",
+            "vodRemarks": "Episode 2",
+            "episode": 1,
+            "episodeUrl": "2.m3u8",
+            "position": 45000,
+            "opening": 0,
+            "ending": 0,
+            "speed": 1.25,
+            "playlistIndex": 1,
+            "createTime": 1713206400000,
+        },
+        source_name="飞牛影视",
+    )
+
+    history = repo.get_history("feiniu", "fn-1")
+
+    assert history is not None
+    assert history.source_kind == "feiniu"
+    assert history.source_name == "飞牛影视"
+
+
 def test_local_playback_history_repository_migrates_spider_plugin_legacy_rows(tmp_path: Path) -> None:
     db_path = tmp_path / "app.db"
     with sqlite3.connect(db_path) as conn:
