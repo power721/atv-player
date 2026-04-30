@@ -133,6 +133,31 @@ class SpiderPluginLoader:
         sys.modules[module_name] = module
         return module
 
+    def _fetch_remote_text(self, url: str) -> str:
+        response = self._get(url, timeout=15.0, follow_redirects=True)
+        if response.status_code >= 300:
+            raise httpx.HTTPStatusError(
+                f"Error response {response.status_code} while requesting {url}",
+                request=response.request,
+                response=response,
+            )
+        return response.text
+
+    def _extract_indirect_url(self, text: str) -> str:
+        candidate = text.strip()
+        if not candidate.startswith(("http://", "https://")):
+            return ""
+        if any(char.isspace() for char in candidate):
+            return ""
+        return candidate
+
+    def _resolve_remote_source_text(self, url: str) -> str:
+        source_text = self._fetch_remote_text(url)
+        indirect_url = self._extract_indirect_url(source_text)
+        if not indirect_url:
+            return source_text
+        return self._fetch_remote_text(indirect_url)
+
     def _resolve_source_path(self, config: SpiderPluginConfig, force_refresh: bool) -> Path:
         if config.source_type == "local":
             return Path(config.source_value)
@@ -149,14 +174,8 @@ class SpiderPluginLoader:
                 config.source_value,
                 force_refresh,
             )
-            response = self._get(config.source_value, timeout=15.0, follow_redirects=True)
-            if response.status_code >= 300:
-                raise httpx.HTTPStatusError(
-                    f"Error response {response.status_code} while requesting {config.source_value}",
-                    request=response.request,
-                    response=response,
-                )
-            cache_path.write_text(response.text, encoding="utf-8")
+            source_text = self._resolve_remote_source_text(config.source_value)
+            cache_path.write_text(source_text, encoding="utf-8")
             return cache_path
         except Exception:
             if cache_path.is_file() and cache_path.stat().st_size > 0:
