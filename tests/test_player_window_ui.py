@@ -7505,6 +7505,34 @@ def test_player_window_persists_pre_wide_splitter_state_when_saved_in_wide_mode(
     assert abs(restored_ratio - expected_ratio) < 0.02
 
 
+def test_player_window_restores_sidebar_after_toggling_wide_mode_from_fullscreen(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.show()
+    window.main_splitter.setSizes([900, 300])
+    expected_sizes = window.main_splitter.sizes()
+
+    window.toggle_fullscreen()
+    assert window.isFullScreen() is True
+
+    # Some platforms collapse the hidden sidebar pane to zero width in fullscreen.
+    window.main_splitter.setSizes([sum(expected_sizes), 0])
+
+    window.wide_button.click()
+    assert window.wide_button.isChecked() is True
+
+    window.toggle_fullscreen()
+    assert window.isFullScreen() is False
+    assert window.sidebar_container.isHidden() is True
+
+    window.wide_button.click()
+
+    assert window.wide_button.isChecked() is False
+    assert window.sidebar_container.isHidden() is False
+    assert window.main_splitter.sizes()[1] > 0
+    assert window.main_splitter.sizes() == expected_sizes
+
+
 def test_player_window_persists_and_restores_main_splitter_state(qtbot) -> None:
     saved = {"called": 0}
     config = AppConfig()

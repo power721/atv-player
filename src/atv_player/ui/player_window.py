@@ -522,6 +522,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.main_splitter.setStretchFactor(0, 3)
         self.main_splitter.setStretchFactor(1, 1)
         self._restore_main_splitter_state()
+        self._sidebar_sizes = self.main_splitter.sizes()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1525,13 +1526,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _toggle_wide_mode(self) -> None:
         if self.wide_button.isChecked():
-            self._sidebar_sizes = self.main_splitter.sizes()
+            self._remember_sidebar_sizes()
             self._apply_visibility_state()
             self.main_splitter.setSizes([1, 0])
             return
         self._apply_visibility_state()
-        if hasattr(self, "_sidebar_sizes"):
-            self.main_splitter.setSizes(self._sidebar_sizes)
+        self.main_splitter.setSizes(self._restoreable_sidebar_sizes())
 
     def _seek_relative(self, seconds: int) -> None:
         try:
@@ -3111,6 +3111,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 self.showNormal()
             self._apply_visibility_state()
             return
+        self._remember_sidebar_sizes()
         self._was_maximized_before_fullscreen = self.isMaximized()
         self.showFullScreen()
         self._apply_visibility_state()
@@ -3144,12 +3145,27 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         sizes = self.main_splitter.sizes()
         return len(sizes) != 2 or any(size <= 0 for size in sizes)
 
+    def _has_collapsed_splitter_sizes(self, sizes: list[int]) -> bool:
+        return len(sizes) != 2 or any(size <= 0 for size in sizes)
+
+    def _remember_sidebar_sizes(self) -> None:
+        sizes = self.main_splitter.sizes()
+        if self._has_collapsed_splitter_sizes(sizes):
+            return
+        self._sidebar_sizes = sizes
+
+    def _restoreable_sidebar_sizes(self) -> list[int]:
+        sizes = getattr(self, "_sidebar_sizes", self._DEFAULT_MAIN_SPLITTER_SIZES)
+        if self._has_collapsed_splitter_sizes(sizes):
+            return self._DEFAULT_MAIN_SPLITTER_SIZES
+        return sizes
+
     def _main_splitter_state_for_persistence(self) -> bytes:
-        if not self.wide_button.isChecked() or not hasattr(self, "_sidebar_sizes"):
+        if not self.wide_button.isChecked():
             return qbytearray_to_bytes(self.main_splitter.saveState())
         current_sizes = self.main_splitter.sizes()
         try:
-            self.main_splitter.setSizes(self._sidebar_sizes)
+            self.main_splitter.setSizes(self._restoreable_sidebar_sizes())
             return qbytearray_to_bytes(self.main_splitter.saveState())
         finally:
             self.main_splitter.setSizes(current_sizes)
