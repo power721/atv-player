@@ -366,7 +366,7 @@ class AppCoordinator(QObject):
         threading.Thread(target=refresh_sources, daemon=True).start()
 
     def _load_capabilities(self, api_client: ApiClient) -> dict[str, bool]:
-        default_capabilities = {"emby": True, "jellyfin": True}
+        default_capabilities = {"emby": True, "jellyfin": True, "feiniu": True}
         get_capabilities = getattr(api_client, "get_capabilities", None)
         if not callable(get_capabilities):
             return default_capabilities
@@ -381,6 +381,7 @@ class AppCoordinator(QObject):
         capabilities = dict(default_capabilities)
         capabilities["emby"] = bool(response.get("emby", capabilities["emby"]))
         capabilities["jellyfin"] = bool(response.get("jellyfin", capabilities["jellyfin"]))
+        capabilities["feiniu"] = bool(response.get("feiniu", capabilities["feiniu"]))
         return capabilities
 
     def _handle_login_succeeded(self) -> None:

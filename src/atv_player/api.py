@@ -218,6 +218,42 @@ class ApiClient:
     def stop_emby_playback(self, vod_id: str) -> None:
         self._request("GET", f"/emby-play/{self._vod_token}", params={"t": -1, "id": vod_id})
 
+    def list_feiniu_categories(self) -> dict[str, Any]:
+        return self._request("GET", f"/feiniu/{self._vod_token}")
+
+    def list_feiniu_items(
+        self,
+        category_id: str,
+        page: int,
+        filters: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"t": category_id, "pg": page}
+        if filters:
+            params.update(filters)
+        return self._request(
+            "GET",
+            f"/feiniu/{self._vod_token}",
+            params=params,
+        )
+
+    def search_feiniu_items(self, keyword: str, page: int) -> dict[str, Any]:
+        params: dict[str, Any] = {"wd": keyword}
+        if page > 1:
+            params["pg"] = page
+        return self._request("GET", f"/feiniu/{self._vod_token}", params=params)
+
+    def get_feiniu_detail(self, vod_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/feiniu/{self._vod_token}", params={"ids": vod_id})
+
+    def get_feiniu_playback_source(self, vod_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/feiniu-play/{self._vod_token}", params={"t": 0, "id": vod_id})
+
+    def report_feiniu_playback_progress(self, vod_id: str, position_ms: int) -> None:
+        self._request("GET", f"/feiniu-play/{self._vod_token}", params={"t": position_ms, "id": vod_id})
+
+    def stop_feiniu_playback(self, vod_id: str) -> None:
+        self._request("GET", f"/feiniu-play/{self._vod_token}", params={"t": -1, "id": vod_id})
+
     def list_jellyfin_categories(self) -> dict[str, Any]:
         return self._request("GET", f"/jellyfin/{self._vod_token}")
 

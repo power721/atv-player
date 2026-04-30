@@ -181,6 +181,19 @@ def test_api_client_gets_capabilities() -> None:
     assert seen == {"path": "/api/capabilities", "query": ""}
 
 
+def test_api_client_gets_capabilities_with_feiniu() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"emby": True, "jellyfin": False, "feiniu": True, "pansou": True})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="auth-123",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert client.get_capabilities()["feiniu"] is True
+
+
 def test_api_client_treats_successful_empty_delete_response_as_none() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "DELETE"
@@ -720,6 +733,46 @@ def test_api_client_stops_emby_playback() -> None:
     client.stop_emby_playback("1-3458")
 
     assert seen == {"path": "/emby-play/Harold", "query": "t=-1&id=1-3458"}
+
+
+def test_api_client_lists_feiniu_categories() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"class": []})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.list_feiniu_categories()
+
+    assert seen == {"path": "/feiniu/Harold", "query": ""}
+
+
+def test_api_client_gets_feiniu_playback_source() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"url": "https://stream.example/1.m3u8"})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.get_feiniu_playback_source("1-5001")
+
+    assert seen == {"path": "/feiniu-play/Harold", "query": "t=0&id=1-5001"}
 
 
 def test_api_client_lists_jellyfin_categories() -> None:
