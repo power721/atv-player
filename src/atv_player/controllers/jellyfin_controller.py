@@ -153,6 +153,7 @@ class JellyfinController:
             use_local_history=False,
             detail_resolver=self.resolve_playlist_item,
             playback_loader=self.load_playback_item,
+            async_playback_loader=True,
             playback_progress_reporter=self.report_playback_progress,
             playback_stopper=self.stop_playback,
             playback_history_loader=history_loader,

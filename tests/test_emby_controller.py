@@ -213,6 +213,7 @@ def test_build_request_disables_remote_history_and_exposes_local_emby_history_ho
     assert request.use_local_history is False
     assert request.restore_history is False
     assert request.playback_loader is not None
+    assert request.async_playback_loader is True
     assert request.playback_progress_reporter is not None
     assert request.playback_stopper is not None
     assert request.playback_history_loader is not None
