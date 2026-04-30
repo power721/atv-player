@@ -20,13 +20,53 @@ from atv_player.danmaku.models import DanmakuSeriesPreference, DanmakuSourceGrou
 from atv_player.danmaku.service import build_danmaku_series_key
 from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.controllers.browse_controller import _map_vod_item
-from atv_player.controllers.douban_controller import _map_category, _map_item
+from atv_player.controllers.douban_controller import _map_item
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
-from atv_player.models import DoubanCategory, OpenPlayerRequest, PlayItem, PlaybackLoadResult, VodItem
+from atv_player.models import (
+    CategoryFilter,
+    CategoryFilterOption,
+    DoubanCategory,
+    OpenPlayerRequest,
+    PlayItem,
+    PlaybackLoadResult,
+    VodItem,
+)
 from atv_player.player.resume import resolve_resume_index
 
 
 logger = logging.getLogger(__name__)
+
+
+def _map_filter_option(payload: object) -> CategoryFilterOption | None:
+    if not isinstance(payload, dict):
+        return None
+    name = str(payload.get("n") or "").strip()
+    value = str(payload.get("v") or "").strip()
+    if not name or not value:
+        return None
+    return CategoryFilterOption(name=name, value=value)
+
+
+def _map_category_filters(payload: object) -> list[CategoryFilter]:
+    if not isinstance(payload, list):
+        return []
+    groups: list[CategoryFilter] = []
+    for raw_group in payload:
+        if not isinstance(raw_group, dict):
+            continue
+        key = str(raw_group.get("key") or "").strip()
+        name = str(raw_group.get("name") or "").strip()
+        if not key or not name:
+            continue
+        options = [
+            option
+            for option in (_map_filter_option(raw_option) for raw_option in raw_group.get("value") or [])
+            if option is not None
+        ]
+        if not options:
+            continue
+        groups.append(CategoryFilter(key=key, name=name, options=options))
+    return groups
 
 
 def _looks_like_media_url(value: str) -> bool:
@@ -241,7 +281,15 @@ class SpiderPluginController:
         except Exception as exc:
             logger.exception("Spider plugin home load failed plugin=%s", self._plugin_name)
             raise ApiError(str(exc)) from exc
-        categories = [_map_category(item) for item in payload.get("class", [])]
+        raw_filters = payload.get("filters") or {}
+        categories = [
+            DoubanCategory(
+                type_id=str(item.get("type_id") or ""),
+                type_name=str(item.get("type_name") or ""),
+                filters=_map_category_filters(raw_filters.get(str(item.get("type_id") or ""))),
+            )
+            for item in payload.get("class", [])
+        ]
         items = self._map_items(payload)
         if items:
             categories = [DoubanCategory(type_id="home", type_name="推荐"), *categories]
@@ -253,12 +301,17 @@ class SpiderPluginController:
         self._ensure_home_loaded()
         return list(self._home_categories)
 
-    def load_items(self, category_id: str, page: int) -> tuple[list[VodItem], int]:
+    def load_items(
+        self,
+        category_id: str,
+        page: int,
+        filters: dict[str, str] | None = None,
+    ) -> tuple[list[VodItem], int]:
         self._ensure_home_loaded()
         if category_id == "home":
             return list(self._home_items), len(self._home_items)
         try:
-            payload = self._spider.categoryContent(category_id, str(page), False, {}) or {}
+            payload = self._spider.categoryContent(category_id, str(page), False, dict(filters or {})) or {}
         except Exception as exc:
             logger.exception(
                 "Spider plugin category load failed plugin=%s category_id=%s page=%s",

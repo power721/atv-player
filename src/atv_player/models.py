@@ -67,9 +67,23 @@ class PlaybackLoadResult:
 
 
 @dataclass(slots=True)
+class CategoryFilterOption:
+    name: str
+    value: str
+
+
+@dataclass(slots=True)
+class CategoryFilter:
+    key: str
+    name: str
+    options: list[CategoryFilterOption] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class DoubanCategory:
     type_id: str
     type_name: str
+    filters: list[CategoryFilter] = field(default_factory=list)
 
 
 @dataclass(slots=True)

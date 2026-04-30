@@ -8,7 +8,7 @@ import atv_player.plugins.controller as controller_module
 from atv_player.api import ApiError
 from atv_player.danmaku.models import DanmakuSearchItem, DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
 from atv_player.plugins.controller import SpiderPluginController
-from atv_player.models import PlayItem
+from atv_player.models import CategoryFilter, CategoryFilterOption, PlayItem
 
 
 def _wait_until(predicate, timeout: float = 1.0) -> None:
@@ -205,6 +205,49 @@ class RemappedDetailIdSpider(FakeSpider):
         }
 
 
+class FilterSpider(FakeSpider):
+    def __init__(self) -> None:
+        self.category_calls: list[tuple[str, str, bool, dict[str, str]]] = []
+
+    def homeContent(self, filter):
+        return {
+            "class": [
+                {"type_id": "movie", "type_name": "电影"},
+                {"type_id": "tv", "type_name": "剧集"},
+            ],
+            "filters": {
+                "movie": [
+                    {
+                        "key": "sc",
+                        "name": "影视类型",
+                        "value": [
+                            {"n": "不限", "v": "0"},
+                            {"n": "动作", "v": "6"},
+                        ],
+                    }
+                ],
+                "tv": [
+                    {
+                        "key": "status",
+                        "name": "剧集状态",
+                        "value": [
+                            {"n": "不限", "v": "0"},
+                            {"n": "连载中", "v": "1"},
+                        ],
+                    }
+                ],
+            },
+            "list": [],
+        }
+
+    def categoryContent(self, tid, pg, filter, extend):
+        self.category_calls.append((tid, pg, filter, dict(extend)))
+        return {
+            "list": [{"vod_id": f"/detail/{tid}-{pg}", "vod_name": f"{tid}-{pg}"}],
+            "total": 1,
+        }
+
+
 def test_controller_load_categories_prepends_home_when_home_list_exists() -> None:
     controller = SpiderPluginController(FakeSpider(), plugin_name="红果短剧", search_enabled=True)
 
@@ -214,6 +257,50 @@ def test_controller_load_categories_prepends_home_when_home_list_exists() -> Non
     assert [item.type_name for item in categories] == ["推荐", "热门", "剧场"]
     assert [item.vod_name for item in items] == ["首页推荐"]
     assert total == 1
+
+
+def test_controller_maps_home_filters_to_matching_categories() -> None:
+    controller = SpiderPluginController(FilterSpider(), plugin_name="筛选插件", search_enabled=True)
+
+    categories = controller.load_categories()
+
+    movie = categories[0]
+    tv = categories[1]
+
+    assert movie.type_id == "movie"
+    assert movie.filters == [
+        CategoryFilter(
+            key="sc",
+            name="影视类型",
+            options=[
+                CategoryFilterOption(name="不限", value="0"),
+                CategoryFilterOption(name="动作", value="6"),
+            ],
+        )
+    ]
+    assert tv.filters[0].key == "status"
+    assert [option.name for option in tv.filters[0].options] == ["不限", "连载中"]
+
+
+def test_controller_passes_selected_filters_into_category_content_extend() -> None:
+    spider = FilterSpider()
+    controller = SpiderPluginController(spider, plugin_name="筛选插件", search_enabled=True)
+
+    items, total = controller.load_items("movie", 2, filters={"sc": "6"})
+
+    assert total == 1
+    assert items[0].vod_name == "movie-2"
+    assert spider.category_calls == [("movie", "2", False, {"sc": "6"})]
+
+
+def test_controller_ignores_filters_for_home_category_items() -> None:
+    spider = FilterSpider()
+    controller = SpiderPluginController(spider, plugin_name="筛选插件", search_enabled=True)
+
+    controller.load_categories()
+    controller.load_items("home", 1, filters={"sc": "6"})
+
+    assert spider.category_calls == []
 
 
 def test_controller_search_and_category_mapping() -> None:
