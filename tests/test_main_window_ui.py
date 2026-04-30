@@ -56,10 +56,14 @@ class FakePlayerController:
         use_local_history=True,
         restore_history=False,
         playback_loader=None,
+        async_playback_loader=False,
+        danmaku_controller=None,
         playback_progress_reporter=None,
         playback_stopper=None,
         playback_history_loader=None,
         playback_history_saver=None,
+        initial_log_message="",
+        is_placeholder=False,
     ):
         return {
             "vod": vod,
@@ -68,8 +72,12 @@ class FakePlayerController:
             "playlists": playlists,
             "playlist_index": playlist_index,
             "restore_history": restore_history,
+            "async_playback_loader": async_playback_loader,
+            "danmaku_controller": danmaku_controller,
             "playback_history_loader": playback_history_loader,
             "playback_history_saver": playback_history_saver,
+            "initial_log_message": initial_log_message,
+            "is_placeholder": is_placeholder,
         }
 
 
@@ -225,10 +233,14 @@ def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monk
             use_local_history=True,
             restore_history=False,
             playback_loader=None,
+            async_playback_loader=False,
+            danmaku_controller=None,
             playback_progress_reporter=None,
             playback_stopper=None,
             playback_history_loader=None,
             playback_history_saver=None,
+            initial_log_message="",
+            is_placeholder=False,
         ):
             time.sleep(0.15)
             return super().create_session(
@@ -242,10 +254,14 @@ def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monk
                 use_local_history=use_local_history,
                 restore_history=restore_history,
                 playback_loader=playback_loader,
+                async_playback_loader=async_playback_loader,
+                danmaku_controller=danmaku_controller,
                 playback_progress_reporter=playback_progress_reporter,
                 playback_stopper=playback_stopper,
                 playback_history_loader=playback_history_loader,
                 playback_history_saver=playback_history_saver,
+                initial_log_message=initial_log_message,
+                is_placeholder=is_placeholder,
             )
 
     class RecordingPlayerWindow:
@@ -435,11 +451,35 @@ def test_main_window_async_restore_session_creation_failure_resets_last_active_w
             use_local_history=True,
             restore_history=False,
             playback_loader=None,
+            async_playback_loader=False,
+            danmaku_controller=None,
             playback_progress_reporter=None,
             playback_stopper=None,
             playback_history_loader=None,
             playback_history_saver=None,
+            initial_log_message="",
+            is_placeholder=False,
         ):
+            del (
+                vod,
+                playlist,
+                clicked_index,
+                playlists,
+                playlist_index,
+                detail_resolver,
+                resolved_vod_by_id,
+                use_local_history,
+                restore_history,
+                playback_loader,
+                async_playback_loader,
+                danmaku_controller,
+                playback_progress_reporter,
+                playback_stopper,
+                playback_history_loader,
+                playback_history_saver,
+                initial_log_message,
+                is_placeholder,
+            )
             raise RuntimeError("session failed")
 
     saved = {"count": 0}
