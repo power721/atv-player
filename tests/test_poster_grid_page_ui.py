@@ -320,6 +320,26 @@ def test_poster_grid_page_renders_filter_options_as_checkable_buttons(qtbot) -> 
     assert buttons[0].isChecked() is True
 
 
+def test_poster_grid_page_filter_buttons_use_light_theme_stylesheet(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(FilterablePosterController(), click_action="open", search_enabled=True))
+
+    qtbot.waitUntil(lambda: page.selected_category_id == "movie")
+    page.filter_toggle_button.click()
+    qtbot.waitUntil(lambda: page.filter_panel.isHidden() is False)
+
+    button = page.filter_buttons["sc"][0]
+    stylesheet = button.styleSheet()
+
+    assert "background-color: #ffffff;" in stylesheet
+    assert "border: 1px solid #d0d0d0;" in stylesheet
+    assert "color: #1a1a1a;" in stylesheet
+    assert "QPushButton:hover" in stylesheet
+    assert "#e8e8e8" in stylesheet
+    assert "QPushButton:checked" in stylesheet
+    assert "#0066cc" in stylesheet
+    assert "#0080ff" in stylesheet
+
+
 def test_poster_grid_page_uses_plugin_empty_filter_button_without_extra_default(qtbot) -> None:
     page = show_loaded_page(qtbot, PosterGridPage(EmptyValueFilterPosterController(), click_action="open", search_enabled=True))
 
@@ -351,6 +371,30 @@ def test_poster_grid_page_clicking_filter_button_selects_it_and_reloads(qtbot) -
     assert default_button.isChecked() is False
     assert action_button.isChecked() is True
     assert page.current_page == 1
+
+
+def test_poster_grid_page_sets_pointing_hand_cursor_for_all_clickable_buttons(qtbot) -> None:
+    page = show_loaded_page(
+        qtbot,
+        PosterGridPage(FilterablePosterController(), click_action="open", search_enabled=True, folder_navigation_enabled=True),
+    )
+
+    qtbot.waitUntil(lambda: page.selected_category_id == "movie")
+    qtbot.waitUntil(lambda: len(page.card_buttons) == 1)
+    page.filter_toggle_button.click()
+    qtbot.waitUntil(lambda: page.filter_panel.isHidden() is False)
+
+    clickable_buttons = [
+        page.search_button,
+        page.clear_button,
+        page.filter_toggle_button,
+        page.prev_page_button,
+        page.next_page_button,
+        page.card_buttons[0],
+        page.filter_buttons["sc"][0],
+    ]
+
+    assert all(button.cursor().shape() == Qt.CursorShape.PointingHandCursor for button in clickable_buttons)
 
 
 def test_poster_grid_page_expands_filters_and_reloads_page_one_on_change(qtbot) -> None:
@@ -456,6 +500,14 @@ def test_poster_grid_page_navigation_enabled_shows_root_breadcrumbs(qtbot) -> No
 
     assert page.breadcrumb_bar.isHidden() is False
     assert [button.text() for button in page.breadcrumb_buttons] == ["首页", "推荐"]
+
+
+def test_poster_grid_page_breadcrumb_buttons_use_pointing_hand_cursor(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(FakeDoubanController(), folder_navigation_enabled=True))
+
+    qtbot.waitUntil(lambda: len(page.breadcrumb_buttons) == 2)
+
+    assert all(button.cursor().shape() == Qt.CursorShape.PointingHandCursor for button in page.breadcrumb_buttons)
 
 
 def test_poster_grid_page_clicking_breadcrumb_emits_folder_navigation_request(qtbot) -> None:

@@ -185,6 +185,15 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._connect_async_signal(self._signals.unauthorized, self._handle_unauthorized)
         self._connect_async_signal(self._signals.poster_loaded, self._handle_poster_loaded)
 
+        for button in (
+            self.search_button,
+            self.clear_button,
+            self.filter_toggle_button,
+            self.prev_page_button,
+            self.next_page_button,
+        ):
+            self._set_button_cursor(button)
+
         self.category_list.setMinimumWidth(180)
         self.status_label.setWordWrap(True)
         self.breadcrumb_bar.setVisible(self._folder_navigation_enabled)
@@ -372,6 +381,8 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             button = QPushButton(option.name, container)
             button.setCheckable(True)
             button.setAutoExclusive(True)
+            self._set_button_cursor(button)
+            self._apply_filter_button_style(button)
             button.setProperty("filterKey", key)
             button.setProperty("filterValue", option.value)
             button.setChecked(option.value == selected_value)
@@ -386,6 +397,34 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         if not self.filter_buttons or self._search_mode:
             return
         self.filter_panel.setVisible(self.filter_panel.isHidden())
+
+    def _set_button_cursor(self, button: QPushButton | QToolButton) -> None:
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def _apply_filter_button_style(self, button: QPushButton) -> None:
+        button.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #ffffff;
+                color: #1a1a1a;
+                border: 1px solid #d0d0d0;
+                border-radius: 14px;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background-color: #e8e8e8;
+            }
+            QPushButton:checked {
+                background-color: #ffffff;
+                color: #0066cc;
+                border: 1px solid #0066cc;
+            }
+            QPushButton:checked:hover {
+                color: #0080ff;
+                border: 1px solid #0080ff;
+            }
+            """
+        )
 
     def _update_search_action_buttons(self) -> None:
         if not self._search_enabled:
@@ -622,7 +661,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             if index > 0:
                 self.breadcrumb_layout.addWidget(QLabel("/"))
             button = QPushButton(breadcrumb["label"])
-            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._set_button_cursor(button)
             button.setFlat(True)
             button.clicked.connect(
                 lambda _checked=False, current_index=index: self._handle_folder_breadcrumb_clicked(current_index)
@@ -645,7 +684,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         button.setToolTip(item.vod_name)
         button.setIconSize(self._CARD_POSTER_SIZE)
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._set_button_cursor(button)
         button.setStyleSheet("padding: 10px;")
         button.clicked.connect(lambda _checked=False, current_item=item: self._handle_card_clicked(current_item))
         return button

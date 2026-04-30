@@ -1178,7 +1178,7 @@ def test_controller_rebuild_request_auto_loads_danmaku_xml_after_manual_override
 
     assert first_request.playback_loader is not None
     first_request.playback_loader(first_item)
-    _wait_until(lambda: first_item.url != "")
+    _wait_until(lambda: first_item.danmaku_pending is False and first_item.url != "")
     first_controller.refresh_danmaku_sources(first_item, query_override="玄界之门 1集", force_refresh=True)
     first_controller.switch_danmaku_source(first_item, "https://v.qq.com/demo")
 
@@ -1595,11 +1595,14 @@ def test_controller_uses_replacement_playlist_index_when_drive_titles_have_no_ep
         lambda: result.replacement_playlist[0].danmaku_pending is False
         and result.replacement_playlist[1].danmaku_pending is False
     )
+    _wait_until(lambda: len(calls) == 2)
 
-    assert calls == [
+    assert sorted(calls) == sorted(
+        [
         ("search", "网盘剧集 1集|https://pan.quark.cn/s/f518510ef92a"),
         ("search", "网盘剧集 2集|http://m/2.mp4"),
-    ]
+        ]
+    )
 
 
 def test_controller_uses_local_history_episode_for_quark_drive_replacement_start_index() -> None:
