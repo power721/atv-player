@@ -266,7 +266,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._pending_playback_prepare: _PendingPlaybackPrepare | None = None
         self._video_context_menu: QMenu | None = None
         self._danmaku_source_dialog: QDialog | None = None
-        self._danmaku_source_query_edit: QLineEdit | None = None
+        self._danmaku_source_title_edit: QLineEdit | None = None
+        self._danmaku_source_episode_edit: QLineEdit | None = None
         self._danmaku_source_provider_list: QListWidget | None = None
         self._danmaku_source_option_list: QListWidget | None = None
         self._danmaku_source_rerun_button: QPushButton | None = None
@@ -2486,8 +2487,18 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         dialog.setWindowTitle("弹幕源")
         dialog.resize(760, 480)
         layout = QVBoxLayout(dialog)
-        self._danmaku_source_query_edit = QLineEdit(dialog)
-        layout.addWidget(self._danmaku_source_query_edit)
+        search_row = QHBoxLayout()
+        title_column = QVBoxLayout()
+        title_column.addWidget(QLabel("媒体标题", dialog))
+        self._danmaku_source_title_edit = QLineEdit(dialog)
+        title_column.addWidget(self._danmaku_source_title_edit)
+        episode_column = QVBoxLayout()
+        episode_column.addWidget(QLabel("集数", dialog))
+        self._danmaku_source_episode_edit = QLineEdit(dialog)
+        episode_column.addWidget(self._danmaku_source_episode_edit)
+        search_row.addLayout(title_column, 2)
+        search_row.addLayout(episode_column, 1)
+        layout.addLayout(search_row)
         columns = QHBoxLayout()
         self._danmaku_source_provider_list = QListWidget(dialog)
         self._danmaku_source_option_list = QListWidget(dialog)
@@ -2576,8 +2587,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         ):
             self.session.danmaku_controller.load_cached_danmaku_sources(current_item)
         dialog = self._ensure_danmaku_source_dialog()
-        if self._danmaku_source_query_edit is not None:
-            self._danmaku_source_query_edit.setText(current_item.danmaku_search_query)
+        if self._danmaku_source_title_edit is not None:
+            self._danmaku_source_title_edit.setText(current_item.danmaku_search_title)
+        if self._danmaku_source_episode_edit is not None:
+            self._danmaku_source_episode_edit.setText(current_item.danmaku_search_episode)
         self._populate_danmaku_source_provider_list(current_item.danmaku_candidates)
         self._populate_danmaku_source_option_list(current_item.danmaku_candidates, current_item.selected_danmaku_provider)
         self._refresh_danmaku_source_dialog_actions(current_item)
@@ -2588,8 +2601,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _refresh_danmaku_source_dialog_from_item(self, current_item: PlayItem) -> None:
         if self._danmaku_source_dialog is None:
             return
-        if self._danmaku_source_query_edit is not None:
-            self._danmaku_source_query_edit.setText(current_item.danmaku_search_query)
+        if self._danmaku_source_title_edit is not None:
+            self._danmaku_source_title_edit.setText(current_item.danmaku_search_title)
+        if self._danmaku_source_episode_edit is not None:
+            self._danmaku_source_episode_edit.setText(current_item.danmaku_search_episode)
         self._populate_danmaku_source_provider_list(current_item.danmaku_candidates)
         self._populate_danmaku_source_option_list(current_item.danmaku_candidates, current_item.selected_danmaku_provider)
         self._refresh_danmaku_source_dialog_actions(current_item)
@@ -2648,11 +2663,19 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return 0
 
     def _rerun_current_item_danmaku_search(self) -> None:
-        if self.session is None or self.session.danmaku_controller is None or self._danmaku_source_query_edit is None:
+        if (
+            self.session is None
+            or self.session.danmaku_controller is None
+            or self._danmaku_source_title_edit is None
+            or self._danmaku_source_episode_edit is None
+        ):
             return
         current_item = self.session.playlist[self.current_index]
-        query = self._danmaku_source_query_edit.text().strip()
-        current_item.danmaku_search_query = query
+        title = self._danmaku_source_title_edit.text().strip()
+        episode = self._danmaku_source_episode_edit.text().strip()
+        current_item.danmaku_search_title = title
+        current_item.danmaku_search_episode = episode
+        current_item.danmaku_search_query = " ".join(part for part in (title, episode) if part).strip()
         current_item.danmaku_search_query_overridden = True
         media_duration_seconds = self._current_media_duration_seconds()
         self._start_danmaku_source_task(
@@ -2660,7 +2683,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             error_prefix="弹幕源重新搜索失败",
             task=lambda: self.session.danmaku_controller.refresh_danmaku_sources(
                 current_item,
-                query_override=query,
+                search_title_override=title,
+                search_episode_override=episode,
                 force_refresh=True,
                 media_duration_seconds=media_duration_seconds,
             ),
@@ -2670,6 +2694,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self.session is None or self.session.danmaku_controller is None:
             return
         current_item = self.session.playlist[self.current_index]
+        current_item.danmaku_search_title = ""
+        current_item.danmaku_search_episode = ""
+        current_item.danmaku_search_query = ""
+        current_item.danmaku_search_query_overridden = False
         media_duration_seconds = self._current_media_duration_seconds()
         self._start_danmaku_source_task(
             current_item,

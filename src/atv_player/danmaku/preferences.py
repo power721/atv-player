@@ -31,6 +31,7 @@ class DanmakuSeriesPreferenceStore:
             "provider": preference.provider,
             "page_url": preference.page_url,
             "title": preference.title,
+            "search_title": preference.search_title,
             "updated_at": preference.updated_at or int(time.time()),
         }
         self._path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")

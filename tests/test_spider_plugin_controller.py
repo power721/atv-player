@@ -7,6 +7,8 @@ import atv_player.danmaku.cache as danmaku_cache_module
 import atv_player.plugins.controller as controller_module
 from atv_player.api import ApiError
 from atv_player.danmaku.models import DanmakuSearchItem, DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
+from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
+from atv_player.danmaku.service import build_danmaku_series_key
 from atv_player.plugins.controller import SpiderPluginController
 from atv_player.models import CategoryFilter, CategoryFilterOption, PlayItem
 
@@ -680,6 +682,180 @@ def test_controller_research_danmaku_uses_temporary_query_only_for_current_item(
     assert item.danmaku_search_query == "红果短剧 腾讯版"
     assert item.danmaku_search_query_overridden is True
     assert calls[-1] == "红果短剧 腾讯版"
+
+
+def test_controller_refresh_danmaku_sources_uses_saved_search_title_for_same_series(tmp_path) -> None:
+    class FakeDanmakuService:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            self.calls.append(name)
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[DanmakuSourceOption(provider="tencent", name="候选", url="https://v.qq.com/demo")],
+                    )
+                ],
+                default_option_url="https://v.qq.com/demo",
+                default_provider="tencent",
+            )
+
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    series_key = build_danmaku_series_key("玄界之门")
+    store.save(
+        controller_module.DanmakuSeriesPreference(
+            series_key=series_key,
+            provider="tencent",
+            page_url="https://v.qq.com/old",
+            title="旧标题",
+            search_title="玄界之门 特别版",
+            updated_at=1,
+        )
+    )
+    service = FakeDanmakuService()
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="玄界之门3D版",
+        search_enabled=True,
+        danmaku_service=service,
+        danmaku_preference_store=store,
+    )
+    item = PlayItem(title="第2集", url="https://stream.example/2.m3u8", media_title="玄界之门", vod_id="2")
+
+    controller.refresh_danmaku_sources(item)
+
+    assert service.calls == ["玄界之门 特别版 2集"]
+    assert item.danmaku_search_title == "玄界之门 特别版"
+    assert item.danmaku_search_episode == "2集"
+    assert item.danmaku_search_query == "玄界之门 特别版 2集"
+
+
+def test_controller_refresh_danmaku_sources_persists_search_title_only_after_successful_search(tmp_path) -> None:
+    class SuccessfulDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[DanmakuSourceOption(provider="tencent", name="候选", url="https://v.qq.com/demo")],
+                    )
+                ],
+                default_option_url="https://v.qq.com/demo",
+                default_provider="tencent",
+            )
+
+    class FailingDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            raise RuntimeError("boom")
+
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    series_key = build_danmaku_series_key("玄界之门")
+    success_controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="玄界之门3D版",
+        search_enabled=True,
+        danmaku_service=SuccessfulDanmakuService(),
+        danmaku_preference_store=store,
+    )
+    success_item = PlayItem(title="第1集", url="https://stream.example/1.m3u8", media_title="玄界之门", vod_id="1")
+
+    success_controller.refresh_danmaku_sources(
+        success_item,
+        search_title_override="玄界之门 特别版",
+        search_episode_override="1集",
+        force_refresh=True,
+    )
+
+    saved = store.load(series_key)
+    assert saved is not None
+    assert saved.search_title == "玄界之门 特别版"
+    assert saved.provider == ""
+    assert saved.page_url == ""
+
+    failing_controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="玄界之门3D版",
+        search_enabled=True,
+        danmaku_service=FailingDanmakuService(),
+        danmaku_preference_store=store,
+    )
+    failing_item = PlayItem(title="第2集", url="https://stream.example/2.m3u8", media_title="玄界之门", vod_id="2")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        failing_controller.refresh_danmaku_sources(
+            failing_item,
+            search_title_override="失败标题",
+            search_episode_override="2集",
+            force_refresh=True,
+        )
+
+    assert store.load(series_key).search_title == "玄界之门 特别版"
+
+
+def test_controller_switch_danmaku_source_persists_search_title(tmp_path) -> None:
+    class FakeDanmakuService:
+        def resolve_danmu(self, page_url: str) -> str:
+            return '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">ok</d></i>'
+
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    series_key = build_danmaku_series_key("玄界之门")
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="玄界之门3D版",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+        danmaku_preference_store=store,
+    )
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/1.m3u8",
+        media_title="玄界之门",
+        vod_id="1",
+        danmaku_series_key=series_key,
+        danmaku_search_title="玄界之门 特别版",
+        danmaku_search_episode="1集",
+        danmaku_search_query="玄界之门 特别版 1集",
+        danmaku_candidates=[
+            DanmakuSourceGroup(
+                provider="tencent",
+                provider_label="腾讯",
+                options=[DanmakuSourceOption(provider="tencent", name="玄界之门 第1集", url="https://v.qq.com/demo")],
+            )
+        ],
+    )
+
+    controller.switch_danmaku_source(item, "https://v.qq.com/demo")
+
+    saved = store.load(series_key)
+    assert saved is not None
+    assert saved.search_title == "玄界之门 特别版"
+    assert saved.provider == "tencent"
+    assert saved.page_url == "https://v.qq.com/demo"
 
 
 def test_controller_uses_cached_danmaku_source_search_result_without_network_lookup(monkeypatch) -> None:

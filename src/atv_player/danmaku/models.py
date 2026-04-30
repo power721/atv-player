@@ -59,4 +59,5 @@ class DanmakuSeriesPreference:
     provider: str
     page_url: str
     title: str
-    updated_at: int
+    search_title: str = ""
+    updated_at: int = 0

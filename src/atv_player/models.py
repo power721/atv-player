@@ -51,6 +51,8 @@ class PlayItem:
     danmaku_xml: str = ""
     danmaku_pending: bool = False
     danmaku_series_key: str = ""
+    danmaku_search_title: str = ""
+    danmaku_search_episode: str = ""
     danmaku_search_query: str = ""
     danmaku_search_query_overridden: bool = False
     danmaku_candidates: list[DanmakuSourceGroup] = field(default_factory=list)
