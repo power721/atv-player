@@ -6,7 +6,7 @@ from typing import cast
 
 from PySide6.QtCore import QObject, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtGui import QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
@@ -359,7 +359,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
                 continue
             selected_value = state.get(group.key, "")
             buttons_widget = self._build_filter_buttons(group.key, group.options, selected_value)
-            self.filter_panel_layout.addRow(group.name, buttons_widget)
+            self.filter_panel_layout.addRow(self._build_filter_group_label(group.name), buttons_widget)
         if not self.filter_buttons or self._search_mode:
             self.filter_toggle_button.setHidden(True)
             self.filter_panel.hide()
@@ -392,6 +392,14 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
 
         self.filter_buttons[key] = buttons
         return container
+
+    def _build_filter_group_label(self, name: str) -> QLabel:
+        label = QLabel(name, self.filter_panel)
+        font = label.font()
+        font.setWeight(QFont.Weight.Bold)
+        label.setFont(font)
+        label.setStyleSheet("color: #0066cc;")
+        return label
 
     def _toggle_filters(self) -> None:
         if not self.filter_buttons or self._search_mode:

@@ -340,6 +340,23 @@ def test_poster_grid_page_filter_buttons_use_light_theme_stylesheet(qtbot) -> No
     assert "#0080ff" in stylesheet
 
 
+def test_poster_grid_page_filter_group_labels_use_bold_blue_text(qtbot) -> None:
+    page = show_loaded_page(qtbot, PosterGridPage(FilterablePosterController(), click_action="open", search_enabled=True))
+
+    qtbot.waitUntil(lambda: page.selected_category_id == "movie")
+    page.filter_toggle_button.click()
+    qtbot.waitUntil(lambda: page.filter_panel.isHidden() is False)
+
+    label_item = page.filter_panel_layout.itemAt(0, page.filter_panel_layout.ItemRole.LabelRole)
+    assert label_item is not None
+    label = label_item.widget()
+
+    assert label is not None
+    assert label.text() == "影视类型"
+    assert "color: #0066cc;" in label.styleSheet()
+    assert label.font().bold() is True
+
+
 def test_poster_grid_page_uses_plugin_empty_filter_button_without_extra_default(qtbot) -> None:
     page = show_loaded_page(qtbot, PosterGridPage(EmptyValueFilterPosterController(), click_action="open", search_enabled=True))
 
