@@ -2993,6 +2993,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             (QKeySequence(Qt.Key.Key_Enter), self.toggle_fullscreen),
             (QKeySequence("W"), self.wide_button.click),
             (QKeySequence("D"), self._open_danmaku_source_dialog),
+            (QKeySequence("I"), self._toggle_video_info_from_menu),
             (QKeySequence("M"), self._toggle_mute),
             (QKeySequence("-"), lambda: self._step_speed(-1)),
             (QKeySequence("+"), lambda: self._step_speed(1)),
@@ -3448,6 +3449,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         if key_text == "d":
             self._open_danmaku_source_dialog()
+            event.accept()
+            return
+        if key_text == "i":
+            self._toggle_video_info_from_menu()
             event.accept()
             return
         if key_text == "-":

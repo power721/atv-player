@@ -82,6 +82,7 @@ class RecordingVideo:
         self.pause_calls = 0
         self.resume_calls = 0
         self.toggle_mute_calls = 0
+        self.toggle_video_info_calls = 0
         self.seek_relative_calls: list[int] = []
         self.set_speed_calls: list[float] = []
         self.set_volume_calls: list[int] = []
@@ -103,6 +104,9 @@ class RecordingVideo:
 
     def toggle_mute(self) -> None:
         self.toggle_mute_calls += 1
+
+    def toggle_video_info(self) -> None:
+        self.toggle_video_info_calls += 1
 
     def seek_relative(self, seconds: int) -> None:
         self.seek_relative_calls.append(seconds)
@@ -7464,6 +7468,7 @@ def test_player_window_f1_opens_shortcut_help_dialog(qtbot) -> None:
     assert ("Enter", "切换全屏") in rows
     assert ("W", "切换宽屏") in rows
     assert ("D", "打开弹幕源") in rows
+    assert ("I", "显示视频信息") in rows
 
 
 def test_player_window_reuses_existing_shortcut_help_dialog(qtbot) -> None:
@@ -7570,6 +7575,9 @@ def test_player_window_keyboard_shortcuts_control_playback_navigation_and_view(q
 
     send_key(window, Qt.Key.Key_D, text="d")
     qtbot.waitUntil(lambda: len(visible_danmaku_source_dialogs()) == 1)
+
+    send_key(window, Qt.Key.Key_I, text="i")
+    assert video.toggle_video_info_calls == 1
 
     send_key(window, Qt.Key.Key_Minus, text="-")
     assert window.current_speed == 0.75
