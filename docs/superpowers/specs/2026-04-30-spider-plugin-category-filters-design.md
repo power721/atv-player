@@ -119,12 +119,14 @@ Expanded filter content is rendered as one labeled single-select button group pe
   - selected and hovered: brighter blue border and text
 - Keep the button silhouette compact and tag-like so the filters remain visually lighter than poster cards.
 
-### Poster-grid cursor behavior
+### Application-wide button cursor behavior
 
-All clickable buttons in `PosterGridPage` use `setCursor(Qt.CursorShape.PointingHandCursor)`.
+The application applies `setCursor(Qt.CursorShape.PointingHandCursor)` to all `QPushButton` and `QToolButton` instances at the application layer instead of handling cursor setup page-by-page.
 
-- This includes filter option buttons, `搜索`, `清空`, `筛选`, pagination buttons, breadcrumb buttons, and poster card buttons.
-- Non-interactive widgets keep their default cursor so the page does not imply clickability where none exists.
+- The rule applies across the full app, including poster-grid pages, browse pages, dialogs, management windows, player controls implemented as buttons, and dynamically created buttons.
+- The implementation should live near application startup so newly created buttons inherit the same cursor behavior without per-screen duplication.
+- Non-button widgets such as labels, sliders, progress bars, and list items keep their existing cursor behavior.
+- System window chrome is out of scope because it is not managed by the app's Qt widget tree.
 
 ### Filter state and reload behavior
 
@@ -155,7 +157,7 @@ The page passes the selected category's current filter dictionary into `controll
 - Expanding a filtered category renders button-style single-select controls from the category definition.
 - Plugin-provided empty-value options are displayed directly and do not get duplicated by the synthetic default option.
 - Filter option buttons expose the expected local stylesheet fragments for default, hover, and checked states.
-- All clickable buttons in `PosterGridPage` expose the pointing-hand cursor.
+- Buttons across multiple application pages and dialogs expose the pointing-hand cursor by default.
 - Changing a filter reloads page 1 with the selected filter dictionary.
 - Filter selections are remembered per category when switching categories.
 - Entering search mode hides category filters.
