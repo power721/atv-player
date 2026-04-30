@@ -60,6 +60,11 @@ class _EmptyJellyfinController(_EmptyDoubanController):
         raise ValueError(f"没有可播放的项目: {vod_id}")
 
 
+class _EmptyFeiniuController(_EmptyDoubanController):
+    def build_request(self, vod_id: str):
+        raise ValueError(f"没有可播放的项目: {vod_id}")
+
+
 def _plugin_value(definition: Any, key: str):
     if isinstance(definition, dict):
         return definition.get(key)
@@ -115,11 +120,13 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             live_source_manager=None,
             emby_controller=None,
             jellyfin_controller=None,
+            feiniu_controller=None,
             spider_plugins=None,
             plugin_manager=None,
             drive_detail_loader=None,
             show_emby_tab: bool = True,
             show_jellyfin_tab: bool = True,
+            show_feiniu_tab: bool = True,
             m3u8_ad_filter=None,
             playback_parser_service=None,
     ) -> None:
@@ -165,12 +172,21 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 search_enabled=True,
                 folder_navigation_enabled=True,
             )
+        self.feiniu_page = None
+        if show_feiniu_tab:
+            self.feiniu_page = PosterGridPage(
+                feiniu_controller or _EmptyFeiniuController(),
+                click_action="open",
+                search_enabled=True,
+                folder_navigation_enabled=True,
+            )
         self.history_page = HistoryPage(history_controller)
         self.browse_controller = browse_controller
         self.telegram_controller = telegram_controller or _EmptyTelegramController()
         self.live_controller = live_controller or _EmptyLiveController()
         self.emby_controller = emby_controller or _EmptyEmbyController()
         self.jellyfin_controller = jellyfin_controller or _EmptyJellyfinController()
+        self.feiniu_controller = feiniu_controller or _EmptyFeiniuController()
         self.player_controller = player_controller
         self.player_window: PlayerWindow | None = None
         self.help_dialog: ShortcutHelpDialog | None = None
@@ -210,6 +226,8 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             self.nav_tabs.addTab(self.emby_page, "Emby")
         if self.jellyfin_page is not None:
             self.nav_tabs.addTab(self.jellyfin_page, "Jellyfin")
+        if self.feiniu_page is not None:
+            self.nav_tabs.addTab(self.feiniu_page, "Feiniu")
         self.nav_tabs.addTab(self.browse_page, "文件浏览")
         self.nav_tabs.addTab(self.history_page, "播放记录")
         self._rebuild_spider_plugin_tabs()
@@ -269,6 +287,18 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                     index,
                 )
             )
+        if self.feiniu_page is not None:
+            feiniu_page = self.feiniu_page
+            feiniu_page.item_open_requested.connect(self._handle_feiniu_item_open_requested)
+            feiniu_page.folder_breadcrumb_requested.connect(
+                lambda node_id, kind, index, page=feiniu_page: self._handle_media_breadcrumb_requested(
+                    page,
+                    self.feiniu_controller,
+                    node_id,
+                    kind,
+                    index,
+                )
+            )
 
         self.douban_page.unauthorized.connect(self.logout_requested.emit)
         self.telegram_page.unauthorized.connect(self.logout_requested.emit)
@@ -277,6 +307,8 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             self.emby_page.unauthorized.connect(self.logout_requested.emit)
         if self.jellyfin_page is not None:
             self.jellyfin_page.unauthorized.connect(self.logout_requested.emit)
+        if self.feiniu_page is not None:
+            self.feiniu_page.unauthorized.connect(self.logout_requested.emit)
         self.browse_page.unauthorized.connect(self.logout_requested.emit)
         self.history_page.unauthorized.connect(self.logout_requested.emit)
         self.quit_shortcut = QShortcut(QKeySequence.StandardKey.Quit, self)
@@ -313,6 +345,9 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             return
         if widget is self.jellyfin_page and self.jellyfin_page is not None:
             self.jellyfin_page.ensure_loaded()
+            return
+        if widget is self.feiniu_page and self.feiniu_page is not None:
+            self.feiniu_page.ensure_loaded()
             return
         for page, _controller, _plugin_id in self._plugin_pages:
             if widget is page:
@@ -361,6 +396,16 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
                 self._open_media_folder(self.jellyfin_page, self.jellyfin_controller, item)
             return
         self._handle_jellyfin_open_requested(item.vod_id)
+
+    def _handle_feiniu_open_requested(self, vod_id: str) -> None:
+        self._start_open_request(lambda: self.feiniu_controller.build_request(vod_id))
+
+    def _handle_feiniu_item_open_requested(self, item) -> None:
+        if getattr(item, "vod_tag", "") == "folder":
+            if self.feiniu_page is not None:
+                self._open_media_folder(self.feiniu_page, self.feiniu_controller, item)
+            return
+        self._handle_feiniu_open_requested(item.vod_id)
 
     def _rebuild_spider_plugin_tabs(self) -> None:
         for page, _controller, _plugin_id in self._plugin_pages:
@@ -529,6 +574,9 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             return
         if record.source_kind == "jellyfin":
             self._start_open_request(lambda: self.jellyfin_controller.build_request(record.key))
+            return
+        if record.source_kind == "feiniu":
+            self._start_open_request(lambda: self.feiniu_controller.build_request(record.key))
             return
         self._start_open_request(lambda: self.browse_controller.build_request_from_detail(record.key))
 

@@ -126,6 +126,25 @@ class FakeJellyfinController(FakeDoubanController):
         return [VodItem(vod_id="jf-child-1", vod_name="Episode 1", vod_tag="file")], 1
 
 
+class FakeFeiniuController(FakeDoubanController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.folder_calls: list[str] = []
+
+    def build_request(self, vod_id: str):
+        return OpenPlayerRequest(
+            vod=VodItem(vod_id=vod_id, vod_name="Feiniu Movie"),
+            playlist=[PlayItem(title="Episode 1", url="", vod_id="ep-feiniu-1")],
+            clicked_index=0,
+            source_mode="detail",
+            source_vod_id=vod_id,
+        )
+
+    def load_folder_items(self, vod_id: str):
+        self.folder_calls.append(vod_id)
+        return [VodItem(vod_id="fn-child-1", vod_name="Episode 1", vod_tag="file")], 1
+
+
 class AsyncRequestController(FakeDoubanController):
     def __init__(self, request_factory) -> None:
         super().__init__()
@@ -439,14 +458,15 @@ def test_main_window_starts_on_douban_tab(qtbot) -> None:
     window.show()
 
     assert window.nav_tabs.currentIndex() == 0
-    assert window.nav_tabs.count() == 7
+    assert window.nav_tabs.count() == 8
     assert window.nav_tabs.tabText(0) == "豆瓣电影"
     assert window.nav_tabs.tabText(1) == "电报影视"
     assert window.nav_tabs.tabText(2) == "网络直播"
     assert window.nav_tabs.tabText(3) == "Emby"
     assert window.nav_tabs.tabText(4) == "Jellyfin"
-    assert window.nav_tabs.tabText(5) == "文件浏览"
-    assert window.nav_tabs.tabText(6) == "播放记录"
+    assert window.nav_tabs.tabText(5) == "Feiniu"
+    assert window.nav_tabs.tabText(6) == "文件浏览"
+    assert window.nav_tabs.tabText(7) == "播放记录"
 
 
 def test_app_coordinator_passes_loaded_spider_plugins_into_main_window(qtbot, monkeypatch, tmp_path) -> None:
@@ -489,7 +509,7 @@ def test_app_coordinator_passes_loaded_spider_plugins_into_main_window(qtbot, mo
     widget = coordinator._show_main()
     qtbot.addWidget(widget)
 
-    assert widget.nav_tabs.tabText(5) == "红果短剧"
+    assert widget.nav_tabs.tabText(6) == "红果短剧"
     assert callable(captured_loader["value"])
 
 
@@ -593,19 +613,21 @@ def test_http_text_client_follows_redirects_for_live_source_byte_requests() -> N
     assert api_client.calls == ["https://example.com/e9.xml.gz"]
 
 
-def test_main_window_hides_emby_and_jellyfin_tabs_when_disabled(qtbot) -> None:
+def test_main_window_hides_emby_jellyfin_and_feiniu_tabs_when_disabled(qtbot) -> None:
     window = MainWindow(
         douban_controller=FakeDoubanController(),
         telegram_controller=FakeTelegramController(),
         live_controller=FakeLiveController(),
         emby_controller=FakeEmbyController(),
         jellyfin_controller=FakeJellyfinController(),
+        feiniu_controller=FakeFeiniuController(),
         browse_controller=FakeBrowseController(),
         history_controller=FakeHistoryController(),
         player_controller=FakePlayerController(),
         config=AppConfig(),
         show_emby_tab=False,
         show_jellyfin_tab=False,
+        show_feiniu_tab=False,
     )
 
     qtbot.addWidget(window)
@@ -1236,6 +1258,24 @@ def test_main_window_enables_search_controls_for_emby_page(qtbot) -> None:
     assert window.emby_page.keyword_edit.isHidden() is False
 
 
+def test_main_window_enables_search_controls_for_feiniu_page(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        feiniu_controller=FakeFeiniuController(),
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+
+    assert window.feiniu_page.keyword_edit.isHidden() is False
+
+
 def test_main_window_opens_player_from_emby_card_signal(qtbot, monkeypatch) -> None:
     controller = FakeEmbyController()
     window = MainWindow(
@@ -1264,6 +1304,38 @@ def test_main_window_opens_player_from_emby_card_signal(qtbot, monkeypatch) -> N
     qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
     assert opened[0][0].vod.vod_name == "Emby Movie"
     assert opened[0][0].source_vod_id == "1-3281"
+    assert opened[0][1] is False
+
+
+def test_main_window_opens_player_from_feiniu_card_signal(qtbot, monkeypatch) -> None:
+    controller = FakeFeiniuController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        feiniu_controller=controller,
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened: list[tuple[OpenPlayerRequest, bool]] = []
+    monkeypatch.setattr(
+        window,
+        "open_player",
+        lambda request, restore_paused_state=False: opened.append((request, restore_paused_state)),
+    )
+
+    window.feiniu_page.item_open_requested.emit(VodItem(vod_id="1-5001", vod_name="Episode 1", vod_tag="file"))
+
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=1000)
+    assert opened[0][0].vod.vod_name == "Feiniu Movie"
+    assert opened[0][0].source_vod_id == "1-5001"
     assert opened[0][1] is False
 
 
@@ -1299,6 +1371,41 @@ def test_main_window_emby_folder_click_loads_folder_in_current_tab(qtbot, monkey
     assert controller.folder_calls == ["folder-1"]
     assert shown[0][1:] == (1, 1, "当前文件夹暂无内容")
     assert shown[0][0][0].vod_id == "child-1"
+
+
+def test_main_window_feiniu_folder_click_loads_folder_in_current_tab(qtbot, monkeypatch) -> None:
+    controller = FakeFeiniuController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        feiniu_controller=controller,
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    opened = []
+    shown = []
+    monkeypatch.setattr(window, "open_player", lambda request, restore_paused_state=False: opened.append(request))
+    monkeypatch.setattr(
+        window.feiniu_page,
+        "show_items",
+        lambda items, total, page=1, empty_message="当前分类暂无内容": shown.append((items, total, page, empty_message)),
+    )
+
+    window.feiniu_page.item_open_requested.emit(VodItem(vod_id="folder-1", vod_name="Season 1", vod_tag="folder"))
+
+    qtbot.waitUntil(lambda: controller.folder_calls == ["folder-1"] and len(shown) == 1, timeout=1000)
+    assert opened == []
+    assert controller.folder_calls == ["folder-1"]
+    assert shown[0][1:] == (1, 1, "当前文件夹暂无内容")
+    assert shown[0][0][0].vod_id == "fn-child-1"
 
 
 def test_main_window_opens_player_from_live_card_signal(qtbot, monkeypatch) -> None:
@@ -1604,6 +1711,35 @@ def test_main_window_emby_breadcrumb_click_loads_category_root(qtbot, monkeypatc
 
     qtbot.waitUntil(lambda: controller.item_calls[-1] == ("suggestion", 1))
     qtbot.waitUntil(lambda: [button.text() for button in window.emby_page.breadcrumb_buttons] == ["首页", "推荐"])
+
+
+def test_main_window_feiniu_breadcrumb_click_loads_category_root(qtbot, monkeypatch) -> None:
+    controller = FakeFeiniuController()
+    window = MainWindow(
+        douban_controller=FakeDoubanController(),
+        telegram_controller=FakeTelegramController(),
+        live_controller=FakeLiveController(),
+        emby_controller=FakeEmbyController(),
+        jellyfin_controller=FakeJellyfinController(),
+        feiniu_controller=controller,
+        browse_controller=FakeBrowseController(),
+        history_controller=FakeHistoryController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    window.feiniu_page.ensure_loaded()
+
+    qtbot.waitUntil(lambda: controller.item_calls == [("suggestion", 1)])
+    monkeypatch.setattr(window.feiniu_page, "show_items", lambda items, total, page=1, empty_message="当前分类暂无内容": None)
+    window.feiniu_page.item_open_requested.emit(VodItem(vod_id="folder-1", vod_name="Season 1", vod_tag="folder"))
+    qtbot.waitUntil(lambda: [button.text() for button in window.feiniu_page.breadcrumb_buttons] == ["首页", "推荐", "Season 1"])
+
+    window.feiniu_page.breadcrumb_buttons[1].click()
+
+    qtbot.waitUntil(lambda: controller.item_calls[-1] == ("suggestion", 1))
+    qtbot.waitUntil(lambda: [button.text() for button in window.feiniu_page.breadcrumb_buttons] == ["首页", "推荐"])
 
 
 def test_main_window_jellyfin_folder_click_updates_breadcrumbs(qtbot, monkeypatch) -> None:
@@ -2774,7 +2910,7 @@ def test_app_coordinator_show_main_injects_shared_local_playback_history_reposit
             self.vod_token = vod_token
 
         def get_capabilities(self) -> dict[str, bool]:
-            return {"emby": True, "jellyfin": True}
+            return {"emby": True, "jellyfin": True, "feiniu": True}
 
     captured: dict[str, object] = {}
 
@@ -2795,6 +2931,11 @@ def test_app_coordinator_show_main_injects_shared_local_playback_history_reposit
             captured["jellyfin_loader"] = playback_history_loader
             captured["jellyfin_saver"] = playback_history_saver
 
+    class RecordingFeiniuController:
+        def __init__(self, api_client, playback_history_loader=None, playback_history_saver=None) -> None:
+            captured["feiniu_loader"] = playback_history_loader
+            captured["feiniu_saver"] = playback_history_saver
+
     class RecordingHistoryController:
         def __init__(self, api_client, playback_history_repository=None) -> None:
             captured["history_repository"] = playback_history_repository
@@ -2811,6 +2952,7 @@ def test_app_coordinator_show_main_injects_shared_local_playback_history_reposit
     monkeypatch.setattr(app_module, "SpiderPluginManager", RecordingSpiderPluginManager)
     monkeypatch.setattr(app_module, "EmbyController", RecordingEmbyController)
     monkeypatch.setattr(app_module, "JellyfinController", RecordingJellyfinController)
+    monkeypatch.setattr(app_module, "FeiniuController", RecordingFeiniuController)
     monkeypatch.setattr(app_module, "HistoryController", RecordingHistoryController)
     monkeypatch.setattr(app_module, "MainWindow", DummyMainWindow)
 
@@ -2828,6 +2970,9 @@ def test_app_coordinator_show_main_injects_shared_local_playback_history_reposit
     assert callable(captured["emby_saver"])
     assert callable(captured["jellyfin_loader"])
     assert callable(captured["jellyfin_saver"])
+    assert callable(captured["feiniu_loader"])
+    assert callable(captured["feiniu_saver"])
+    assert captured["window_kwargs"]["show_feiniu_tab"] is True
 
 
 def test_app_coordinator_starts_epg_and_remote_live_refresh_in_background(monkeypatch, tmp_path) -> None:

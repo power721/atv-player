@@ -15,6 +15,7 @@ from atv_player.custom_live_service import CustomLiveService
 from atv_player.controllers.browse_controller import BrowseController
 from atv_player.controllers.douban_controller import DoubanController
 from atv_player.controllers.emby_controller import EmbyController
+from atv_player.controllers.feiniu_controller import FeiniuController
 from atv_player.controllers.jellyfin_controller import JellyfinController
 from atv_player.controllers.live_controller import LiveController
 from atv_player.controllers.history_controller import HistoryController
@@ -288,14 +289,29 @@ class AppCoordinator(QObject):
                 source_name="Jellyfin",
             ),
         )
+        feiniu_controller = FeiniuController(
+            self._api_client,
+            playback_history_loader=None
+            if self._playback_history_repository is None
+            else lambda vod_id: self._playback_history_repository.get_history("feiniu", vod_id),
+            playback_history_saver=None
+            if self._playback_history_repository is None
+            else lambda vod_id, payload: self._playback_history_repository.save_history(
+                "feiniu",
+                vod_id,
+                payload,
+                source_name="飞牛影视",
+            ),
+        )
         browse_controller = BrowseController(self._api_client)
         history_controller = HistoryController(self._api_client, self._playback_history_repository)
         player_controller = PlayerController(self._api_client)
         self._start_live_background_refresh(live_source_manager, live_epg_service)
         logger.info(
-            "Show main window emby=%s jellyfin=%s spider_plugins=%s",
+            "Show main window emby=%s jellyfin=%s feiniu=%s spider_plugins=%s",
             bool(capabilities.get("emby")),
             bool(capabilities.get("jellyfin")),
+            bool(capabilities.get("feiniu")),
             len(spider_plugins),
         )
         self.main_window = MainWindow(
@@ -310,11 +326,13 @@ class AppCoordinator(QObject):
             live_source_manager=live_source_manager,
             emby_controller=emby_controller,
             jellyfin_controller=jellyfin_controller,
+            feiniu_controller=feiniu_controller,
             spider_plugins=spider_plugins,
             plugin_manager=self._plugin_manager,
             drive_detail_loader=drive_detail_loader,
             show_emby_tab=bool(capabilities.get("emby")),
             show_jellyfin_tab=bool(capabilities.get("jellyfin")),
+            show_feiniu_tab=bool(capabilities.get("feiniu")),
             m3u8_ad_filter=self._m3u8_ad_filter,
             playback_parser_service=self._playback_parser_service,
         )
