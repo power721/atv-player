@@ -794,6 +794,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._reset_subtitle_combo()
         self._reset_danmaku_combo()
         self._reset_audio_combo()
+        self._refresh_parse_combo_enabled_state()
         if session.initial_log_message:
             self._append_log(session.initial_log_message)
         if not session.playlist:
@@ -959,12 +960,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._clear_manual_subtitle_switch_refresh()
         self._clear_active_danmaku()
         self._reset_danmaku_combo()
+        self._refresh_parse_combo_enabled_state()
         if not self._prepare_current_play_item(
             previous_index=self.current_index if previous_index is None else previous_index,
             start_position_seconds=start_position_seconds,
             pause=pause,
         ):
             return
+        self._refresh_parse_combo_enabled_state()
         self._start_current_item_playback(start_position_seconds=start_position_seconds, pause=pause)
 
     def _format_metadata_text(self, vod) -> str:
@@ -1038,7 +1041,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             )
             self._refresh_window_title()
         except Exception:
-            self._restore_current_index(previous_index)
+            self._restore_or_keep_current_index_after_failure(previous_index)
             raise
 
     def _clear_poster(self) -> None:
@@ -1259,6 +1262,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.current_index = previous_index
         self.playlist.setCurrentRow(previous_index)
         self._refresh_window_title()
+        self._refresh_parse_combo_enabled_state()
+
+    def _restore_or_keep_current_index_after_failure(self, previous_index: int) -> None:
+        if self._current_item_requires_parse():
+            self.playlist.setCurrentRow(self.current_index)
+            self._refresh_window_title()
+            self._refresh_parse_combo_enabled_state()
+            return
+        self._restore_current_index(previous_index)
 
     def _handle_play_item_resolve_succeeded(self, request_id: int, resolved_vod: VodItem | None) -> None:
         if request_id != self._play_item_request_id:
@@ -1312,9 +1324,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self.session is None or self.current_index != pending_loader.index:
             return
         self._apply_playback_loader_result(load_result)
+        self._refresh_parse_combo_enabled_state()
         current_item = self.session.playlist[self.current_index]
         if not current_item.url:
-            self._restore_current_index(pending_loader.previous_index)
+            self._restore_or_keep_current_index_after_failure(pending_loader.previous_index)
             self._append_log(f"播放失败: 没有可用的播放地址: {current_item.title}")
             return
         try:
@@ -1329,7 +1342,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 pause=pending_loader.pause,
             )
         except Exception as exc:
-            self._restore_current_index(pending_loader.previous_index)
+            self._restore_or_keep_current_index_after_failure(pending_loader.previous_index)
             self._append_log(f"播放失败: {exc}")
 
     def _handle_playback_loader_failed(self, request_id: int, message: str) -> None:
@@ -1339,7 +1352,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._pending_playback_loader = None
         if pending_loader is None:
             return
-        self._restore_current_index(pending_loader.previous_index)
+        self._restore_or_keep_current_index_after_failure(pending_loader.previous_index)
         self._append_log(f"播放失败: {message}")
 
     def _handle_playback_prepare_succeeded(self, request_id: int, prepared_url: str) -> None:
@@ -1590,6 +1603,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         preferred_parse_key = "" if self.config is None else getattr(self.config, "preferred_parse_key", "")
         preferred_index = self.parse_combo.findData(preferred_parse_key)
         self.parse_combo.setCurrentIndex(preferred_index if preferred_index >= 0 else 0)
+        self.parse_combo.setEnabled(False)
         self.parse_combo.blockSignals(False)
 
     def _change_parse_selection(self, index: int) -> None:
@@ -1642,6 +1656,16 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.config.preferred_danmaku_enabled = enabled
         self.config.preferred_danmaku_line_count = line_count
         self._save_config()
+
+    def _current_item_requires_parse(self) -> bool:
+        if self.session is None:
+            return False
+        if not (0 <= self.current_index < len(self.session.playlist)):
+            return False
+        return bool(getattr(self.session.playlist[self.current_index], "parse_required", False))
+
+    def _refresh_parse_combo_enabled_state(self) -> None:
+        self.parse_combo.setEnabled(self._current_item_requires_parse())
 
     def _mark_manual_subtitle_switch_refresh(self) -> None:
         self._manual_subtitle_switch_refresh_until = (

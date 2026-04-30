@@ -2285,6 +2285,55 @@ def test_player_window_exposes_parse_combo_with_builtin_entries(qtbot) -> None:
         "mg1",
         "tx1",
     ]
+    assert window.parse_combo.isEnabled() is False
+
+
+def test_player_window_enables_parse_combo_for_current_parse_required_item(qtbot) -> None:
+    class FakeParserService:
+        def parsers(self):
+            return [type("Parser", (), {"key": "jx1", "label": "jx1"})()]
+
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(), playback_parser_service=FakeParserService())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[PlayItem(title="Episode 1", url="https://media.example/1.m3u8", parse_required=True)],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+
+    window.open_session(session)
+
+    assert window.parse_combo.isEnabled() is True
+
+
+def test_player_window_disables_parse_combo_when_switching_to_non_parse_item(qtbot) -> None:
+    class FakeParserService:
+        def parsers(self):
+            return [type("Parser", (), {"key": "jx1", "label": "jx1"})()]
+
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(), playback_parser_service=FakeParserService())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[
+            PlayItem(title="Episode 1", url="https://media.example/1.m3u8", parse_required=True),
+            PlayItem(title="Episode 2", url="https://media.example/2.m3u8"),
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+
+    window.open_session(session)
+    assert window.parse_combo.isEnabled() is True
+
+    window._play_item_at_index(1)
+
+    assert window.parse_combo.isEnabled() is False
 
 
 def test_player_window_saves_preferred_parse_key_when_user_selects_parser(qtbot) -> None:
@@ -2305,6 +2354,7 @@ def test_player_window_saves_preferred_parse_key_when_user_selects_parser(qtbot)
         playback_parser_service=FakeParserService(),
     )
     qtbot.addWidget(window)
+    window.parse_combo.setEnabled(True)
 
     window.parse_combo.setCurrentIndex(2)
 
@@ -6652,6 +6702,42 @@ def test_player_window_loads_play_item_via_async_session_loader_without_blocking
         lambda: window.video.load_calls == [("http://emby/1.mp4", False, 0, {"User-Agent": "Yamby"})],
         timeout=1000,
     )
+
+
+def test_player_window_keeps_failed_async_parse_item_selected_and_parse_combo_enabled(qtbot) -> None:
+    class FakeParserService:
+        def parsers(self):
+            return [type("Parser", (), {"key": "jx1", "label": "jx1"})()]
+
+    ready = threading.Event()
+
+    def load_item(item: PlayItem) -> None:
+        assert ready.wait(timeout=1)
+        item.parse_required = True
+        raise RuntimeError("parse failed")
+
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(), playback_parser_service=FakeParserService())
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = make_player_session(start_index=0)
+    session.playlist = [
+        PlayItem(title="Episode 1", url="http://m/1.m3u8"),
+        PlayItem(title="Episode 2", url="", vod_id="ep-2"),
+    ]
+
+    window.open_session(session)
+    assert window.video.load_calls == [("http://m/1.m3u8", 0)]
+    session.playback_loader = load_item
+    session.async_playback_loader = True
+    ready.set()
+
+    window.play_next()
+
+    qtbot.waitUntil(lambda: "播放失败: parse failed" in window.log_view.toPlainText())
+    assert window.current_index == 1
+    assert window.playlist.currentRow() == 1
+    assert window.parse_combo.isEnabled() is True
+    assert window.video.load_calls == [("http://m/1.m3u8", 0)]
 
 
 def test_player_window_replaces_active_route_playlist_when_playback_loader_returns_replacement(qtbot) -> None:

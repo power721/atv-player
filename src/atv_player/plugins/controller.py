@@ -675,6 +675,7 @@ class SpiderPluginController:
             )
             raise ValueError(str(exc)) from exc
         parse_required = int(payload.get("parse") or 0) == 1
+        item.parse_required = parse_required
         url = str(payload.get("url") or "").strip()
         if _looks_like_drive_share_link(url):
             if self._drive_detail_loader is None:

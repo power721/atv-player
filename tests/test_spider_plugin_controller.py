@@ -425,8 +425,22 @@ def test_controller_resolves_parse_required_player_content_via_parser_service() 
     request.playback_loader(first)
 
     assert parser_calls == [("备用线", "https://page.example/play/1", "jx1")]
+    assert first.parse_required is True
     assert first.url == "https://media.example/resolved.m3u8"
     assert first.headers == {"Referer": "https://page.example"}
+
+
+def test_controller_keeps_direct_play_items_parse_disabled() -> None:
+    controller = SpiderPluginController(FakeSpider(), plugin_name="红果短剧", search_enabled=True)
+
+    request = controller.build_request("/detail/1")
+    first = request.playlist[0]
+
+    assert request.playback_loader is not None
+    request.playback_loader(first)
+
+    assert first.parse_required is False
+    assert first.url == "https://stream.example/play/1.m3u8"
 
 
 def test_controller_raises_when_parse_required_without_parser_service() -> None:
