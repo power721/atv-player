@@ -137,6 +137,7 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         self._initial_load_started = False
         self.keyword_edit = QLineEdit()
         self.search_button = QPushButton("搜索")
+        self.search_refresh_button = QPushButton("刷新")
         self.filter_combo = QComboBox()
         self.clear_button = QPushButton("清空")
         self.results_table = QTableWidget(0, 2)
@@ -204,6 +205,7 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         top_search_controls = QHBoxLayout()
         top_search_controls.addWidget(self.keyword_edit)
         top_search_controls.addWidget(self.search_button)
+        top_search_controls.addWidget(self.search_refresh_button)
 
         result_actions = QHBoxLayout()
         result_actions.addWidget(self.filter_combo)
@@ -246,6 +248,7 @@ class BrowsePage(QWidget, AsyncGuardMixin):
         self.content_splitter.splitterMoved.connect(self._persist_content_splitter_state)
 
         self.search_button.clicked.connect(self.search)
+        self.search_refresh_button.clicked.connect(self.search)
         self.clear_button.clicked.connect(self.clear_results)
         self.filter_combo.currentIndexChanged.connect(self._apply_filter)
         self.results_table.cellDoubleClicked.connect(self._open_search_result)

@@ -49,6 +49,7 @@ class SearchPage(QWidget, AsyncGuardMixin):
         self.filter_combo = QComboBox()
         self.search_button = QPushButton("搜索")
         self.clear_button = QPushButton("清空")
+        self.refresh_button = QPushButton("刷新")
         self.results_table = QTableWidget(0, 2)
         self.results_table.setHorizontalHeaderLabels(["来源", "名称"])
         self.results_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -79,6 +80,7 @@ class SearchPage(QWidget, AsyncGuardMixin):
         top.addWidget(self.filter_combo)
         top.addWidget(self.search_button)
         top.addWidget(self.clear_button)
+        top.addWidget(self.refresh_button)
 
         self.content_container = QWidget()
         self.content_container.setMaximumWidth(1400)
@@ -99,6 +101,7 @@ class SearchPage(QWidget, AsyncGuardMixin):
 
         self.search_button.clicked.connect(self.search)
         self.clear_button.clicked.connect(self.clear_results)
+        self.refresh_button.clicked.connect(self.search)
         self.filter_combo.currentIndexChanged.connect(self._apply_filter)
         self.results_table.cellDoubleClicked.connect(self._open_selected)
 

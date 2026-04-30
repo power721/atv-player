@@ -144,6 +144,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self.keyword_edit = QLineEdit()
         self.search_button = QPushButton("搜索")
         self.clear_button = QPushButton("清空")
+        self.refresh_button = QPushButton("刷新")
         self.filter_toggle_button = QPushButton("筛选")
         self.filter_panel = QFrame()
         self.filter_panel_layout = QFormLayout(self.filter_panel)
@@ -188,6 +189,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         for button in (
             self.search_button,
             self.clear_button,
+            self.refresh_button,
             self.filter_toggle_button,
             self.prev_page_button,
             self.next_page_button,
@@ -207,12 +209,14 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
             search_row.addWidget(self.keyword_edit, 1)
             search_row.addWidget(self.search_button)
             search_row.addWidget(self.clear_button)
+            search_row.addWidget(self.refresh_button)
             search_row.addWidget(self.filter_toggle_button)
             right.addLayout(search_row)
         else:
             self.keyword_edit.hide()
             self.search_button.hide()
             self.clear_button.hide()
+            self.refresh_button.hide()
             right.addWidget(self.filter_toggle_button)
         right.addWidget(self.filter_panel)
         right.addWidget(self.breadcrumb_bar)
@@ -249,6 +253,7 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         if self._search_enabled:
             self.search_button.clicked.connect(self.search)
             self.clear_button.clicked.connect(self.clear_search)
+            self.refresh_button.clicked.connect(self._refresh_current_view)
             self.keyword_edit.returnPressed.connect(self.search)
             self.keyword_edit.textChanged.connect(self._handle_keyword_text_changed)
             self._update_search_action_buttons()
@@ -584,6 +589,14 @@ class PosterGridPage(QWidget, AsyncGuardMixin):
         self._rebuild_filter_panel()
         if self.selected_category_id:
             self.load_items(self.selected_category_id, self.current_page)
+
+    def _refresh_current_view(self) -> None:
+        if self._search_mode and self._search_keyword:
+            self._search_items(self._search_keyword, self.current_page)
+        elif self.selected_category_id:
+            self.load_items(self.selected_category_id, self.current_page)
+        else:
+            self.reload_categories()
 
     def _search_items(self, keyword: str, page: int) -> None:
         self._items_request_id += 1
