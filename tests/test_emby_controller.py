@@ -1,5 +1,5 @@
 from atv_player.controllers.emby_controller import EmbyController
-from atv_player.models import DoubanCategory, PlayItem
+from atv_player.models import CategoryFilter, CategoryFilterOption, DoubanCategory, PlayItem
 
 
 class FakeApiClient:
@@ -9,7 +9,7 @@ class FakeApiClient:
         self.search_payload = {"list": [], "total": 0}
         self.detail_payload = {"list": []}
         self.playback_payload = {"url": ["Episode 1", "http://m/1.mp4"], "header": {"User-Agent": "Yamby"}}
-        self.item_calls: list[tuple[str, int]] = []
+        self.item_calls: list[tuple[str, int, dict[str, str] | None]] = []
         self.search_calls: list[tuple[str, int]] = []
         self.detail_calls: list[str] = []
         self.playback_source_calls: list[str] = []
@@ -19,8 +19,8 @@ class FakeApiClient:
     def list_emby_categories(self) -> dict:
         return self.category_payload
 
-    def list_emby_items(self, category_id: str, page: int) -> dict:
-        self.item_calls.append((category_id, page))
+    def list_emby_items(self, category_id: str, page: int, filters: dict[str, str] | None = None) -> dict:
+        self.item_calls.append((category_id, page, None if filters is None else dict(filters)))
         return self.items_payload
 
     def search_emby_items(self, keyword: str, page: int) -> dict:
@@ -61,6 +61,41 @@ def test_load_categories_inserts_recommendation_first() -> None:
     ]
 
 
+def test_load_categories_maps_filter_groups() -> None:
+    api = FakeApiClient()
+    api.category_payload = {
+        "class": [
+            {"type_id": "Series", "type_name": "剧集"},
+        ],
+        "filters": {
+            "Series": [
+                {
+                    "key": "status",
+                    "name": "剧集状态",
+                    "value": [
+                        {"n": "不限", "v": "0"},
+                        {"n": "连载中", "v": "1"},
+                    ],
+                }
+            ]
+        },
+    }
+    controller = EmbyController(api)
+
+    categories = controller.load_categories()
+
+    assert categories[1].filters == [
+        CategoryFilter(
+            key="status",
+            name="剧集状态",
+            options=[
+                CategoryFilterOption(name="不限", value="0"),
+                CategoryFilterOption(name="连载中", value="1"),
+            ],
+        )
+    ]
+
+
 def test_search_items_maps_emby_search_payload() -> None:
     api = FakeApiClient()
     api.search_payload = {
@@ -86,13 +121,13 @@ def test_search_items_maps_emby_search_payload() -> None:
     assert items[0].vod_remarks == "2020 - 9.0"
 
 
-def test_emby_controller_ignores_optional_filters_argument() -> None:
+def test_emby_controller_passes_optional_filters_argument() -> None:
     api = FakeApiClient()
     controller = EmbyController(api)
 
     controller.load_items("Movie", 1, filters={"status": "1"})
 
-    assert api.item_calls[-1] == ("Movie", 1)
+    assert api.item_calls[-1] == ("Movie", 1, {"status": "1"})
 
 
 def test_load_folder_items_uses_t_query_and_first_page() -> None:
@@ -120,7 +155,7 @@ def test_load_folder_items_uses_t_query_and_first_page() -> None:
 
     items, total = controller.load_folder_items("folder-1")
 
-    assert api.item_calls == [("folder-1", 1)]
+    assert api.item_calls == [("folder-1", 1, None)]
     assert api.detail_calls == []
     assert total == 2
     assert [(item.vod_id, item.vod_tag) for item in items] == [

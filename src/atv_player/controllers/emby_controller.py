@@ -4,7 +4,7 @@ import json
 from collections.abc import Callable
 
 from atv_player.controllers.browse_controller import _map_vod_item
-from atv_player.controllers.douban_controller import _map_category, _map_item
+from atv_player.controllers.douban_controller import _map_categories, _map_item
 from atv_player.controllers.telegram_search_controller import _parse_playlist
 from atv_player.models import DoubanCategory, HistoryRecord, OpenPlayerRequest, PlayItem, VodItem
 
@@ -24,7 +24,7 @@ class EmbyController:
 
     def load_categories(self) -> list[DoubanCategory]:
         payload = self._api_client.list_emby_categories()
-        categories = [_map_category(item) for item in payload.get("class", [])]
+        categories = _map_categories(payload)
         categories = [category for category in categories if category.type_id != "0"]
         return [DoubanCategory(type_id="0", type_name="推荐"), *categories]
 
@@ -42,7 +42,7 @@ class EmbyController:
         page: int,
         filters: dict[str, str] | None = None,
     ) -> tuple[list[VodItem], int]:
-        payload = self._api_client.list_emby_items(category_id, page=page)
+        payload = self._api_client.list_emby_items(category_id, page=page, filters=filters)
         items = self._map_emby_items(payload)
         total_raw = payload.get("total")
         if total_raw is not None:

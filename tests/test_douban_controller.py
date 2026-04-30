@@ -1,18 +1,24 @@
 from atv_player.controllers.douban_controller import DoubanController
-from atv_player.models import DoubanCategory
+from atv_player.models import CategoryFilter, CategoryFilterOption, DoubanCategory
 
 
 class FakeApiClient:
     def __init__(self) -> None:
         self.category_payload = {"class": []}
         self.items_payload = {"list": [], "total": 0}
-        self.item_calls: list[tuple[str, int, int]] = []
+        self.item_calls: list[tuple[str, int, int, dict[str, str] | None]] = []
 
     def list_douban_categories(self) -> dict:
         return self.category_payload
 
-    def list_douban_items(self, category_id: str, page: int, size: int = 30) -> dict:
-        self.item_calls.append((category_id, page, size))
+    def list_douban_items(
+        self,
+        category_id: str,
+        page: int,
+        size: int = 30,
+        filters: dict[str, str] | None = None,
+    ) -> dict:
+        self.item_calls.append((category_id, page, size, None if filters is None else dict(filters)))
         return self.items_payload
 
 
@@ -31,6 +37,47 @@ def test_load_categories_maps_backend_class_payload() -> None:
     assert categories == [
         DoubanCategory(type_id="suggestion", type_name="推荐"),
         DoubanCategory(type_id="movie", type_name="电影"),
+    ]
+
+
+def test_load_categories_maps_filter_groups() -> None:
+    api = FakeApiClient()
+    api.category_payload = {
+        "class": [
+            {"type_id": "movie", "type_name": "电影"},
+        ],
+        "filters": {
+            "movie": [
+                {
+                    "key": "sc",
+                    "name": "影视类型",
+                    "value": [
+                        {"n": "不限", "v": "0"},
+                        {"n": "动作", "v": "6"},
+                    ],
+                }
+            ]
+        },
+    }
+    controller = DoubanController(api)
+
+    categories = controller.load_categories()
+
+    assert categories == [
+        DoubanCategory(
+            type_id="movie",
+            type_name="电影",
+            filters=[
+                CategoryFilter(
+                    key="sc",
+                    name="影视类型",
+                    options=[
+                        CategoryFilterOption(name="不限", value="0"),
+                        CategoryFilterOption(name="动作", value="6"),
+                    ],
+                )
+            ],
+        )
     ]
 
 
@@ -66,16 +113,16 @@ def test_load_items_uses_fixed_desktop_page_size() -> None:
 
     controller.load_items("movie", page=3)
 
-    assert api.item_calls == [("movie", 3, 30)]
+    assert api.item_calls == [("movie", 3, 30, None)]
 
 
-def test_douban_controller_ignores_optional_filters_argument() -> None:
+def test_douban_controller_passes_optional_filters_argument() -> None:
     api = FakeApiClient()
     controller = DoubanController(api)
 
     controller.load_items("movie", page=1, filters={"sc": "6"})
 
-    assert api.item_calls[-1] == ("movie", 1, 30)
+    assert api.item_calls[-1] == ("movie", 1, 30, {"sc": "6"})
 
 
 def test_load_items_keeps_explicit_zero_total_without_pagecount_fallback() -> None:

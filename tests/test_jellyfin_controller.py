@@ -1,4 +1,4 @@
-from atv_player.models import DoubanCategory, PlayItem
+from atv_player.models import CategoryFilter, CategoryFilterOption, DoubanCategory, PlayItem
 
 
 class FakeApiClient:
@@ -8,7 +8,7 @@ class FakeApiClient:
         self.search_payload = {"list": [], "total": 0}
         self.detail_payload = {"list": []}
         self.playback_payload = {"url": ["Episode 1", "http://j/1.mp4"], "header": {"User-Agent": "Jellyfin"}}
-        self.item_calls: list[tuple[str, int]] = []
+        self.item_calls: list[tuple[str, int, dict[str, str] | None]] = []
         self.search_calls: list[tuple[str, int]] = []
         self.detail_calls: list[str] = []
         self.playback_source_calls: list[str] = []
@@ -18,8 +18,8 @@ class FakeApiClient:
     def list_jellyfin_categories(self) -> dict:
         return self.category_payload
 
-    def list_jellyfin_items(self, category_id: str, page: int) -> dict:
-        self.item_calls.append((category_id, page))
+    def list_jellyfin_items(self, category_id: str, page: int, filters: dict[str, str] | None = None) -> dict:
+        self.item_calls.append((category_id, page, None if filters is None else dict(filters)))
         return self.items_payload
 
     def search_jellyfin_items(self, keyword: str, page: int) -> dict:
@@ -62,6 +62,43 @@ def test_load_categories_inserts_recommendation_first() -> None:
     ]
 
 
+def test_load_categories_maps_filter_groups() -> None:
+    from atv_player.controllers.jellyfin_controller import JellyfinController
+
+    api = FakeApiClient()
+    api.category_payload = {
+        "class": [
+            {"type_id": "Series", "type_name": "剧集"},
+        ],
+        "filters": {
+            "Series": [
+                {
+                    "key": "status",
+                    "name": "剧集状态",
+                    "value": [
+                        {"n": "不限", "v": "0"},
+                        {"n": "连载中", "v": "1"},
+                    ],
+                }
+            ]
+        },
+    }
+    controller = JellyfinController(api)
+
+    categories = controller.load_categories()
+
+    assert categories[1].filters == [
+        CategoryFilter(
+            key="status",
+            name="剧集状态",
+            options=[
+                CategoryFilterOption(name="不限", value="0"),
+                CategoryFilterOption(name="连载中", value="1"),
+            ],
+        )
+    ]
+
+
 def test_search_items_formats_year_and_rating_for_cards() -> None:
     from atv_player.controllers.jellyfin_controller import JellyfinController
 
@@ -87,7 +124,7 @@ def test_search_items_formats_year_and_rating_for_cards() -> None:
     assert items[0].vod_remarks == "2022 - 9.1"
 
 
-def test_jellyfin_controller_ignores_optional_filters_argument() -> None:
+def test_jellyfin_controller_passes_optional_filters_argument() -> None:
     from atv_player.controllers.jellyfin_controller import JellyfinController
 
     api = FakeApiClient()
@@ -95,7 +132,7 @@ def test_jellyfin_controller_ignores_optional_filters_argument() -> None:
 
     controller.load_items("Movie", 1, filters={"status": "1"})
 
-    assert api.item_calls[-1] == ("Movie", 1)
+    assert api.item_calls[-1] == ("Movie", 1, {"status": "1"})
 
 
 def test_load_folder_items_uses_t_query_and_first_page() -> None:
@@ -125,7 +162,7 @@ def test_load_folder_items_uses_t_query_and_first_page() -> None:
 
     items, total = controller.load_folder_items("folder-1")
 
-    assert api.item_calls == [("folder-1", 1)]
+    assert api.item_calls == [("folder-1", 1, None)]
     assert api.detail_calls == []
     assert total == 2
     assert [item.vod_remarks for item in items] == ["2022", "2022 - 8.8"]

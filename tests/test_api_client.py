@@ -327,6 +327,65 @@ def test_api_client_logs_request_failure(caplog) -> None:
     assert "/api/capabilities" in caplog.text
 
 
+def test_api_client_lists_douban_categories() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"class": []})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.list_douban_categories()
+
+    assert seen == {"path": "/tg-db/Harold", "query": ""}
+
+
+def test_api_client_lists_douban_items() -> None:
+    seen_queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_queries.append(request.url.query.decode())
+        return httpx.Response(200, json={"list": [], "total": 0})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.list_douban_items("movie", page=1, size=30)
+    client.list_douban_items("movie", page=3, size=30)
+
+    assert seen_queries == ["ac=gui&t=movie&pg=1&size=30", "ac=gui&t=movie&pg=3&size=30"]
+
+
+def test_api_client_lists_douban_items_with_filters() -> None:
+    seen_queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_queries.append(request.url.query.decode())
+        return httpx.Response(200, json={"list": [], "total": 0})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.list_douban_items("movie", page=2, size=30, filters={"sc": "6", "status": "1"})
+
+    assert seen_queries == ["ac=gui&t=movie&pg=2&size=30&sc=6&status=1"]
+
+
 def test_api_client_lists_telegram_search_categories() -> None:
     seen = {"path": "", "query": ""}
 
@@ -541,6 +600,25 @@ def test_api_client_lists_emby_items() -> None:
     assert seen_queries == ["t=Series&pg=1", "t=Series&pg=3"]
 
 
+def test_api_client_lists_emby_items_with_filters() -> None:
+    seen_queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_queries.append(request.url.query.decode())
+        return httpx.Response(200, json={"list": [], "total": 0})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.list_emby_items("Series", page=2, filters={"status": "1", "sc": "6"})
+
+    assert seen_queries == ["t=Series&pg=2&status=1&sc=6"]
+
+
 def test_api_client_searches_emby_items_by_keyword() -> None:
     seen_queries: list[str] = []
 
@@ -682,6 +760,25 @@ def test_api_client_lists_jellyfin_items() -> None:
     client.list_jellyfin_items("Series", page=3)
 
     assert seen_queries == ["t=Series&pg=1", "t=Series&pg=3"]
+
+
+def test_api_client_lists_jellyfin_items_with_filters() -> None:
+    seen_queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_queries.append(request.url.query.decode())
+        return httpx.Response(200, json={"list": [], "total": 0})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.list_jellyfin_items("Series", page=2, filters={"status": "1", "sc": "6"})
+
+    assert seen_queries == ["t=Series&pg=2&status=1&sc=6"]
 
 
 def test_api_client_searches_jellyfin_items_by_keyword() -> None:

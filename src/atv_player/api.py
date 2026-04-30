@@ -132,11 +132,20 @@ class ApiClient:
     def list_douban_categories(self) -> dict[str, Any]:
         return self._request("GET", f"/tg-db/{self._vod_token}")
 
-    def list_douban_items(self, category_id: str, page: int, size: int = 35) -> dict[str, Any]:
+    def list_douban_items(
+        self,
+        category_id: str,
+        page: int,
+        size: int = 35,
+        filters: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"ac": "gui", "t": category_id, "pg": page, "size": size}
+        if filters:
+            params.update(filters)
         return self._request(
             "GET",
             f"/tg-db/{self._vod_token}",
-            params={"ac": "gui", "t": category_id, "pg": page, "size": size},
+            params=params,
         )
 
     def list_telegram_search_categories(self) -> dict[str, Any]:
@@ -176,11 +185,19 @@ class ApiClient:
     def list_emby_categories(self) -> dict[str, Any]:
         return self._request("GET", f"/emby/{self._vod_token}")
 
-    def list_emby_items(self, category_id: str, page: int) -> dict[str, Any]:
+    def list_emby_items(
+        self,
+        category_id: str,
+        page: int,
+        filters: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"t": category_id, "pg": page}
+        if filters:
+            params.update(filters)
         return self._request(
             "GET",
             f"/emby/{self._vod_token}",
-            params={"t": category_id, "pg": page},
+            params=params,
         )
 
     def search_emby_items(self, keyword: str, page: int) -> dict[str, Any]:
@@ -204,11 +221,19 @@ class ApiClient:
     def list_jellyfin_categories(self) -> dict[str, Any]:
         return self._request("GET", f"/jellyfin/{self._vod_token}")
 
-    def list_jellyfin_items(self, category_id: str, page: int) -> dict[str, Any]:
+    def list_jellyfin_items(
+        self,
+        category_id: str,
+        page: int,
+        filters: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"t": category_id, "pg": page}
+        if filters:
+            params.update(filters)
         return self._request(
             "GET",
             f"/jellyfin/{self._vod_token}",
-            params={"t": category_id, "pg": page},
+            params=params,
         )
 
     def search_jellyfin_items(self, keyword: str, page: int) -> dict[str, Any]:
