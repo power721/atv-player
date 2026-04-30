@@ -36,7 +36,12 @@ class EmbyController:
     def _map_emby_items(self, payload: dict) -> list[VodItem]:
         return [self._decorate_card_subtitle(_map_item(item)) for item in payload.get("list", [])]
 
-    def load_items(self, category_id: str, page: int) -> tuple[list[VodItem], int]:
+    def load_items(
+        self,
+        category_id: str,
+        page: int,
+        filters: dict[str, str] | None = None,
+    ) -> tuple[list[VodItem], int]:
         payload = self._api_client.list_emby_items(category_id, page=page)
         items = self._map_emby_items(payload)
         total_raw = payload.get("total")

@@ -87,6 +87,17 @@ def test_search_items_formats_year_and_rating_for_cards() -> None:
     assert items[0].vod_remarks == "2022 - 9.1"
 
 
+def test_jellyfin_controller_ignores_optional_filters_argument() -> None:
+    from atv_player.controllers.jellyfin_controller import JellyfinController
+
+    api = FakeApiClient()
+    controller = JellyfinController(api)
+
+    controller.load_items("Movie", 1, filters={"status": "1"})
+
+    assert api.item_calls[-1] == ("Movie", 1)
+
+
 def test_load_folder_items_uses_t_query_and_first_page() -> None:
     from atv_player.controllers.jellyfin_controller import JellyfinController
 

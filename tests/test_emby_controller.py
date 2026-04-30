@@ -86,6 +86,15 @@ def test_search_items_maps_emby_search_payload() -> None:
     assert items[0].vod_remarks == "2020 - 9.0"
 
 
+def test_emby_controller_ignores_optional_filters_argument() -> None:
+    api = FakeApiClient()
+    controller = EmbyController(api)
+
+    controller.load_items("Movie", 1, filters={"status": "1"})
+
+    assert api.item_calls[-1] == ("Movie", 1)
+
+
 def test_load_folder_items_uses_t_query_and_first_page() -> None:
     api = FakeApiClient()
     api.items_payload = {

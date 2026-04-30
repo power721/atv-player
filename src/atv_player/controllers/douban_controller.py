@@ -34,7 +34,12 @@ class DoubanController:
         payload = self._api_client.list_douban_categories()
         return [_map_category(item) for item in payload.get("class", [])]
 
-    def load_items(self, category_id: str, page: int) -> tuple[list[VodItem], int]:
+    def load_items(
+        self,
+        category_id: str,
+        page: int,
+        filters: dict[str, str] | None = None,
+    ) -> tuple[list[VodItem], int]:
         payload = self._api_client.list_douban_items(category_id, page=page, size=self._PAGE_SIZE)
         items = [_map_item(item) for item in payload.get("list", [])]
         total_raw = payload.get("total")

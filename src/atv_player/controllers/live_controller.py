@@ -68,7 +68,12 @@ class LiveController:
     def _map_live_items(self, payload: dict) -> list[VodItem]:
         return [_map_item(item) for item in payload.get("list", [])]
 
-    def load_items(self, category_id: str, page: int) -> tuple[list[VodItem], int]:
+    def load_items(
+        self,
+        category_id: str,
+        page: int,
+        filters: dict[str, str] | None = None,
+    ) -> tuple[list[VodItem], int]:
         if category_id.startswith("custom:") and self._custom_live_service is not None:
             return self._custom_live_service.load_items(category_id, page)
         payload = self._api_client.list_live_items(category_id, page=page)

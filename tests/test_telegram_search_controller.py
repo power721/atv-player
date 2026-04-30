@@ -73,6 +73,15 @@ def test_load_items_uses_recommendation_endpoint_without_page_param() -> None:
     assert api.item_calls == [("0", 1), ("XiangxiuNBB", 3)]
 
 
+def test_telegram_search_controller_ignores_optional_filters_argument() -> None:
+    api = FakeApiClient()
+    controller = TelegramSearchController(api)
+
+    controller.load_items("Movie", page=1, filters={"status": "1"})
+
+    assert api.item_calls[-1] == ("Movie", 1)
+
+
 def test_search_items_maps_search_payload() -> None:
     api = FakeApiClient()
     api.search_payload = {

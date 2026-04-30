@@ -69,6 +69,15 @@ def test_load_items_uses_fixed_desktop_page_size() -> None:
     assert api.item_calls == [("movie", 3, 30)]
 
 
+def test_douban_controller_ignores_optional_filters_argument() -> None:
+    api = FakeApiClient()
+    controller = DoubanController(api)
+
+    controller.load_items("movie", page=1, filters={"sc": "6"})
+
+    assert api.item_calls[-1] == ("movie", 1, 30)
+
+
 def test_load_items_keeps_explicit_zero_total_without_pagecount_fallback() -> None:
     api = FakeApiClient()
     api.items_payload = {

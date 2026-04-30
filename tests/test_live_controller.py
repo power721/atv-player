@@ -110,6 +110,17 @@ def test_load_items_routes_custom_category_ids_to_custom_service() -> None:
     assert api.item_calls == []
 
 
+def test_live_controller_ignores_optional_filters_argument() -> None:
+    from atv_player.controllers.live_controller import LiveController
+
+    api = FakeApiClient()
+    controller = LiveController(api)
+
+    controller.load_items("bili", 1, filters={"status": "1"})
+
+    assert api.item_calls[-1] == ("bili", 1)
+
+
 def test_load_folder_items_routes_custom_folder_ids_to_custom_service() -> None:
     from atv_player.controllers.live_controller import LiveController
 
