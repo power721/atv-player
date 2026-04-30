@@ -252,7 +252,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.browse_page.open_requested.connect(self.open_player)
         self.history_page.open_detail_requested.connect(self.open_history_detail)
         self.douban_page.search_requested.connect(self._handle_douban_search_requested)
-        self.telegram_page.open_requested.connect(self._handle_telegram_open_requested)
+        self.telegram_page.item_open_requested.connect(self._handle_telegram_item_open_requested)
         self.live_page.item_open_requested.connect(self._handle_live_item_open_requested)
         self.live_page.folder_breadcrumb_requested.connect(
             lambda node_id, kind, index: self._handle_media_breadcrumb_requested(
@@ -365,47 +365,60 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         self.nav_tabs.setCurrentWidget(self.browse_page)
         self.browse_page.search_keyword(keyword)
 
-    def _handle_telegram_open_requested(self, vod_id: str) -> None:
-        self._start_open_request(lambda: self.telegram_controller.build_request(vod_id))
-
-    def _handle_live_open_requested(self, vod_id: str) -> None:
-        self._start_open_request(lambda: self.live_controller.build_request(vod_id))
+    def _handle_telegram_item_open_requested(self, item) -> None:
+        vod_id = item.vod_id
+        self._open_item_immediately(
+            item,
+            source_kind="telegram",
+            build_fn=lambda: self.telegram_controller.build_request(vod_id),
+        )
 
     def _handle_live_item_open_requested(self, item) -> None:
         if getattr(item, "vod_tag", "") == "folder":
             self._open_media_folder(self.live_page, self.live_controller, item)
             return
-        self._handle_live_open_requested(item.vod_id)
-
-    def _handle_emby_open_requested(self, vod_id: str) -> None:
-        self._start_open_request(lambda: self.emby_controller.build_request(vod_id))
+        vod_id = item.vod_id
+        self._open_item_immediately(
+            item,
+            source_kind="live",
+            build_fn=lambda: self.live_controller.build_request(vod_id),
+        )
 
     def _handle_emby_item_open_requested(self, item) -> None:
         if getattr(item, "vod_tag", "") == "folder":
             if self.emby_page is not None:
                 self._open_media_folder(self.emby_page, self.emby_controller, item)
             return
-        self._handle_emby_open_requested(item.vod_id)
-
-    def _handle_jellyfin_open_requested(self, vod_id: str) -> None:
-        self._start_open_request(lambda: self.jellyfin_controller.build_request(vod_id))
+        vod_id = item.vod_id
+        self._open_item_immediately(
+            item,
+            source_kind="emby",
+            build_fn=lambda: self.emby_controller.build_request(vod_id),
+        )
 
     def _handle_jellyfin_item_open_requested(self, item) -> None:
         if getattr(item, "vod_tag", "") == "folder":
             if self.jellyfin_page is not None:
                 self._open_media_folder(self.jellyfin_page, self.jellyfin_controller, item)
             return
-        self._handle_jellyfin_open_requested(item.vod_id)
-
-    def _handle_feiniu_open_requested(self, vod_id: str) -> None:
-        self._start_open_request(lambda: self.feiniu_controller.build_request(vod_id))
+        vod_id = item.vod_id
+        self._open_item_immediately(
+            item,
+            source_kind="jellyfin",
+            build_fn=lambda: self.jellyfin_controller.build_request(vod_id),
+        )
 
     def _handle_feiniu_item_open_requested(self, item) -> None:
         if getattr(item, "vod_tag", "") == "folder":
             if self.feiniu_page is not None:
                 self._open_media_folder(self.feiniu_page, self.feiniu_controller, item)
             return
-        self._handle_feiniu_open_requested(item.vod_id)
+        vod_id = item.vod_id
+        self._open_item_immediately(
+            item,
+            source_kind="feiniu",
+            build_fn=lambda: self.feiniu_controller.build_request(vod_id),
+        )
 
     def _rebuild_spider_plugin_tabs(self) -> None:
         for page, _controller, _plugin_id in self._plugin_pages:
@@ -435,7 +448,9 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             self._plugin_pages.append((page, controller, plugin_id))
             insert_index += 1
 
-    def _build_placeholder_player_request(self, plugin_id: str, item: Any) -> OpenPlayerRequest:
+    def _build_placeholder_player_request(
+        self, item: Any, *, source_kind: str = "plugin", source_key: str = "",
+    ) -> OpenPlayerRequest:
         placeholder_vod = VodItem(
             vod_id=getattr(item, "vod_id", ""),
             vod_name=getattr(item, "vod_name", ""),
@@ -453,8 +468,8 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
             vod=placeholder_vod,
             playlist=[],
             clicked_index=0,
-            source_kind="plugin",
-            source_key=plugin_id,
+            source_kind=source_kind,
+            source_key=source_key,
             source_mode="detail",
             source_vod_id=placeholder_vod.vod_id,
             use_local_history=False,
@@ -463,7 +478,7 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
         )
 
     def _open_spider_item(self, controller, plugin_id: str, item: Any) -> None:
-        placeholder_request = self._build_placeholder_player_request(plugin_id, item)
+        placeholder_request = self._build_placeholder_player_request(item, source_kind="plugin", source_key=plugin_id)
         self._open_player_immediately(placeholder_request)
 
         def build_request() -> OpenPlayerRequest:
@@ -474,14 +489,10 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
         self._start_plugin_open_request(build_request)
 
-    def _open_spider_request(self, controller, plugin_id: str, vod_id: str) -> None:
-        def build_request() -> OpenPlayerRequest:
-            request = controller.build_request(vod_id)
-            request.source_kind = "plugin"
-            request.source_key = plugin_id
-            return request
-
-        self._start_open_request(build_request)
+    def _open_item_immediately(self, item: Any, *, source_kind: str, source_key: str = "", build_fn) -> None:
+        placeholder_request = self._build_placeholder_player_request(item, source_kind=source_kind, source_key=source_key)
+        self._open_player_immediately(placeholder_request)
+        self._start_open_request(build_fn)
 
     def _open_plugin_manager(self) -> None:
         if self._plugin_manager is None:
@@ -621,6 +632,9 @@ class MainWindow(QMainWindow, AsyncGuardMixin):
 
     def _handle_open_request_failed(self, request_id: int, message: str) -> None:
         if request_id != self._open_request_id:
+            return
+        if self.player_window is not None and getattr(self.player_window, "session", None) is not None:
+            self._append_player_status_log(f"详情加载失败: {message}")
             return
         self.show_error(message)
 

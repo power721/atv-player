@@ -6522,6 +6522,44 @@ def test_player_window_play_next_resolves_target_episode_before_loading(qtbot) -
     assert "resolved episode content" in window.metadata_view.toPlainText()
 
 
+def test_player_window_logs_loading_message_while_initial_item_resolves_async(qtbot) -> None:
+    controller = RecordingPlayerController()
+    resolved_vod = VodItem(
+        vod_id="ep-1",
+        vod_name="Resolved Episode 1",
+        items=[PlayItem(title="Episode 1", url="http://resolved/1.m3u8", vod_id="ep-1")],
+    )
+    ready = threading.Event()
+
+    def detail_resolver(_item: PlayItem) -> VodItem:
+        assert ready.wait(timeout=1)
+        return resolved_vod
+
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+    session = PlayerSession(
+        vod=VodItem(vod_id="movie-1", vod_name="Movie"),
+        playlist=[PlayItem(title="Episode 1", url="", vod_id="ep-1")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        detail_resolver=detail_resolver,
+    )
+
+    started_at = time.perf_counter()
+    window.open_session(session)
+    elapsed_seconds = time.perf_counter() - started_at
+
+    assert elapsed_seconds < 0.1
+    assert window.video.load_calls == []
+    assert "正在加载播放地址: Episode 1" in window.log_view.toPlainText()
+
+    ready.set()
+
+    qtbot.waitUntil(lambda: window.video.load_calls == [("http://resolved/1.m3u8", 0)], timeout=1000)
+
+
 def test_player_window_reuses_cached_detail_when_returning_to_same_episode(qtbot) -> None:
     controller = RecordingPlayerController()
     detail_calls: list[str] = []

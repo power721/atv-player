@@ -1197,6 +1197,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         session = self.session
         current_item = session.playlist[self.current_index]
+        if wait_for_load:
+            self._append_log(f"正在加载播放地址: {current_item.title}")
         self._play_item_request_id += 1
         request_id = self._play_item_request_id
         self._pending_play_item_load = _PendingPlayItemLoad(
