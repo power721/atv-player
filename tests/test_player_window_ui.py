@@ -6780,6 +6780,185 @@ def test_player_window_loads_play_item_via_async_session_loader_without_blocking
     )
 
 
+def test_player_window_async_session_loader_preserves_resume_offset(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int, dict[str, str]]] = []
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            self.load_calls.append((url, pause, start_seconds, headers or {}))
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    ready = threading.Event()
+
+    def load_item(item: PlayItem) -> None:
+        assert ready.wait(timeout=1)
+        item.url = "http://emby/1.mp4"
+        item.headers = {"User-Agent": "Yamby"}
+
+    controller = RecordingPlayerController()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    session = make_player_session(start_index=0)
+    session.start_position_seconds = 42
+    session.playlist = [PlayItem(title="Episode 1", url="", vod_id="1-3458")]
+    session.use_local_history = False
+    session.playback_loader = load_item
+    session.async_playback_loader = True
+
+    window.open_session(session)
+
+    assert window.video.load_calls == []
+
+    ready.set()
+
+    qtbot.waitUntil(
+        lambda: window.video.load_calls == [("http://emby/1.mp4", False, 42, {"User-Agent": "Yamby"})],
+        timeout=1000,
+    )
+
+
+def test_player_window_resume_from_main_preserves_resume_offset_with_async_loader(qtbot) -> None:
+    class FakeVideo:
+        def __init__(self) -> None:
+            self.load_calls: list[tuple[str, bool, int, dict[str, str]]] = []
+            self.pause_calls = 0
+            self.resume_calls = 0
+
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            self.load_calls.append((url, pause, start_seconds, headers or {}))
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 30
+
+        def pause(self) -> None:
+            self.pause_calls += 1
+
+        def resume(self) -> None:
+            self.resume_calls += 1
+
+    controller = RecordingPlayerController()
+    config = AppConfig(last_active_window="main", last_player_paused=True)
+    window = PlayerWindow(controller, config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+    video = FakeVideo()
+    window.video = video
+    session = make_player_session(start_index=0)
+    session.playlist = [PlayItem(title="Episode 1", url="http://emby/1.mp4", vod_id="1-3458")]
+    session.use_local_history = False
+    session.playback_loader = lambda item: None
+    session.async_playback_loader = True
+
+    window.open_session(session)
+
+    window._return_to_main()
+    window.resume_from_main()
+
+    assert video.pause_calls == 1
+    assert video.resume_calls == 0
+    assert video.load_calls == [
+        ("http://emby/1.mp4", False, 0, {}),
+        ("http://emby/1.mp4", False, 30, {}),
+    ]
+    assert window.is_playing is True
+    assert config.last_player_paused is False
+
+
+def test_player_window_does_not_report_zero_progress_while_async_loader_is_pending(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            return None
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    ready = threading.Event()
+
+    def load_item(item: PlayItem) -> None:
+        assert ready.wait(timeout=1)
+        item.url = "http://emby/1.mp4"
+
+    controller = RecordingPlayerController()
+    window = PlayerWindow(controller)
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    session = make_player_session(start_index=0)
+    session.start_position_seconds = 42
+    session.playlist = [PlayItem(title="Episode 1", url="", vod_id="1-3458")]
+    session.playback_loader = load_item
+    session.async_playback_loader = True
+
+    window.open_session(session)
+    window.report_progress()
+    qtbot.wait(100)
+
+    assert controller.progress_calls == []
+    assert session.start_position_seconds == 42
+
+    ready.set()
+
+
+def test_player_window_return_to_main_keeps_restore_offset_while_async_loader_is_pending(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            return None
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+        def pause(self) -> None:
+            return None
+
+    ready = threading.Event()
+
+    def load_item(item: PlayItem) -> None:
+        assert ready.wait(timeout=1)
+        item.url = "http://emby/1.mp4"
+
+    window = PlayerWindow(FakePlayerController(), config=AppConfig(last_active_window="player"), save_config=lambda: None)
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+    session = make_player_session(start_index=0)
+    session.start_position_seconds = 42
+    session.playlist = [PlayItem(title="Episode 1", url="", vod_id="1-3458")]
+    session.playback_loader = load_item
+    session.async_playback_loader = True
+
+    window.open_session(session)
+    window._return_to_main()
+
+    assert session.start_position_seconds == 42
+
+    ready.set()
+
+
 def test_player_window_keeps_failed_async_parse_item_selected_and_parse_combo_enabled(qtbot) -> None:
     class FakeParserService:
         def parsers(self):

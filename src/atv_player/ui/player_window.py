@@ -1397,6 +1397,19 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._restore_current_index(pending_prepare.previous_index)
             self._append_log(f"播放失败: {exc}")
 
+    def _current_item_load_is_pending(self) -> bool:
+        if self.session is None:
+            return False
+        pending_items = (
+            self._pending_play_item_load,
+            self._pending_playback_loader,
+            self._pending_playback_prepare,
+        )
+        return any(
+            pending is not None and pending.index == self.current_index
+            for pending in pending_items
+        )
+
     def _attempt_resume_seek(self, seconds: int, retries_remaining: int) -> None:
         if hasattr(self.video, "can_seek") and not self.video.can_seek():
             if retries_remaining > 0:
@@ -1420,6 +1433,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def report_progress(self, force_remote_report: bool = False) -> None:
         if self.session is None:
+            return
+        if self._current_item_load_is_pending():
             return
         try:
             position_seconds = self.video.position_seconds()
@@ -1464,6 +1479,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         try:
             position_seconds = self.video.position_seconds()
         except Exception:
+            position_seconds = None
+        if self._current_item_load_is_pending():
             position_seconds = None
         if position_seconds is not None and hasattr(self.session, "start_position_seconds"):
             self.session.start_position_seconds = position_seconds
@@ -3197,7 +3214,6 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         return False
 
     def _return_to_main(self) -> None:
-        self._invalidate_play_item_resolution()
         self._close_help_dialog()
         self._close_danmaku_source_dialog()
         self._close_video_context_menu()
@@ -3208,6 +3224,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             pass
         self.is_playing = False
         self.report_progress(force_remote_report=True)
+        self._invalidate_play_item_resolution()
         self._stop_current_playback()
         self._refresh_window_title()
         self._restore_video_cursor()
