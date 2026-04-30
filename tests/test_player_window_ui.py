@@ -7686,6 +7686,40 @@ def test_player_window_escape_shortcut_returns_to_main_when_not_fullscreen(qtbot
     assert config.last_active_window == "main"
 
 
+def test_player_window_escape_closes_danmaku_source_dialog_without_returning_to_main(qtbot) -> None:
+    config = AppConfig(last_active_window="player")
+    window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)
+    qtbot.addWidget(window)
+    pauses = {"count": 0}
+
+    class FakeVideo:
+        def pause(self) -> None:
+            pauses["count"] += 1
+
+        def position_seconds(self) -> int:
+            return 0
+
+        def duration_seconds(self) -> int:
+            return 120
+
+    window.video = FakeVideo()
+    window.open_session(make_player_session())
+    window.show()
+    window.activateWindow()
+    window.setFocus()
+
+    window._open_danmaku_source_dialog()
+    qtbot.waitUntil(lambda: len(visible_danmaku_source_dialogs()) == 1)
+    dialog = visible_danmaku_source_dialogs()[0]
+
+    window.escape_shortcut.activated.emit()
+
+    qtbot.waitUntil(lambda: not dialog.isVisible())
+    assert window.isVisible() is True
+    assert pauses["count"] == 0
+    assert config.last_active_window == "player"
+
+
 def test_player_window_return_to_main_persists_paused_restore_state(qtbot) -> None:
     config = AppConfig(last_active_window="player", last_player_paused=False)
     window = PlayerWindow(FakePlayerController(), config=config, save_config=lambda: None)

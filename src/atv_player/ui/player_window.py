@@ -3149,9 +3149,26 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.help_dialog = None
         dialog.close()
 
+    def _close_danmaku_source_dialog(self) -> None:
+        dialog = self._danmaku_source_dialog
+        if dialog is None or not dialog.isVisible():
+            return
+        dialog.close()
+
+    def _dismiss_escape_dialog(self) -> bool:
+        dialog = self._danmaku_source_dialog
+        if dialog is not None and dialog.isVisible():
+            self._close_danmaku_source_dialog()
+            return True
+        if self.help_dialog is not None and self.help_dialog.isVisible():
+            self._close_help_dialog()
+            return True
+        return False
+
     def _return_to_main(self) -> None:
         self._invalidate_play_item_resolution()
         self._close_help_dialog()
+        self._close_danmaku_source_dialog()
         self._close_video_context_menu()
         self._remember_restore_state()
         try:
@@ -3191,6 +3208,8 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._sync_video_cursor_autohide()
 
     def _handle_escape(self) -> None:
+        if self._dismiss_escape_dialog():
+            return
         if self.isFullScreen():
             self.toggle_fullscreen()
             return
