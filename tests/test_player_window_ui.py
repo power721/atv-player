@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QByteArray, QEvent, QObject, QRect, Qt, QUrl, Signal
 from PySide6.QtGui import QAction, QColor, QContextMenuEvent, QCursor, QIcon, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPixmap, QWindow
-from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDoubleSpinBox, QLabel, QMenu, QPushButton, QSpinBox, QTableWidget, QWidget
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QDoubleSpinBox, QMenu, QPushButton, QSpinBox, QTabBar, QTableWidget, QWidget
 from PySide6.QtWidgets import QSplitter, QToolTip
 from atv_player.controllers.player_controller import PlayerController, PlayerSession
 from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, DanmakuSourceSearchResult
@@ -194,7 +194,7 @@ def test_player_window_can_open_placeholder_session_without_playlist(qtbot) -> N
 
     assert window.session is session
     assert window.playlist.count() == 0
-    assert window.metadata_view.toPlainText().startswith("名称: 占位电影")
+    assert window.metadata_view.toPlainText().lstrip().startswith("名称: 占位电影")
     assert window.log_view.toPlainText() == "正在加载详情..."
     assert window.video.load_calls == []
 
@@ -1083,9 +1083,13 @@ def test_player_window_shows_route_selector_for_single_group(qtbot) -> None:
     window.open_session(session)
 
     assert isinstance(window.playlist_group_combo, QComboBox)
-    assert window.playlist_group_combo.isHidden() is False
+    assert isinstance(window.route_tab_bar, QTabBar)
+    assert window.playlist_group_combo.isHidden() is True
+    assert window.route_tab_bar.isHidden() is False
     assert window.playlist_group_combo.count() == 1
     assert window.playlist_group_combo.itemText(0) == "网盘线(夸克)"
+    assert window.route_tab_bar.count() == 1
+    assert window.route_tab_bar.tabText(0) == "网盘线(夸克)"
 
 
 def test_player_window_rewrites_remote_m3u8_to_local_proxy_url(qtbot) -> None:
@@ -1576,10 +1580,29 @@ def test_player_window_uses_detail_container_with_metadata_and_log_views(qtbot) 
     qtbot.addWidget(window)
 
     assert window.details is not None
+    assert window.log_panel is not None
+    assert window.sidebar_container.minimumWidth() == 420
+    assert window.sidebar_container.maximumWidth() == 620
+    assert window.playlist.gridSize().width() == 74
     assert window.metadata_view.isReadOnly() is True
     assert window.log_view.isReadOnly() is True
     assert window.details.layout().indexOf(window.metadata_view) != -1
-    assert window.details.layout().indexOf(window.log_view) != -1
+    assert window.details.layout().indexOf(window.detail_summary_label) == -1
+    assert window.detail_summary_label.isHidden() is True
+    assert window.log_panel.layout().indexOf(window.log_view) != -1
+    assert window.toggle_log_button.isCheckable() is True
+    assert window.toggle_log_button.isChecked() is False
+    assert window.log_panel.isHidden() is True
+
+    window.toggle_log_button.click()
+
+    assert window.toggle_log_button.isChecked() is True
+    assert window.log_panel.isHidden() is False
+
+    window.toggle_details_button.click()
+
+    assert window.details.isHidden() is True
+    assert window.log_panel.isHidden() is False
 
 
 def test_player_window_renders_route_selector_and_switches_active_group(qtbot) -> None:
@@ -1612,12 +1635,13 @@ def test_player_window_renders_route_selector_and_switches_active_group(qtbot) -
 
     window.open_session(session)
 
-    assert window.playlist_group_combo.isHidden() is False
-    assert [window.playlist_group_combo.itemText(i) for i in range(window.playlist_group_combo.count())] == ["备用线", "极速线"]
+    assert isinstance(window.route_tab_bar, QTabBar)
+    assert window.route_tab_bar.isHidden() is False
+    assert [window.route_tab_bar.tabText(i) for i in range(window.route_tab_bar.count())] == ["备用线", "极速线"]
     assert [window.playlist.item(i).text() for i in range(window.playlist.count())] == ["第1集", "第2集"]
     assert window.playlist.currentRow() == 1
 
-    window.playlist_group_combo.setCurrentIndex(1)
+    window.route_tab_bar.setCurrentIndex(1)
 
     assert window.session is not None
     assert window.session.playlist_index == 1
@@ -1680,18 +1704,16 @@ def test_player_window_playlist_items_show_full_title_in_tooltip(qtbot) -> None:
     assert window.playlist.item(0).toolTip() == long_title
 
 
-def test_player_window_places_poster_widget_above_metadata_and_log_views(qtbot) -> None:
+def test_player_window_uses_poster_as_sidebar_background_instead_of_top_widget(qtbot) -> None:
     window = PlayerWindow(FakePlayerController())
     qtbot.addWidget(window)
 
     details_layout = window.details.layout()
 
     assert window.poster_label is not None
-    assert details_layout.indexOf(window.poster_label) != -1
-    assert details_layout.indexOf(window.poster_label) < details_layout.indexOf(window.metadata_view)
-    assert details_layout.indexOf(window.poster_label) < details_layout.indexOf(window.log_view)
-    assert window.poster_label.alignment() == Qt.AlignmentFlag.AlignCenter
-    assert window.poster_label.minimumHeight() > 0
+    assert details_layout.indexOf(window.poster_label) == -1
+    assert window.poster_label.isHidden() is True
+    assert window.sidebar_container.background_pixmap().isNull() is True
 
 
 def test_player_window_renders_poster_when_session_has_vod_pic(qtbot, tmp_path) -> None:
@@ -1731,6 +1753,7 @@ def test_player_window_renders_poster_when_session_has_vod_pic(qtbot, tmp_path) 
     assert rendered.isNull() is False
     assert rendered.size().width() <= window.poster_label.maximumWidth()
     assert rendered.size().height() <= window.poster_label.maximumHeight()
+    assert window.sidebar_container.background_pixmap().isNull() is False
 
 
 def test_player_window_prefers_session_poster_before_default_video_cover(qtbot, tmp_path) -> None:
@@ -1760,6 +1783,7 @@ def test_player_window_prefers_session_poster_before_default_video_cover(qtbot, 
     assert loader_calls == []
     assert window.poster_label.pixmap() is not None
     assert window.poster_label.pixmap().isNull() is False
+    assert window.sidebar_container.background_pixmap().isNull() is False
 
 
 def test_player_window_uses_default_video_cover_when_session_poster_is_empty(qtbot, monkeypatch) -> None:
@@ -2313,7 +2337,8 @@ def test_player_window_ignores_stale_async_poster_results(qtbot, monkeypatch) ->
     rendered = window.poster_label.pixmap()
     assert rendered is not None
     assert rendered.isNull() is False
-    assert rendered.toImage().pixelColor(0, 0) == QColor("blue")
+    rendered_image = rendered.toImage()
+    assert rendered_image.pixelColor(rendered_image.width() // 2, rendered_image.height() // 2) == QColor("blue")
 
 
 def test_player_window_shows_loaded_poster_over_video_until_visible_picture_signal_arrives(qtbot) -> None:
@@ -3112,7 +3137,7 @@ def test_player_window_renders_title_metadata_in_expected_order(qtbot) -> None:
 
     window.open_session(session)
 
-    assert window.metadata_view.toPlainText() == (
+    assert window.metadata_view.toPlainText().strip() == (
         "名称: 九寨沟\n"
         "类型: 纪录片\n"
         "年代: 2006\n"
@@ -3126,6 +3151,7 @@ def test_player_window_renders_title_metadata_in_expected_order(qtbot) -> None:
         "简介:\n"
         "九寨沟风景名胜区位于四川省阿坝藏族羌族自治州南坪县境内。"
     )
+    assert window._format_metadata_html(session.vod).count('<td width="50%"') >= 2
 
 
 def test_player_window_omits_bilibili_area_language_and_dbid_metadata_rows(qtbot) -> None:
@@ -3165,7 +3191,7 @@ def test_player_window_omits_bilibili_area_language_and_dbid_metadata_rows(qtbot
 
     window.open_session(session)
 
-    assert window.metadata_view.toPlainText() == (
+    assert window.metadata_view.toPlainText().strip() == (
         "名称: 和AI玩猜历史人物游戏，又被它给耍了\n"
         "类型:  /\n"
         "评分: 339万播放 04:20\n"
@@ -3209,7 +3235,7 @@ def test_player_window_renders_live_metadata_with_five_live_fields(qtbot) -> Non
 
     window.open_session(session)
 
-    assert window.metadata_view.toPlainText() == (
+    assert window.metadata_view.toPlainText().strip() == (
         "标题: 主播直播间\n"
         "平台: 哔哩哔哩\n"
         "类型: 游戏\n"
@@ -3248,7 +3274,7 @@ def test_player_window_renders_epg_rows_for_live_metadata(qtbot) -> None:
 
     window.open_session(session)
 
-    assert window.metadata_view.toPlainText() == (
+    assert window.metadata_view.toPlainText().strip() == (
         "当前节目:\n"
         "09:00-10:00 朝闻天下\n"
         "\n"
@@ -4229,9 +4255,6 @@ def test_player_window_disables_audio_selector_when_current_item_has_no_embedded
         def subtitle_tracks(self) -> list[SubtitleTrack]:
             return []
 
-        def apply_subtitle_mode(self, mode: str, track_id: int | None = None) -> int | None:
-            return None
-
         def audio_tracks(self) -> list[AudioTrack]:
             return []
 
@@ -4577,6 +4600,7 @@ def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> N
         "音轨",
         "弹幕配置",
         "弹幕源",
+        "弹幕设置",
         "视频信息",
     ]
     assert [action.text() for action in _submenu_actions(menu, "主字幕")] == ["自动选择", "关闭字幕", "中文 (默认)", "English"]
@@ -5343,6 +5367,7 @@ def test_player_window_context_menu_includes_primary_and_secondary_subtitle_size
         "音轨",
         "弹幕配置",
         "弹幕源",
+        "弹幕设置",
         "视频信息",
     ]
     assert [action.text() for action in _submenu_actions(menu, "主字幕大小")] == [
@@ -12141,7 +12166,13 @@ def test_player_window_persists_pre_wide_splitter_state_when_saved_in_wide_mode(
 
     assert restored.sidebar_container.isHidden() is False
     assert restored_sizes[1] > 0
-    assert abs(restored_ratio - expected_ratio) < 0.02
+    target_sidebar_width = sum(restored_sizes) * expected_sizes[1] / sum(expected_sizes)
+    if target_sidebar_width < restored.sidebar_container.minimumWidth():
+        assert restored_sizes[1] == restored.sidebar_container.minimumWidth()
+    elif target_sidebar_width > restored.sidebar_container.maximumWidth():
+        assert restored_sizes[1] == restored.sidebar_container.maximumWidth()
+    else:
+        assert abs(restored_ratio - expected_ratio) < 0.02
 
 
 def test_player_window_restores_sidebar_after_toggling_wide_mode_from_fullscreen(qtbot) -> None:

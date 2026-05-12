@@ -14,7 +14,7 @@ from typing import cast
 from urllib.parse import urlparse
 
 import httpx
-from PySide6.QtCore import QEvent, QObject, QSize, QTimer, Qt, QUrl, QUrlQuery, Signal
+from PySide6.QtCore import QEvent, QObject, QRect, QSize, QTimer, Qt, QUrl, QUrlQuery, Signal
 from PySide6.QtGui import (
     QActionGroup,
     QCloseEvent,
@@ -26,6 +26,7 @@ from PySide6.QtGui import (
     QKeyEvent,
     QKeySequence,
     QMouseEvent,
+    QPainter,
     QPixmap,
     QShortcut,
     QWindow,
@@ -39,6 +40,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListView,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -46,6 +48,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QSplitter,
     QStackedLayout,
+    QTabBar,
     QTextBrowser,
     QTextEdit,
     QVBoxLayout,
@@ -159,6 +162,47 @@ class _PosterLoadSignals(QObject):
     loaded = Signal(int, object)
 
 
+class PosterBackgroundWidget(QWidget):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._background_pixmap = QPixmap()
+
+    def set_background_pixmap(self, pixmap: QPixmap) -> None:
+        self._background_pixmap = QPixmap(pixmap) if not pixmap.isNull() else QPixmap()
+        self.update()
+
+    def clear_background_pixmap(self) -> None:
+        self._background_pixmap = QPixmap()
+        self.update()
+
+    def background_pixmap(self) -> QPixmap:
+        return QPixmap(self._background_pixmap)
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        rect = self.rect()
+        try:
+            if self._background_pixmap.isNull() or rect.width() <= 0 or rect.height() <= 0:
+                painter.fillRect(rect, QColor("#f6f8fb"))
+                return
+
+            scaled = self._background_pixmap.scaled(
+                rect.size(),
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            source_rect = QRect(
+                max((scaled.width() - rect.width()) // 2, 0),
+                max((scaled.height() - rect.height()) // 2, 0),
+                rect.width(),
+                rect.height(),
+            )
+            painter.drawPixmap(rect, scaled, source_rect)
+            painter.fillRect(rect, QColor(246, 248, 251, 214))
+        finally:
+            painter.end()
+
+
 class _PlayItemResolveSignals(QObject):
     succeeded = Signal(int, object)
     failed = Signal(int, str)
@@ -263,8 +307,225 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     _MANUAL_SUBTITLE_SWITCH_REFRESH_WINDOW_SECONDS = 1.0
     _VIDEO_CONTEXT_MENU_DUPLICATE_WINDOW_MS = 250
     _VIDEO_CONTEXT_MENU_DUPLICATE_DISTANCE = 8
-    _POSTER_SIZE = QSize(180, 260)
+    _POSTER_SIZE = QSize(320, 154)
+    _POSTER_FETCH_SIZE = QSize(360, 540)
     _POSTER_REQUEST_TIMEOUT_SECONDS = 10.0
+    _SIDEBAR_MIN_WIDTH = 420
+    _SIDEBAR_MAX_WIDTH = 620
+    _PLAYLIST_GRID_SIZE = QSize(74, 36)
+    _PLAYLIST_MIN_HEIGHT = 44
+    _PLAYLIST_MAX_ROWS = 7
+    _METADATA_MIN_HEIGHT = 112
+    _METADATA_MAX_HEIGHT = 520
+    _SIDEBAR_STYLESHEET = """
+        QWidget#PlayerSidebarActions {
+            background-color: transparent;
+        }
+
+        QPushButton#PlayerSidebarToggleButton {
+            min-width: 32px;
+            max-width: 32px;
+            min-height: 30px;
+            border: 0;
+            border-radius: 8px;
+            background-color: transparent;
+            padding: 0;
+        }
+
+        QPushButton#PlayerSidebarToggleButton:hover {
+            background-color: #e2ecf8;
+        }
+
+        QPushButton#PlayerSidebarToggleButton:checked {
+            background-color: #dbeafe;
+        }
+
+        QComboBox#PlayerRouteCombo {
+            min-height: 28px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            background-color: #ffffff;
+            padding: 2px 8px;
+            color: #1f2937;
+        }
+
+        QComboBox#PlayerRouteCombo:focus {
+            border-color: #409eff;
+        }
+
+        QTabBar#PlayerRouteTabs::tab {
+            min-height: 28px;
+            min-width: 74px;
+            margin-right: 6px;
+            padding: 2px 12px;
+            border: 1px solid #d8dee8;
+            border-radius: 8px;
+            background-color: #ffffff;
+            color: #334155;
+        }
+
+        QTabBar#PlayerRouteTabs::tab:hover {
+            background-color: #eef6ff;
+            border-color: #9ec8f3;
+        }
+
+        QTabBar#PlayerRouteTabs::tab:selected {
+            background-color: #dbeafe;
+            border-color: #409eff;
+            color: #0f172a;
+            font-weight: 600;
+        }
+
+        QWidget#PlayerPlaylistSection,
+        QWidget#PlayerLogPanel {
+            background-color: transparent;
+            border: 0;
+        }
+
+        QListWidget#PlayerPlaylist {
+            border: 0;
+            border-radius: 0;
+            background-color: transparent;
+            padding: 0;
+            color: #1f2937;
+            outline: 0;
+        }
+
+        QListWidget#PlayerPlaylist::item {
+            min-width: 54px;
+            min-height: 26px;
+            margin: 2px;
+            padding: 0 4px;
+            border: 1px solid #d8dee8;
+            border-radius: 8px;
+            background-color: #ffffff;
+        }
+
+        QListWidget#PlayerPlaylist::item:hover {
+            background-color: #eef6ff;
+            border-color: #9ec8f3;
+        }
+
+        QListWidget#PlayerPlaylist::item:selected {
+            background-color: #dbeafe;
+            border-color: #409eff;
+            color: #0f172a;
+        }
+
+        QWidget#PlayerDetailsPanel {
+            background-color: transparent;
+            border: 0;
+        }
+
+        QLabel#PlayerPoster {
+            background-color: #dbe4ef;
+            border: 0;
+            border-radius: 12px;
+        }
+
+        QLabel#PlayerDetailTitle {
+            color: #0f172a;
+            font-size: 16px;
+            font-weight: 700;
+        }
+
+        QLabel#PlayerDetailSummary {
+            color: #64748b;
+            font-size: 12px;
+        }
+
+        QLabel#PlayerDetailSectionTitle {
+            color: #111827;
+            font-size: 13px;
+            font-weight: 700;
+            padding-top: 2px;
+        }
+
+        QTextBrowser#PlayerMetadataView {
+            background-color: transparent;
+            border: 0;
+            padding: 0;
+            color: #1f2937;
+            selection-background-color: #cfe8ff;
+        }
+
+        QTextEdit#PlayerLogView {
+            background-color: #ffffff;
+            border: 1px solid #d8dee8;
+            border-radius: 8px;
+            padding: 8px;
+            color: #1f2937;
+            selection-background-color: #cfe8ff;
+        }
+
+        QTextEdit#PlayerLogView {
+            color: #475569;
+            font-family: Consolas, "Microsoft YaHei UI", monospace;
+            font-size: 12px;
+        }
+
+        QPushButton#PlayerDetailActionButton {
+            min-height: 30px;
+            border: 1px solid #d8dee8;
+            border-radius: 8px;
+            background-color: #ffffff;
+            padding: 4px 10px;
+            color: #1f2937;
+        }
+
+        QPushButton#PlayerDetailActionButton:hover {
+            background-color: #eef6ff;
+            border-color: #9ec8f3;
+        }
+
+        QPushButton#PlayerDetailActionButton:checked {
+            background-color: #e0f2fe;
+            border-color: #38bdf8;
+            color: #075985;
+        }
+
+        QPushButton#PlayerDetailActionButton:disabled {
+            background-color: #f1f5f9;
+            color: #94a3b8;
+        }
+
+        QSplitter::handle:vertical {
+            height: 8px;
+            background-color: transparent;
+        }
+
+        QSplitter::handle:vertical:hover {
+            background-color: #dbeafe;
+        }
+    """
+    _METADATA_DOCUMENT_STYLESHEET = """
+        body {
+            color: #1f2937;
+            font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+            font-size: 13px;
+            line-height: 1.45;
+        }
+
+        a {
+            color: #0969da;
+            text-decoration: none;
+        }
+
+        .meta-label {
+            color: #64748b;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .meta-value {
+            color: #1f2937;
+            font-size: 13px;
+        }
+
+        .meta-empty {
+            color: #94a3b8;
+        }
+    """
     _AUDIO_ONLY_SUFFIXES = {
         ".aac",
         ".aiff",
@@ -278,7 +539,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         ".wav",
         ".wma",
     }
-    _DEFAULT_MAIN_SPLITTER_SIZES = [960, 320]
+    _DEFAULT_MAIN_SPLITTER_SIZES = [720, 560]
     _DANMAKU_SECONDARY_SCALE = 100
     _SUBTITLE_POSITION_PRESETS = {
         "顶部": 10,
@@ -428,8 +689,25 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.video_widget.video_picture_state_changed.connect(self._handle_video_picture_state_changed)
         self.video = self.video_widget
         self.playlist_group_combo = QComboBox()
+        self.playlist_group_combo.setObjectName("PlayerRouteCombo")
         self.playlist_group_combo.setHidden(True)
+        self.route_tab_bar = QTabBar()
+        self.route_tab_bar.setObjectName("PlayerRouteTabs")
+        self.route_tab_bar.setDrawBase(False)
+        self.route_tab_bar.setExpanding(False)
+        self.route_tab_bar.setUsesScrollButtons(True)
+        self.route_tab_bar.setHidden(True)
         self.playlist = QListWidget()
+        self.playlist.setObjectName("PlayerPlaylist")
+        self.playlist.setSpacing(2)
+        self.playlist.setViewMode(QListView.ViewMode.IconMode)
+        self.playlist.setFlow(QListView.Flow.LeftToRight)
+        self.playlist.setWrapping(True)
+        self.playlist.setResizeMode(QListView.ResizeMode.Adjust)
+        self.playlist.setMovement(QListView.Movement.Static)
+        self.playlist.setUniformItemSizes(True)
+        self.playlist.setGridSize(self._PLAYLIST_GRID_SIZE)
+        self.playlist.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.play_button = self._create_icon_button("play.svg", "播放/暂停", "Space")
         self.prev_button = self._create_icon_button("previous.svg", "上一集", "PgUp")
         self.next_button = self._create_icon_button("next.svg", "下一集", "PgDn")
@@ -444,12 +722,24 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self.wide_button.setChecked(bool(self.config.player_wide_mode))
         self.toggle_playlist_button = self._create_icon_button("queue.svg", "播放列表")
         self.toggle_details_button = self._create_icon_button("info.svg", "详情")
+        self.toggle_log_button = self._create_icon_button("log.svg", "日志")
+        self.toggle_playlist_button.setObjectName("PlayerSidebarToggleButton")
+        self.toggle_details_button.setObjectName("PlayerSidebarToggleButton")
+        self.toggle_log_button.setObjectName("PlayerSidebarToggleButton")
+        self.toggle_playlist_button.setFixedHeight(32)
+        self.toggle_details_button.setFixedHeight(32)
+        self.toggle_log_button.setFixedHeight(32)
+        self.toggle_playlist_button.setFixedWidth(32)
+        self.toggle_details_button.setFixedWidth(32)
+        self.toggle_log_button.setFixedWidth(32)
         self.danmaku_source_button = self._create_icon_button("danmaku.svg", "弹幕源", "D")
         self.danmaku_settings_button = self._create_icon_button("sliders.svg", "弹幕设置", "Ctrl+D")
         self.toggle_playlist_button.setCheckable(True)
         self.toggle_details_button.setCheckable(True)
+        self.toggle_log_button.setCheckable(True)
         self.toggle_playlist_button.setChecked(True)
         self.toggle_details_button.setChecked(True)
+        self.toggle_log_button.setChecked(False)
 
         self.speed_combo = QComboBox()
         self.speed_combo.addItems(["0.5x", "0.75x", "1.0x", "1.25x", "1.5x", "2.0x"])
@@ -513,40 +803,82 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.volume_slider.setValue(initial_volume)
         self.volume_slider.setMaximumWidth(180)
         self.poster_label = QLabel()
+        self.poster_label.setObjectName("PlayerPoster")
         self.poster_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.poster_label.setMinimumSize(self._POSTER_SIZE)
         self.poster_label.setMaximumSize(self._POSTER_SIZE)
         self.poster_label.setText("")
+        self.poster_label.hide()
         self.video_poster_overlay = QLabel()
         self.video_poster_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.video_poster_overlay.setText("")
         self.video_poster_overlay.hide()
         self.metadata_view = QTextBrowser()
+        self.metadata_view.setObjectName("PlayerMetadataView")
         self.metadata_view.setReadOnly(True)
         self.metadata_view.setOpenLinks(False)
+        self.metadata_view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.metadata_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.metadata_view.setMinimumHeight(128)
+        self.metadata_view.document().setDocumentMargin(0)
+        self.metadata_view.document().setDefaultStyleSheet(self._METADATA_DOCUMENT_STYLESHEET)
         self.metadata_view.anchorClicked.connect(self._handle_metadata_link)
         self.log_view = QTextEdit()
+        self.log_view.setObjectName("PlayerLogView")
         self.log_view.setReadOnly(True)
+        self.log_view.setMinimumHeight(56)
         self.details = QWidget()
+        self.details.setObjectName("PlayerDetailsPanel")
+        self.details.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         details_layout = QVBoxLayout(self.details)
-        details_layout.setContentsMargins(0, 0, 0, 0)
-        details_layout.setSpacing(6)
+        details_layout.setContentsMargins(0, 2, 0, 0)
+        details_layout.setSpacing(8)
         details_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        details_layout.addWidget(self.poster_label, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.detail_title_label = QLabel("")
+        self.detail_title_label.setObjectName("PlayerDetailTitle")
+        self.detail_title_label.setWordWrap(True)
+        details_layout.addWidget(self.detail_title_label)
+        self.detail_summary_label = QLabel("")
+        self.detail_summary_label.setObjectName("PlayerDetailSummary")
+        self.detail_summary_label.setWordWrap(True)
+        self.detail_summary_label.hide()
         self.detail_actions_widget = QWidget()
+        self.detail_actions_widget.setObjectName("PlayerDetailActions")
         self.detail_actions_layout = QHBoxLayout(self.detail_actions_widget)
         self.detail_actions_layout.setContentsMargins(0, 0, 0, 0)
-        self.detail_actions_layout.setSpacing(6)
+        self.detail_actions_layout.setSpacing(8)
         details_layout.addWidget(self.detail_actions_widget)
         self.detail_fields_widget = QWidget()
+        self.detail_fields_widget.setObjectName("PlayerDetailFields")
         self.detail_fields_layout = QVBoxLayout(self.detail_fields_widget)
         self.detail_fields_layout.setContentsMargins(0, 0, 0, 0)
-        self.detail_fields_layout.setSpacing(4)
+        self.detail_fields_layout.setSpacing(6)
         details_layout.addWidget(self.detail_fields_widget)
-        details_layout.addWidget(QLabel("影片详情"))
+        self.metadata_title_label = self._create_detail_section_label("影片详情")
+        details_layout.addWidget(self.metadata_title_label)
         details_layout.addWidget(self.metadata_view, 3)
-        details_layout.addWidget(QLabel("播放日志"))
-        details_layout.addWidget(self.log_view, 1)
+
+        self.playlist_section = QWidget()
+        self.playlist_section.setObjectName("PlayerPlaylistSection")
+        playlist_section_layout = QVBoxLayout(self.playlist_section)
+        playlist_section_layout.setContentsMargins(0, 0, 0, 0)
+        playlist_section_layout.setSpacing(8)
+        self.route_title_label = self._create_detail_section_label("播放线路")
+        playlist_section_layout.addWidget(self.route_title_label)
+        playlist_section_layout.addWidget(self.route_tab_bar)
+        playlist_section_layout.addWidget(self.playlist_group_combo)
+        self.episode_title_label = self._create_detail_section_label("选集")
+        playlist_section_layout.addWidget(self.episode_title_label)
+        playlist_section_layout.addWidget(self.playlist)
+
+        self.log_panel = QWidget()
+        self.log_panel.setObjectName("PlayerLogPanel")
+        log_panel_layout = QVBoxLayout(self.log_panel)
+        log_panel_layout.setContentsMargins(0, 0, 0, 0)
+        log_panel_layout.setSpacing(8)
+        self.log_title_label = self._create_detail_section_label("播放日志")
+        log_panel_layout.addWidget(self.log_title_label)
+        log_panel_layout.addWidget(self.log_view)
 
         self.report_timer = QTimer(self)
         self.report_timer.setInterval(5000)
@@ -560,10 +892,14 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._slider_dragging = False
 
         self.sidebar_actions_widget = QWidget()
+        self.sidebar_actions_widget.setObjectName("PlayerSidebarActions")
         sidebar_actions = QHBoxLayout(self.sidebar_actions_widget)
         sidebar_actions.setContentsMargins(0, 0, 0, 0)
+        sidebar_actions.setSpacing(8)
+        sidebar_actions.addStretch(1)
         sidebar_actions.addWidget(self.toggle_playlist_button)
         sidebar_actions.addWidget(self.toggle_details_button)
+        sidebar_actions.addWidget(self.toggle_log_button)
 
         self.bottom_area = QWidget()
         self.bottom_area.setMaximumHeight(72)
@@ -627,17 +963,26 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         video_layout.addWidget(self.video_stack)
 
         self.sidebar_splitter = QSplitter(Qt.Orientation.Vertical)
-        self.sidebar_splitter.addWidget(self.playlist)
         self.sidebar_splitter.addWidget(self.details)
+        self.sidebar_splitter.addWidget(self.playlist_section)
+        self.sidebar_splitter.addWidget(self.log_panel)
         self.sidebar_splitter.setChildrenCollapsible(True)
+        self.sidebar_splitter.setHandleWidth(8)
+        self.sidebar_splitter.setStretchFactor(0, 2)
+        self.sidebar_splitter.setStretchFactor(1, 1)
+        self.sidebar_splitter.setStretchFactor(2, 0)
 
         sidebar_layout = QVBoxLayout()
+        sidebar_layout.setContentsMargins(10, 10, 10, 10)
+        sidebar_layout.setSpacing(8)
         sidebar_layout.addWidget(self.sidebar_actions_widget)
-        sidebar_layout.addWidget(self.playlist_group_combo)
         sidebar_layout.addWidget(self.sidebar_splitter)
-        self.sidebar_container = QWidget()
-        self.sidebar_container.setMinimumWidth(250)
+        self.sidebar_container = PosterBackgroundWidget()
+        self.sidebar_container.setObjectName("PlayerSidebar")
+        self.sidebar_container.setMinimumWidth(self._SIDEBAR_MIN_WIDTH)
+        self.sidebar_container.setMaximumWidth(self._SIDEBAR_MAX_WIDTH)
         self.sidebar_container.setLayout(sidebar_layout)
+        self.sidebar_container.setStyleSheet(self._SIDEBAR_STYLESHEET)
 
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.main_splitter.addWidget(video_container)
@@ -676,9 +1021,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.ending_spin.valueChanged.connect(self._change_ending_seconds)
         self.volume_slider.valueChanged.connect(self._change_volume)
         self.playlist_group_combo.currentIndexChanged.connect(self._change_playlist_group)
+        self.route_tab_bar.currentChanged.connect(self._change_playlist_group)
         self.playlist.itemDoubleClicked.connect(self._play_clicked_item)
         self.toggle_playlist_button.clicked.connect(self._update_sidebar_visibility)
         self.toggle_details_button.clicked.connect(self._update_sidebar_visibility)
+        self.toggle_log_button.clicked.connect(self._update_sidebar_visibility)
         self.danmaku_source_button.clicked.connect(self._open_danmaku_source_dialog)
         self.danmaku_settings_button.clicked.connect(self._open_danmaku_settings_dialog)
         self.video_widget.double_clicked.connect(self.toggle_fullscreen)
@@ -724,6 +1071,11 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setFixedHeight(28)
         return button
+
+    def _create_detail_section_label(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("PlayerDetailSectionTitle")
+        return label
 
     def _create_skip_spinbox(self, prefix: str) -> QSpinBox:
         spinbox = QSpinBox()
@@ -772,27 +1124,71 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _render_playlist_group_combo(self) -> None:
         playlists = self._session_playlists()
         self.playlist_group_combo.blockSignals(True)
+        self.route_tab_bar.blockSignals(True)
         self.playlist_group_combo.clear()
+        while self.route_tab_bar.count():
+            self.route_tab_bar.removeTab(0)
         for index, playlist in enumerate(playlists):
-            self.playlist_group_combo.addItem(self._playlist_group_label(playlist, index))
+            label = self._playlist_group_label(playlist, index)
+            self.playlist_group_combo.addItem(label)
+            self.route_tab_bar.addTab(label)
         has_multiple_groups = len(playlists) > 1
         should_show_single_group_label = (
             len(playlists) == 1 and bool(playlists[0]) and bool(playlists[0][0].play_source)
         )
-        self.playlist_group_combo.setHidden(not (has_multiple_groups or should_show_single_group_label))
+        should_show_route_selector = has_multiple_groups or should_show_single_group_label
+        self.playlist_group_combo.setHidden(True)
+        self.route_tab_bar.setHidden(not should_show_route_selector)
+        self.route_title_label.setHidden(not should_show_route_selector)
         if self.session is not None and playlists:
             self.playlist_group_combo.setCurrentIndex(self.session.playlist_index)
+            self.route_tab_bar.setCurrentIndex(self.session.playlist_index)
+        self.route_tab_bar.blockSignals(False)
         self.playlist_group_combo.blockSignals(False)
 
     def _render_playlist_items(self) -> None:
         self.playlist.clear()
         if self.session is None:
+            self._update_playlist_height()
             return
         for item in self.session.playlist:
             widget_item = QListWidgetItem(item.title)
             widget_item.setToolTip(item.title)
+            widget_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.playlist.addItem(widget_item)
         self.playlist.setCurrentRow(self.current_index)
+        self._update_playlist_height()
+
+    def _playlist_column_count(self) -> int:
+        grid_width = max(self._PLAYLIST_GRID_SIZE.width(), 1)
+        available_width = self.playlist.viewport().width()
+        if available_width <= 0:
+            sidebar_width = self.sidebar_container.width() if hasattr(self, "sidebar_container") else 0
+            available_width = sidebar_width - 20 if sidebar_width > 0 else self._SIDEBAR_MIN_WIDTH
+        return max(1, available_width // grid_width)
+
+    def _update_playlist_height(self) -> None:
+        item_count = self.playlist.count()
+        if item_count <= 0:
+            height = self._PLAYLIST_MIN_HEIGHT
+        else:
+            columns = self._playlist_column_count()
+            rows = (item_count + columns - 1) // columns
+            visible_rows = min(rows, self._PLAYLIST_MAX_ROWS)
+            height = visible_rows * self._PLAYLIST_GRID_SIZE.height() + 12
+            height = max(self._PLAYLIST_MIN_HEIGHT, height)
+        self.playlist.setMaximumHeight(height)
+        if hasattr(self, "sidebar_splitter"):
+            details_height = 0 if self.details.isHidden() else max(self.details.sizeHint().height(), 1)
+            playlist_height = 0 if self.playlist_section.isHidden() else max(self.playlist_section.sizeHint().height(), height)
+            log_height = 0 if self.log_panel.isHidden() else max(self.log_panel.sizeHint().height(), 1)
+            self.sidebar_splitter.setSizes(
+                [
+                    details_height,
+                    playlist_height,
+                    log_height,
+                ]
+            )
 
     def _current_detail_actions(self) -> list[PlaybackDetailAction]:
         if self.session is None or not (0 <= self.current_index < len(self.session.playlist)):
@@ -833,10 +1229,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.detail_actions_widget.setHidden(not actions)
         for action in actions:
             button = QPushButton(action.label)
+            button.setObjectName("PlayerDetailActionButton")
             button.setToolTip(action.tooltip)
             button.setEnabled(action.enabled)
             button.setCheckable(True)
             button.setChecked(action.active)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setProperty("detail_action_base_enabled", action.enabled)
             button.clicked.connect(lambda _checked=False, action_id=action.id: self._run_detail_action(action_id))
             self.detail_actions_layout.addWidget(button)
@@ -913,14 +1311,17 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
 
     def _metadata_row_html(self, label: str, value: object) -> str:
         text = str(value or "")
+        label_html = f'<span class="meta-label">{html.escape(label)}:</span>'
         if "[a=cr:" not in text:
             trimmed = text.rstrip()
             leading_spaces = len(trimmed) - len(trimmed.lstrip(" "))
             value_html = html.escape(trimmed[leading_spaces:]).replace("\n", "<br>")
             if leading_spaces:
                 value_html = ("&nbsp;" * leading_spaces) + value_html
-            return f"{html.escape(label)}: {value_html}".rstrip()
-        return f"{html.escape(label)}: {self._render_metadata_value_html(text)}".rstrip()
+            if not value_html:
+                return label_html
+            return f'{label_html} <span class="meta-value">{value_html}</span>'.rstrip()
+        return f'{label_html} <span class="meta-value">{self._render_metadata_value_html(text)}</span>'.rstrip()
 
     def _detail_field_html(self, field: PlaybackDetailField) -> str:
         parts: list[str] = []
@@ -931,7 +1332,30 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             href = html.escape(self._metadata_action_url(part.action).toString())
             label = html.escape(part.label)
             parts.append(f'<a href="{href}">{label}</a>')
-        return f"{html.escape(field.label)}: {' / '.join(parts)}".rstrip()
+        value_html = " / ".join(parts)
+        if not value_html:
+            return f'<span class="meta-label">{html.escape(field.label)}:</span>'
+        return f'<span class="meta-label">{html.escape(field.label)}:</span> <span class="meta-value">{value_html}</span>'.rstrip()
+
+    def _metadata_grid_html(self, entries: list[str]) -> str:
+        filtered_entries = [entry for entry in entries if entry]
+        if not filtered_entries:
+            return ""
+        rows: list[str] = []
+        for index in range(0, len(filtered_entries), 2):
+            left = filtered_entries[index]
+            right = filtered_entries[index + 1] if index + 1 < len(filtered_entries) else ""
+            rows.append(
+                "<tr>"
+                f'<td width="50%" style="padding: 0 12px 5px 0; vertical-align: top;">{left}</td>'
+                f'<td width="50%" style="padding: 0 0 5px 8px; vertical-align: top;">{right}</td>'
+                "</tr>"
+            )
+        return (
+            '<table width="100%" cellspacing="0" cellpadding="0" style="border-collapse: collapse;">'
+            + "".join(rows)
+            + "</table>"
+        )
 
     def _handle_metadata_link(self, url: QUrl) -> None:
         if url.scheme() != "atv-player" or url.host() != "detail-field":
@@ -1318,6 +1742,25 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self._refresh_parse_combo_enabled_state()
         self._start_current_item_playback(start_position_seconds=start_position_seconds, pause=pause)
 
+    def _current_play_item_title(self) -> str:
+        if self.session is None or not (0 <= self.current_index < len(self.session.playlist)):
+            return ""
+        return str(self.session.playlist[self.current_index].title or "").strip()
+
+    def _render_detail_header(self) -> None:
+        if self.session is None:
+            self.detail_title_label.clear()
+            self.detail_summary_label.clear()
+            self.detail_summary_label.hide()
+            return
+
+        vod = self.session.vod
+        item_title = self._current_play_item_title()
+        title = str(vod.vod_name or item_title or "未命名影片").strip()
+        self.detail_title_label.setText(title)
+        self.detail_summary_label.clear()
+        self.detail_summary_label.hide()
+
     def _format_metadata_text(self, vod) -> str:
         if getattr(vod, "detail_style", "") == "live":
             if getattr(vod, "epg_current", ""):
@@ -1363,9 +1806,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
     def _format_metadata_html(self, vod) -> str:
         if getattr(vod, "detail_style", "") == "live":
             if getattr(vod, "epg_current", ""):
-                parts = [html.escape("当前节目:"), self._render_metadata_value_html(vod.epg_current)]
+                parts = ['<span class="meta-label">当前节目:</span>', self._render_metadata_value_html(vod.epg_current)]
                 if getattr(vod, "epg_schedule", ""):
-                    parts.extend(["", html.escape("今日节目单:"), self._render_metadata_value_html(vod.epg_schedule)])
+                    parts.extend(["", '<span class="meta-label">今日节目单:</span>', self._render_metadata_value_html(vod.epg_schedule)])
                 parts.extend(self._detail_field_html(field) for field in self._current_detail_fields())
                 return "<br>".join(parts)
             rows = [
@@ -1375,9 +1818,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 ("主播", vod.vod_actor),
                 ("人气", vod.vod_remarks),
             ]
-            parts = [self._metadata_row_html(label, value) for label, value in rows]
-            parts.extend(self._detail_field_html(field) for field in self._current_detail_fields())
-            return "<br>".join(parts)
+            entries = [self._metadata_row_html(label, value) for label, value in rows]
+            entries.extend(self._detail_field_html(field) for field in self._current_detail_fields())
+            return self._metadata_grid_html(entries)
         rows = [
             ("名称", vod.vod_name),
             ("类型", vod.type_name),
@@ -1395,18 +1838,36 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 for label, value in rows
                 if label not in {"年代", "地区", "语言", "豆瓣ID"}
             ]
-        parts = [self._metadata_row_html(label, value) for label, value in rows]
-        parts.extend(self._detail_field_html(field) for field in self._current_detail_fields())
-        parts.append("")
-        parts.append(html.escape("简介:"))
-        parts.append(self._render_metadata_value_html(vod.vod_content))
-        return "<br>".join(parts)
+        entries = [self._metadata_row_html(label, value) for label, value in rows]
+        entries.extend(self._detail_field_html(field) for field in self._current_detail_fields())
+        grid_html = self._metadata_grid_html(entries)
+        intro_html = '<span class="meta-label">简介:</span><br>' + self._render_metadata_value_html(vod.vod_content)
+        if not grid_html:
+            return intro_html
+        return grid_html + intro_html
 
     def _render_metadata(self) -> None:
         if self.session is None:
+            self._render_detail_header()
             self.metadata_view.clear()
+            self._update_metadata_height()
             return
+        self._render_detail_header()
         self.metadata_view.setHtml(self._format_metadata_html(self.session.vod))
+        QTimer.singleShot(0, self._update_metadata_height)
+
+    def _update_metadata_height(self) -> None:
+        if not hasattr(self, "metadata_view"):
+            return
+        width = self.metadata_view.viewport().width()
+        if width > 0:
+            self.metadata_view.document().setTextWidth(width)
+        document_height = int(self.metadata_view.document().size().height()) + 12
+        height = max(self._METADATA_MIN_HEIGHT, min(document_height, self._METADATA_MAX_HEIGHT))
+        self.metadata_view.setMinimumHeight(height)
+        self.metadata_view.setMaximumHeight(height)
+        if hasattr(self, "sidebar_splitter"):
+            self._update_playlist_height()
 
     def _apply_resolved_vod(self, resolved_vod: VodItem) -> None:
         if self.session is None:
@@ -1460,6 +1921,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.poster_label.clear()
         self.poster_label.setText("")
         self.poster_label.setPixmap(QPixmap())
+        self.sidebar_container.clear_background_pixmap()
         self._clear_video_poster_overlay()
 
     def _clear_video_poster_overlay(self) -> None:
@@ -1485,7 +1947,46 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         )
         self.video_poster_overlay.show()
 
-    def _load_poster_pixmap(self, source: str) -> QPixmap:
+    def _cover_scaled_pixmap(self, pixmap: QPixmap, target_size: QSize) -> QPixmap:
+        if pixmap.isNull() or target_size.width() <= 0 or target_size.height() <= 0:
+            return QPixmap()
+        scaled = pixmap.scaled(
+            target_size,
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        x = max((scaled.width() - target_size.width()) // 2, 0)
+        y = max((scaled.height() - target_size.height()) // 2, 0)
+        return scaled.copy(x, y, target_size.width(), target_size.height())
+
+    def _detail_poster_pixmap(self, pixmap: QPixmap) -> QPixmap:
+        if pixmap.isNull():
+            return QPixmap()
+        target_size = self._POSTER_SIZE
+        banner = QPixmap(target_size)
+        banner.fill(QColor("#dbe4ef"))
+
+        painter = QPainter(banner)
+        try:
+            background = self._cover_scaled_pixmap(pixmap, target_size)
+            if not background.isNull():
+                painter.drawPixmap(QRect(0, 0, target_size.width(), target_size.height()), background)
+                painter.fillRect(QRect(0, 0, target_size.width(), target_size.height()), QColor(15, 23, 42, 96))
+
+            inset_size = QSize(max(target_size.width() - 24, 1), max(target_size.height() - 20, 1))
+            foreground = pixmap.scaled(
+                inset_size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            x = max((target_size.width() - foreground.width()) // 2, 0)
+            y = max((target_size.height() - foreground.height()) // 2, 0)
+            painter.drawPixmap(x, y, foreground)
+        finally:
+            painter.end()
+        return banner
+
+    def _load_poster_pixmap(self, source: str, *, cover: bool = False) -> QPixmap:
         if not source:
             return QPixmap()
         source_path = Path(source)
@@ -1494,8 +1995,10 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         pixmap = QPixmap(str(source_path))
         if pixmap.isNull():
             return QPixmap()
+        if cover:
+            return self._detail_poster_pixmap(pixmap)
         return pixmap.scaled(
-            self._POSTER_SIZE,
+            self._POSTER_FETCH_SIZE,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
@@ -1508,7 +2011,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         def load() -> None:
             image = load_remote_poster_image(
                 image_url,
-                self._POSTER_SIZE,
+                self._POSTER_FETCH_SIZE,
                 timeout=self._POSTER_REQUEST_TIMEOUT_SECONDS,
                 get=httpx.get,
             )
@@ -1527,10 +2030,13 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self.poster_label.clear()
             self.poster_label.setText("")
             self.poster_label.setPixmap(QPixmap())
+            self.sidebar_container.clear_background_pixmap()
             return
         pixmap = QPixmap.fromImage(image)
+        detail_pixmap = self._detail_poster_pixmap(pixmap)
         self.poster_label.setText("")
-        self.poster_label.setPixmap(pixmap)
+        self.poster_label.setPixmap(detail_pixmap)
+        self.sidebar_container.set_background_pixmap(pixmap)
         if self._preferred_video_poster_source() == self._preferred_detail_poster_source():
             self._show_video_poster_overlay(pixmap)
             self._attach_audio_cover_if_available()
@@ -1619,21 +2125,26 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self.poster_label.clear()
             self.poster_label.setText("")
             self.poster_label.setPixmap(QPixmap())
+            self.sidebar_container.clear_background_pixmap()
             return
         source = self._preferred_detail_poster_source()
         if not source:
             self.poster_label.clear()
             self.poster_label.setText("")
             self.poster_label.setPixmap(QPixmap())
+            self.sidebar_container.clear_background_pixmap()
             return
-        pixmap = self._load_poster_pixmap(source)
-        if not pixmap.isNull():
+        background_pixmap = self._load_poster_pixmap(source)
+        if not background_pixmap.isNull():
+            pixmap = self._load_poster_pixmap(source, cover=True)
             self.poster_label.setText("")
-            self.poster_label.setPixmap(pixmap)
+            self.poster_label.setPixmap(pixmap if not pixmap.isNull() else background_pixmap)
+            self.sidebar_container.set_background_pixmap(background_pixmap)
             return
         self.poster_label.clear()
         self.poster_label.setText("")
         self.poster_label.setPixmap(QPixmap())
+        self.sidebar_container.clear_background_pixmap()
         self._start_poster_load(source, self._poster_request_id, target="detail")
 
     def _render_video_poster(self) -> None:
@@ -1648,7 +2159,9 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return
         detail_source = self._preferred_detail_poster_source()
         if source == detail_source:
-            pixmap = self.poster_label.pixmap()
+            pixmap = self.sidebar_container.background_pixmap()
+            if pixmap.isNull():
+                pixmap = self.poster_label.pixmap()
             if pixmap is not None and not pixmap.isNull():
                 self._show_video_poster_overlay(pixmap)
             else:
@@ -3805,7 +4318,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         if self._video_quality_options:
             menu.addMenu(self._build_video_quality_menu(menu))
         menu.addMenu(self._build_danmaku_menu(menu))
-        action = menu.addAction("弹幕源", self._open_danmaku_source_dialog)
+        menu.addAction("弹幕源", self._open_danmaku_source_dialog)
         menu.addAction("弹幕设置", self._open_danmaku_settings_dialog)
         menu.addAction("视频信息", self._toggle_video_info_from_menu)
         return menu
@@ -4842,8 +5355,15 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
         self.bottom_area.setHidden(is_fullscreen)
         self.sidebar_actions_widget.setHidden(is_fullscreen)
         self.sidebar_container.setHidden(sidebar_hidden)
-        self.playlist.setHidden(is_fullscreen or not self.toggle_playlist_button.isChecked())
-        self.details.setHidden(is_fullscreen or not self.toggle_details_button.isChecked())
+        hide_playlist = is_fullscreen or not self.toggle_playlist_button.isChecked()
+        hide_details = is_fullscreen or not self.toggle_details_button.isChecked()
+        hide_log = is_fullscreen or not self.toggle_log_button.isChecked()
+        self.playlist_section.setHidden(hide_playlist)
+        self.playlist.setHidden(hide_playlist)
+        self.details.setHidden(hide_details)
+        self.log_panel.setHidden(hide_log)
+        if hasattr(self, "sidebar_splitter"):
+            self._update_playlist_height()
 
     def _format_time(self, seconds: int) -> str:
         total_seconds = max(int(seconds), 0)
@@ -5092,6 +5612,12 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             self._save_config()
             self.closed_to_main.emit()
         super().closeEvent(event)
+
+    def resizeEvent(self, event) -> None:
+        if all(hasattr(self, name) for name in ("playlist", "details", "playlist_section", "log_panel")):
+            self._update_metadata_height()
+            self._update_playlist_height()
+        super().resizeEvent(event)
 
     def eventFilter(self, watched: object, event: QEvent) -> bool:
         if event.type() == QEvent.Type.MouseButtonPress and isinstance(event, QMouseEvent):
