@@ -308,6 +308,12 @@ class SpiderPluginImportResult:
     skipped_count: int = 0
 
 
+class SpiderPluginImportCancelled(Exception):
+    def __init__(self, result: SpiderPluginImportResult) -> None:
+        super().__init__("已取消导入")
+        self.result = result
+
+
 @dataclass(slots=True)
 class SpiderPluginLogEntry:
     id: int = 0

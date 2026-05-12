@@ -12,6 +12,7 @@ from atv_player.danmaku.models import DanmakuSourceGroup, DanmakuSourceOption, D
 from atv_player.models import (
     SpiderPluginAction,
     SpiderPluginConfig,
+    SpiderPluginImportCancelled,
     SpiderPluginImportProgress,
     SpiderPluginImportResult,
 )
@@ -336,6 +337,62 @@ def test_manager_import_github_repository_skips_same_version_and_updates_existin
     assert updated.enabled is False
     assert updated.display_name == "双星自定义"
     assert updated.config_text == "token=keep\n"
+
+
+def test_manager_import_github_repository_stops_after_cancellation_and_preserves_completed_changes(
+    tmp_path: Path,
+) -> None:
+    first_url = "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E6%BD%AE%E6%B5%81APP.txt"
+    second_url = "https://raw.githubusercontent.com/har01d5/tvbox/master/py/%E5%8F%8C%E6%98%9F.txt"
+    responses = {
+        "https://api.github.com/repos/har01d5/tvbox": httpx.Response(
+            200,
+            json={"default_branch": "master"},
+        ),
+        "https://raw.githubusercontent.com/har01d5/tvbox/master/spiders_v2.json": httpx.Response(
+            200,
+            json=[
+                {"file": "py/潮流APP.txt", "valid": True},
+                {"file": "py/双星.txt", "valid": True},
+            ],
+        ),
+        first_url: httpx.Response(
+            200,
+            text="//@version:6\nprint('a')\n",
+        ),
+        second_url: httpx.Response(
+            200,
+            text="//@version:7\nprint('b')\n",
+        ),
+    }
+
+    def fake_get(url: str, timeout: float = 15.0, follow_redirects: bool = False) -> httpx.Response:
+        response = responses.get(url)
+        if response is None:
+            raise AssertionError(f"Unexpected URL: {url}")
+        return response
+
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    manager = SpiderPluginManager(repository, FakeLoader(), get=fake_get)
+
+    def cancel_callback() -> bool:
+        return repository.find_plugin_by_source_value(first_url) is not None
+
+    with pytest.raises(SpiderPluginImportCancelled) as exc_info:
+        manager.import_github_repository(
+            "https://github.com/har01d5/tvbox",
+            cancel_callback=cancel_callback,
+        )
+
+    plugins = repository.list_plugins()
+
+    assert exc_info.value.result == SpiderPluginImportResult(
+        imported_count=1,
+        updated_count=0,
+        skipped_count=0,
+    )
+    assert [plugin.source_value for plugin in plugins] == [first_url]
+    assert plugins[0].plugin_version == 6
 
 
 def test_manager_iter_enabled_plugins_prioritizes_requested_plugin_ids(tmp_path: Path) -> None:

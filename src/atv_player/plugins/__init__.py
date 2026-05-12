@@ -15,6 +15,7 @@ from atv_player.models import (
     SpiderPluginAction,
     SpiderPluginActionContext,
     SpiderPluginConfig,
+    SpiderPluginImportCancelled,
     SpiderPluginImportProgress,
     SpiderPluginImportResult,
 )
@@ -211,6 +212,14 @@ class SpiderPluginManager:
             )
         )
 
+    def _raise_if_import_cancelled(
+        self,
+        cancel_callback: Callable[[], bool] | None,
+        result: SpiderPluginImportResult,
+    ) -> None:
+        if cancel_callback is not None and cancel_callback():
+            raise SpiderPluginImportCancelled(result)
+
     def _fetch_json(self, url: str) -> object:
         response = self._get(url, timeout=15.0, follow_redirects=True)
         if response.status_code >= 300:
@@ -353,19 +362,24 @@ class SpiderPluginManager:
         repo_url: str,
         *,
         progress_callback: Callable[[SpiderPluginImportProgress], None] | None = None,
+        cancel_callback: Callable[[], bool] | None = None,
     ) -> SpiderPluginImportResult:
+        result = SpiderPluginImportResult()
         owner, repo = _parse_github_repo(repo_url)
+        self._raise_if_import_cancelled(cancel_callback, result)
         self._emit_import_progress(progress_callback, stage="resolve_repo", message="正在解析仓库信息")
+        self._raise_if_import_cancelled(cancel_callback, result)
         default_branch = self._load_github_default_branch(owner, repo)
         self._emit_import_progress(progress_callback, stage="fetch_manifest", message="正在读取 spiders_v2.json")
+        self._raise_if_import_cancelled(cancel_callback, result)
         manifest = self._fetch_json(_raw_github_url(owner, repo, default_branch, "spiders_v2.json"))
         if not isinstance(manifest, list):
             raise ValueError("spiders_v2.json 格式无效")
 
-        result = SpiderPluginImportResult()
         valid_entries = [entry for entry in manifest if isinstance(entry, dict) and str(entry.get("file") or "").strip()]
         total = len(valid_entries)
         for index, entry in enumerate(valid_entries, start=1):
+            self._raise_if_import_cancelled(cancel_callback, result)
             file_path = str(entry.get("file") or "").strip()
             self._emit_import_progress(
                 progress_callback,
@@ -380,6 +394,7 @@ class SpiderPluginManager:
                 continue
             try:
                 source_url = _raw_github_url(owner, repo, default_branch, file_path)
+                self._raise_if_import_cancelled(cancel_callback, result)
                 source_text = self._fetch_text(source_url)
                 plugin_version = _parse_plugin_version(source_text)
                 existing = self._repository.find_plugin_by_source_value(source_url)
@@ -391,8 +406,9 @@ class SpiderPluginManager:
                         enabled=bool(entry.get("valid", True)),
                         plugin_version=plugin_version,
                     )
-                    self.refresh_plugin(plugin.id)
                     result.imported_count += 1
+                    self._raise_if_import_cancelled(cancel_callback, result)
+                    self.refresh_plugin(plugin.id)
                     continue
                 if existing.plugin_version == plugin_version:
                     result.skipped_count += 1
@@ -407,8 +423,11 @@ class SpiderPluginManager:
                     config_text=existing.config_text,
                     plugin_version=plugin_version,
                 )
-                self.refresh_plugin(existing.id)
                 result.updated_count += 1
+                self._raise_if_import_cancelled(cancel_callback, result)
+                self.refresh_plugin(existing.id)
+            except SpiderPluginImportCancelled:
+                raise
             except Exception:
                 result.skipped_count += 1
         return result
