@@ -41,6 +41,7 @@ _YOUTUBE_PAGE_HOSTS = {
     "youtu.be",
 }
 _proxy_decider_loader: Callable[[], ProxyDecider | None] | None = None
+_http_get_loader: Callable[[], Callable[..., object] | None] | None = None
 
 
 def _looks_like_unsupported_page_url(source: str) -> bool:
@@ -92,6 +93,21 @@ def poster_cache_path(image_url: str) -> Path:
 def set_proxy_decider_loader(loader: Callable[[], ProxyDecider | None] | None) -> None:
     global _proxy_decider_loader
     _proxy_decider_loader = loader
+
+
+def set_http_get_loader(loader: Callable[[], Callable[..., object] | None] | None) -> None:
+    global _http_get_loader
+    _http_get_loader = loader
+
+
+def _effective_http_get(get_override: Callable[..., object] | None) -> Callable[..., object]:
+    if get_override is not None:
+        return get_override
+    if _http_get_loader is not None:
+        resolved = _http_get_loader()
+        if resolved is not None:
+            return resolved
+    return httpx.get
 
 
 def _effective_proxy_decider(proxy_decider: ProxyDecider | None) -> ProxyDecider | None:
@@ -181,7 +197,7 @@ def load_remote_poster_image(
     image_url: str,
     target_size: QSize,
     timeout: float = POSTER_REQUEST_TIMEOUT_SECONDS,
-    get=httpx.get,
+    get: Callable[..., object] | None = None,
     proxy_decider: ProxyDecider | None = None,
 ) -> QImage | None:
     normalized_url = normalize_poster_url(image_url)
@@ -193,8 +209,9 @@ def load_remote_poster_image(
     if cached_image is not None:
         return cached_image
 
+    http_get = _effective_http_get(get)
     try:
-        response = get(
+        response = http_get(
             normalized_url,
             headers=build_poster_request_headers(normalized_url),
             timeout=timeout,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 import inspect
 import threading
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -223,8 +223,38 @@ def _looks_like_drive_share_link(value: str) -> bool:
     return any(hostname == domain or hostname.endswith(f".{domain}") for domain in _SUPPORTED_DRIVE_DOMAINS)
 
 
+_http_get_loader: Callable[[], Callable[..., Any] | None] | None = None
+_http_post_loader: Callable[[], Callable[..., Any] | None] | None = None
+
+
+def set_main_window_http_get_loader(loader: Callable[[], Callable[..., Any] | None] | None) -> None:
+    global _http_get_loader
+    _http_get_loader = loader
+
+
+def set_main_window_http_post_loader(loader: Callable[[], Callable[..., Any] | None] | None) -> None:
+    global _http_post_loader
+    _http_post_loader = loader
+
+
+def _resolve_http_get() -> Callable[..., Any]:
+    if _http_get_loader is not None:
+        resolved = _http_get_loader()
+        if resolved is not None:
+            return resolved
+    return httpx.get
+
+
+def _resolve_http_post() -> Callable[..., Any]:
+    if _http_post_loader is not None:
+        resolved = _http_post_loader()
+        if resolved is not None:
+            return resolved
+    return httpx.post
+
+
 def load_direct_parse_detail(url: str) -> dict[str, Any]:
-    response = httpx.get(
+    response = _resolve_http_get()(
         _DIRECT_PARSE_DETAIL_API,
         params={"ac": "list", "url": url},
         timeout=10.0,
@@ -236,7 +266,7 @@ def load_direct_parse_detail(url: str) -> dict[str, Any]:
 
 
 def load_360_hot_searches(hot_type: str = _DEFAULT_GLOBAL_SEARCH_HOT_TYPE) -> list[dict[str, str]]:
-    response = httpx.get(
+    response = _resolve_http_get()(
         _HOTKEY_360_API,
         params={"type": hot_type},
         timeout=5.0,
@@ -269,7 +299,7 @@ def load_tencent_hot_searches(hot_type: str = "hot") -> list[dict[str, str]]:
 
 
 def load_tencent_hot_search_sections() -> tuple[list[tuple[str, str]], dict[str, list[dict[str, str]]]]:
-    response = httpx.post(
+    response = _resolve_http_post()(
         _HOTKEY_TENCENT_API,
         headers={
             "content-type": "application/json",
@@ -320,7 +350,7 @@ def load_tencent_hot_search_sections() -> tuple[list[tuple[str, str]], dict[str,
 
 
 def load_iqiyi_hot_search_sections() -> tuple[list[tuple[str, str]], dict[str, list[dict[str, str]]]]:
-    response = httpx.get(
+    response = _resolve_http_get()(
         _HOTKEY_IQIYI_API,
         params={
             "device_id": "7b16c55cfdf4edb1a33cd4fc07bc0f69",
@@ -390,7 +420,7 @@ def load_global_search_hotkey_payload(
 
 
 def load_360_search_suggestions(keyword: str) -> list[str]:
-    response = httpx.get(
+    response = _resolve_http_get()(
         _SUGGESTION_360_API,
         params={"word": keyword, "encodein": "utf-8", "encodeout": "utf-8"},
         timeout=5.0,

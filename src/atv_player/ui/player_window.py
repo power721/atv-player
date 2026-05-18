@@ -131,6 +131,22 @@ _INLINE_METADATA_CR_RE = re.compile(r"\[a=cr:(?P<payload>\{.*?\})/\](?P<label>.*
 logger = logging.getLogger(__name__)
 
 
+_http_get_loader: Callable[[], Callable[..., object] | None] | None = None
+
+
+def set_player_window_http_get_loader(loader: Callable[[], Callable[..., object] | None] | None) -> None:
+    global _http_get_loader
+    _http_get_loader = loader
+
+
+def _resolve_http_get() -> Callable[..., object]:
+    if _http_get_loader is not None:
+        resolved = _http_get_loader()
+        if resolved is not None:
+            return resolved
+    return httpx.get
+
+
 def _summarize_media_url(url: str) -> str:
     if url.startswith("data:application/dash+xml;base64,"):
         return "data:application/dash+xml;base64,..."
@@ -2150,7 +2166,6 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
                 image_url,
                 self._POSTER_SIZE,
                 timeout=self._POSTER_REQUEST_TIMEOUT_SECONDS,
-                get=httpx.get,
             )
             if self._is_window_alive():
                 if target == "video":
@@ -6031,7 +6046,7 @@ class PlayerWindow(QWidget, AsyncGuardMixin):
             return subtitle_path.read_text(encoding="utf-8")
         current_item = self._current_play_item()
         headers = {} if current_item is None else dict(current_item.headers)
-        response = httpx.get(subtitle.url, headers=headers, timeout=10.0, follow_redirects=True)
+        response = _resolve_http_get()(subtitle.url, headers=headers, timeout=10.0, follow_redirects=True)
         return str(getattr(response, "text", "") or "")
 
     def _load_external_subtitle(

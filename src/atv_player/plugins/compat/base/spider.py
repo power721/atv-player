@@ -15,6 +15,7 @@ from atv_player.network_proxy import ProxyDecider, build_requests_proxies_for_ur
 
 _CACHE_ROOT = Path.home() / ".cache" / "atv-player" / "plugins" / "spider-cache"
 _proxy_decider_loader: Callable[[], ProxyDecider | None] | None = None
+_session_loader: Callable[[], requests.Session | None] | None = None
 
 
 def set_cache_root(path: Path | str) -> None:
@@ -28,10 +29,21 @@ def set_proxy_decider_loader(loader: Callable[[], ProxyDecider | None] | None) -
     _proxy_decider_loader = loader
 
 
+def set_session_loader(loader: Callable[[], requests.Session | None] | None) -> None:
+    global _session_loader
+    _session_loader = loader
+
+
 def _effective_proxy_decider() -> ProxyDecider | None:
     if _proxy_decider_loader is None:
         return None
     return _proxy_decider_loader()
+
+
+def _effective_session() -> requests.Session | None:
+    if _session_loader is None:
+        return None
+    return _session_loader()
 
 
 def _cache_path(key: str) -> Path:
@@ -98,8 +110,7 @@ class Spider(metaclass=ABCMeta):
             stream=False,
             allow_redirects=True,
     ):
-        response = requests.get(
-            url,
+        kwargs = dict(
             params=params,
             cookies=cookies,
             headers=headers,
@@ -109,6 +120,8 @@ class Spider(metaclass=ABCMeta):
             allow_redirects=allow_redirects,
             proxies=build_requests_proxies_for_url(_effective_proxy_decider(), url),
         )
+        session = _effective_session()
+        response = session.get(url, **kwargs) if session is not None else requests.get(url, **kwargs)
         response.encoding = "utf-8"
         return _buffer_and_close_response(response)
 
@@ -125,8 +138,7 @@ class Spider(metaclass=ABCMeta):
             stream=False,
             allow_redirects=True,
     ):
-        response = requests.post(
-            url,
+        kwargs = dict(
             params=params,
             data=data,
             json=json,
@@ -138,6 +150,8 @@ class Spider(metaclass=ABCMeta):
             allow_redirects=allow_redirects,
             proxies=build_requests_proxies_for_url(_effective_proxy_decider(), url),
         )
+        session = _effective_session()
+        response = session.post(url, **kwargs) if session is not None else requests.post(url, **kwargs)
         response.encoding = "utf-8"
         return _buffer_and_close_response(response)
 
