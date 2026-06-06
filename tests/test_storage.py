@@ -89,6 +89,19 @@ def test_settings_repository_round_trips_builtin_tab_overrides(tmp_path: Path) -
     )
 
 
+def test_settings_repository_round_trips_telegram_api_config(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = repo.load_config()
+    config.telegram_api_id = 12345
+    config.telegram_api_hash = " telegram-api-hash "
+
+    repo.save_config(config)
+    loaded = repo.load_config()
+
+    assert loaded.telegram_api_id == 12345
+    assert loaded.telegram_api_hash == "telegram-api-hash"
+
+
 def test_settings_repository_round_trips_home_mode(tmp_path: Path) -> None:
     repo = SettingsRepository(tmp_path / "app.db")
     config = repo.load_config()

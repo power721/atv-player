@@ -1,6 +1,7 @@
 import errno
 import http.client
 from io import BytesIO
+from types import SimpleNamespace
 
 from atv_player.player.bluray_iso import (
     _CachedIsoSegment,
@@ -1507,6 +1508,186 @@ def test_local_hls_proxy_server_streams_iso_response_reuses_cache_for_sequential
         f"bytes=0-{1024 * 1024 - 1}",
         f"bytes={1024 * 1024}-{len(payload) - 1}",
     ]
+
+
+def test_local_hls_proxy_server_streams_telegram_range_as_one_download() -> None:
+    payload = bytes(range(100))
+
+    class FakeTelegramMediaService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[int, int, int, int | None]] = []
+
+        def get_media(self, chat_id: int, msg_id: int):
+            assert chat_id == -100
+            assert msg_id == 2583
+            return SimpleNamespace(size=len(payload), mime_type="video/mp4")
+
+        def iter_media_bytes(
+            self,
+            chat_id: int,
+            msg_id: int,
+            *,
+            offset: int = 0,
+            limit: int | None = None,
+        ):
+            self.calls.append((chat_id, msg_id, offset, limit))
+            end = len(payload) if limit is None else min(len(payload), offset + limit)
+            yield payload[offset: end]
+
+    class FakeHandler:
+        def __init__(self) -> None:
+            self.status_code: int | None = None
+            self.headers: list[tuple[str, str]] = []
+            self.wfile = BytesIO()
+            self.ended = False
+
+        def send_response(self, status_code: int) -> None:
+            self.status_code = status_code
+
+        def send_header(self, key: str, value: str) -> None:
+            self.headers.append((key, value))
+
+        def end_headers(self) -> None:
+            self.ended = True
+
+    service = FakeTelegramMediaService()
+    server = LocalHlsProxyServer(telegram_media_service=service)
+    handler = FakeHandler()
+
+    handled = server._stream_telegram_media_response(
+        "/tg/video/-100/2583",
+        {"Range": "bytes=10-"},
+        handler,
+    )
+
+    assert handled is True
+    assert handler.status_code == 206
+    assert ("Content-Type", "video/mp4") in handler.headers
+    assert ("Content-Length", "90") in handler.headers
+    assert ("Content-Range", "bytes 10-99/100") in handler.headers
+    assert ("Accept-Ranges", "bytes") in handler.headers
+    assert handler.wfile.getvalue() == payload[10:]
+    assert service.calls == [(-100, 2583, 10, 90)]
+
+
+def test_local_hls_proxy_server_streams_unranged_telegram_get_as_full_response() -> None:
+    payload = bytes(index % 251 for index in range(6 * 1024 * 1024))
+
+    class FakeTelegramMediaService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[int, int, int, int | None]] = []
+
+        def get_media(self, chat_id: int, msg_id: int):
+            assert chat_id == -100
+            assert msg_id == 142
+            return SimpleNamespace(size=len(payload), mime_type="video/mp4")
+
+        def iter_media_bytes(
+            self,
+            chat_id: int,
+            msg_id: int,
+            *,
+            offset: int = 0,
+            limit: int | None = None,
+        ):
+            self.calls.append((chat_id, msg_id, offset, limit))
+            end = len(payload) if limit is None else min(len(payload), offset + limit)
+            yield payload[offset: end]
+
+    class FakeHandler:
+        def __init__(self) -> None:
+            self.status_code: int | None = None
+            self.headers: list[tuple[str, str]] = []
+            self.wfile = BytesIO()
+            self.ended = False
+
+        def send_response(self, status_code: int) -> None:
+            self.status_code = status_code
+
+        def send_header(self, key: str, value: str) -> None:
+            self.headers.append((key, value))
+
+        def end_headers(self) -> None:
+            self.ended = True
+
+    service = FakeTelegramMediaService()
+    server = LocalHlsProxyServer(telegram_media_service=service)
+    handler = FakeHandler()
+
+    handled = server._stream_telegram_media_response(
+        "/tg/video/-100/142",
+        {},
+        handler,
+    )
+
+    assert handled is True
+    assert handler.status_code == 200
+    assert ("Content-Type", "video/mp4") in handler.headers
+    assert ("Content-Length", str(len(payload))) in handler.headers
+    assert not any(header_name == "Content-Range" for header_name, _header_value in handler.headers)
+    assert ("Accept-Ranges", "bytes") in handler.headers
+    assert handler.wfile.getvalue() == payload
+    assert service.calls == [(-100, 142, 0, len(payload))]
+
+
+def test_local_hls_proxy_server_honors_open_ended_telegram_range() -> None:
+    payload = bytes(index % 251 for index in range(6 * 1024 * 1024))
+
+    class FakeTelegramMediaService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[int, int, int, int | None]] = []
+
+        def get_media(self, chat_id: int, msg_id: int):
+            assert chat_id == -100
+            assert msg_id == 142
+            return SimpleNamespace(size=len(payload), mime_type="video/mp4")
+
+        def iter_media_bytes(
+            self,
+            chat_id: int,
+            msg_id: int,
+            *,
+            offset: int = 0,
+            limit: int | None = None,
+        ):
+            self.calls.append((chat_id, msg_id, offset, limit))
+            end = len(payload) if limit is None else min(len(payload), offset + limit)
+            yield payload[offset: end]
+
+    class FakeHandler:
+        def __init__(self) -> None:
+            self.status_code: int | None = None
+            self.headers: list[tuple[str, str]] = []
+            self.wfile = BytesIO()
+            self.ended = False
+
+        def send_response(self, status_code: int) -> None:
+            self.status_code = status_code
+
+        def send_header(self, key: str, value: str) -> None:
+            self.headers.append((key, value))
+
+        def end_headers(self) -> None:
+            self.ended = True
+
+    service = FakeTelegramMediaService()
+    server = LocalHlsProxyServer(telegram_media_service=service)
+    handler = FakeHandler()
+
+    handled = server._stream_telegram_media_response(
+        "/tg/video/-100/142",
+        {"Range": "bytes=0-"},
+        handler,
+    )
+
+    assert handled is True
+    assert handler.status_code == 206
+    assert ("Content-Type", "video/mp4") in handler.headers
+    assert ("Content-Length", str(len(payload))) in handler.headers
+    assert ("Content-Range", f"bytes 0-{len(payload) - 1}/{len(payload)}") in handler.headers
+    assert ("Accept-Ranges", "bytes") in handler.headers
+    assert handler.wfile.getvalue() == payload
+    assert service.calls == [(-100, 142, 0, len(payload))]
 
 
 def test_local_hls_proxy_server_stops_iso_stream_quietly_when_client_disconnects() -> None:

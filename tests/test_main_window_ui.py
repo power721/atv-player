@@ -1890,6 +1890,33 @@ def test_main_window_places_global_catalog_after_douban(qtbot) -> None:
     assert window._builtin_tab_definitions[1].key == "global_catalog"
 
 
+def test_main_window_keeps_backend_telegram_and_adds_local_channel_tab(qtbot) -> None:
+    backend_telegram = FakeStaticController()
+    local_telegram = SearchableController([_vod("本地频道")], total=1)
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        global_catalog_controller=FakeStaticController(),
+        telegram_controller=backend_telegram,
+        telegram_channels_controller=local_telegram,
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=WidthAwarePluginManager(),
+    )
+    qtbot.addWidget(window)
+
+    builtin_by_key = {definition.key: definition for definition in window._builtin_tab_definitions}
+
+    assert builtin_by_key["telegram"].title == "电报影视"
+    assert builtin_by_key["telegram"].search_controller is backend_telegram
+    assert builtin_by_key["telegram_channels"].title == "电报频道"
+    assert builtin_by_key["telegram_channels"].search_controller is local_telegram
+
+
 class FakeMediaDetailController:
     def __init__(self) -> None:
         self.vod_calls: list[VodItem] = []
@@ -7321,6 +7348,52 @@ def test_main_window_passes_log_service_to_advanced_settings_dialog(qtbot, monke
     assert opened == [log_service]
 
 
+def test_main_window_refreshes_local_telegram_categories_after_advanced_settings(qtbot, monkeypatch) -> None:
+    opened: list[object] = []
+    backend_telegram = FakeStaticController()
+    local_telegram = FakeStaticController()
+
+    class FakeDialog:
+        def __init__(
+            self,
+            config,
+            save_config,
+            parent=None,
+            apply_theme=None,
+            app_log_service=None,
+            youtube_category_text_loader=None,
+            telegram_controller=None,
+        ) -> None:
+            del config, save_config, parent, apply_theme, app_log_service, youtube_category_text_loader
+            opened.append(telegram_controller)
+
+        def exec(self) -> int:
+            return 0
+
+    monkeypatch.setattr(main_window_module, "AdvancedSettingsDialog", FakeDialog)
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=backend_telegram,
+        telegram_channels_controller=local_telegram,
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        save_config=lambda: None,
+    )
+    qtbot.addWidget(window)
+    reloads: list[bool] = []
+    window.telegram_channels_page.reload_categories = lambda: reloads.append(True)
+
+    window._open_advanced_settings()
+
+    assert opened == [local_telegram]
+    assert reloads == [True]
+
+
 def test_main_window_advanced_settings_save_updates_shared_config(qtbot, monkeypatch) -> None:
     config = AppConfig()
     saved: list[tuple[bool, str, str]] = []
@@ -7554,6 +7627,23 @@ def test_advanced_settings_dialog_saves_trimmed_values(qtbot) -> None:
     assert len(saved) == 1
 
 
+def test_advanced_settings_dialog_saves_telegram_api_config(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    saved: list[AppConfig] = []
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: saved.append(config))
+    qtbot.addWidget(dialog)
+
+    dialog.telegram_api_id_edit.setText("12345")
+    dialog.telegram_api_hash_edit.setText(" telegram-api-hash ")
+    dialog._save()
+
+    assert config.telegram_api_id == 12345
+    assert config.telegram_api_hash == "telegram-api-hash"
+    assert len(saved) == 1
+
+
 def test_advanced_settings_dialog_saves_preset_tmdb_proxy(qtbot) -> None:
     from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
 
@@ -7676,8 +7766,8 @@ def test_advanced_settings_dialog_uses_larger_default_size(qtbot) -> None:
     dialog = AdvancedSettingsDialog(AppConfig(), save_config=lambda: None)
     qtbot.addWidget(dialog)
 
-    assert dialog.size().width() == 920
-    assert dialog.size().height() == 560
+    assert dialog.size().width() == 1100
+    assert dialog.size().height() == 640
 
 
 def test_advanced_settings_dialog_saves_theme_mode_and_calls_theme_refresh(qtbot) -> None:
@@ -7753,6 +7843,306 @@ def test_advanced_settings_dialog_tab_bar_uses_pointing_hand_cursor(qtbot) -> No
     qtbot.addWidget(dialog)
 
     assert dialog.settings_tabs.tabBar().cursor().shape() == Qt.CursorShape.PointingHandCursor
+
+
+def test_advanced_settings_dialog_hides_telegram_login_controls_when_logged_in(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    user = SimpleNamespace(display_name="Alice", username="alice")
+    chat = SimpleNamespace(id=-1001, title="电影频道", kind="channel", enabled=True, last_indexed_msg_id=42)
+
+    class TelegramController:
+        def get_local_user_info(self):
+            return user
+
+        def list_local_chats(self):
+            return [chat]
+
+    dialog = AdvancedSettingsDialog(
+        AppConfig(telegram_api_id=12345, telegram_api_hash="hash"),
+        save_config=lambda: None,
+        telegram_controller=TelegramController(),
+    )
+    qtbot.addWidget(dialog)
+
+    qtbot.waitUntil(lambda: dialog.telegram_status_label.text() == "已登录：Alice @alice", timeout=1000)
+    assert dialog.telegram_status_label.text() == "已登录：Alice @alice"
+    assert dialog.telegram_qr_login_button.isHidden() is True
+    assert dialog.telegram_phone_login_button.isHidden() is True
+    assert dialog.telegram_logout_button.isHidden() is False
+    assert dialog.telegram_refresh_chats_button.isEnabled() is True
+    assert dialog.telegram_channel_table.rowCount() == 1
+    assert [
+        dialog.telegram_channel_table.horizontalHeaderItem(index).text()
+        for index in range(dialog.telegram_channel_table.columnCount())
+    ] == ["搜索", "浏览", "名称", "类型", "可见性", "Web访问", "ID", "已索引消息"]
+    assert dialog.telegram_channel_table.item(0, 4).text() == "私密"
+    assert dialog.telegram_channel_table.item(0, 5).text() == "Web不可访问"
+
+
+def test_advanced_settings_dialog_logout_clears_telegram_channels(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    chat = SimpleNamespace(id=-1001, title="电影频道", kind="channel", enabled=True, last_indexed_msg_id=42)
+
+    class TelegramController:
+        def __init__(self) -> None:
+            self.user = SimpleNamespace(display_name="Alice", username="alice")
+
+        def get_local_user_info(self):
+            return self.user
+
+        def list_local_chats(self):
+            return [chat]
+
+        def logout_local(self):
+            self.user = None
+
+    controller = TelegramController()
+    dialog = AdvancedSettingsDialog(
+        AppConfig(telegram_api_id=12345, telegram_api_hash="hash"),
+        save_config=lambda: None,
+        telegram_controller=controller,
+    )
+    qtbot.addWidget(dialog)
+
+    qtbot.waitUntil(lambda: dialog.telegram_channel_table.rowCount() == 1, timeout=1000)
+    assert dialog.telegram_channel_table.rowCount() == 1
+
+    dialog._logout_telegram()
+
+    assert controller.user is None
+    assert dialog.telegram_status_label.text() == "未登录"
+    assert dialog.telegram_channel_table.rowCount() == 0
+    assert dialog.telegram_qr_login_button.isHidden() is False
+    assert dialog.telegram_logout_button.isHidden() is True
+    assert dialog.telegram_channel_status_label.text() == "已退出登录"
+
+
+def test_advanced_settings_dialog_refreshes_telegram_chats_in_background(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    started = threading.Event()
+    release = threading.Event()
+    refreshed_chat = SimpleNamespace(id=-1001, title="电影频道", kind="channel", enabled=True, last_indexed_msg_id=42)
+
+    class TelegramController:
+        def __init__(self) -> None:
+            self.chats = []
+
+        def get_local_user_info(self):
+            return SimpleNamespace(display_name="Alice", username="alice")
+
+        def list_local_chats(self):
+            return list(self.chats)
+
+        def refresh_local_chats(self):
+            started.set()
+            release.wait(1)
+            self.chats = [refreshed_chat]
+            return list(self.chats)
+
+    dialog = AdvancedSettingsDialog(
+        AppConfig(telegram_api_id=12345, telegram_api_hash="hash"),
+        save_config=lambda: None,
+        telegram_controller=TelegramController(),
+    )
+    qtbot.addWidget(dialog)
+
+    dialog._refresh_telegram_chats()
+
+    qtbot.waitUntil(started.is_set, timeout=1000)
+    assert dialog.telegram_refresh_chats_button.isEnabled() is False
+    assert dialog.telegram_status_label.text() == "已登录：Alice @alice"
+    assert dialog.telegram_channel_status_label.text() == "频道刷新中..."
+
+    release.set()
+    qtbot.waitUntil(lambda: dialog.telegram_channel_status_label.text() == "已刷新 1 个频道/群组", timeout=1000)
+    assert dialog.telegram_channel_table.rowCount() == 1
+    assert dialog.telegram_status_label.text() == "已登录：Alice @alice"
+    assert dialog.telegram_channel_status_label.text() == "已刷新 1 个频道/群组"
+
+
+def test_advanced_settings_dialog_filters_and_sorts_telegram_channels(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    chats = [
+        SimpleNamespace(
+            id=-2,
+            title="电影频道",
+            kind="channel",
+            username="",
+            enabled=True,
+            browse_enabled=False,
+            last_indexed_msg_id=2,
+        ),
+        SimpleNamespace(
+            id=-100,
+            title="资源群",
+            kind="group",
+            username="share",
+            enabled=True,
+            browse_enabled=True,
+            last_indexed_msg_id=100,
+        ),
+        SimpleNamespace(
+            id=-10,
+            title="未配置频道",
+            kind="channel",
+            username="",
+            enabled=False,
+            browse_enabled=False,
+            last_indexed_msg_id=10,
+        ),
+    ]
+
+    class TelegramController:
+        def get_local_user_info(self):
+            return SimpleNamespace(display_name="Alice", username="alice")
+
+        def list_local_chats(self):
+            return chats
+
+    dialog = AdvancedSettingsDialog(
+        AppConfig(telegram_api_id=12345, telegram_api_hash="hash"),
+        save_config=lambda: None,
+        telegram_controller=TelegramController(),
+    )
+    qtbot.addWidget(dialog)
+    qtbot.waitUntil(lambda: dialog.telegram_channel_table.rowCount() == 3, timeout=1000)
+
+    def row_for_title(title: str) -> int:
+        for row in range(dialog.telegram_channel_table.rowCount()):
+            if dialog.telegram_channel_table.item(row, 2).text() == title:
+                return row
+        raise AssertionError(f"missing row: {title}")
+
+    def visible_titles() -> list[str]:
+        return [
+            dialog.telegram_channel_table.item(row, 2).text()
+            for row in range(dialog.telegram_channel_table.rowCount())
+            if not dialog.telegram_channel_table.isRowHidden(row)
+        ]
+
+    private_row = row_for_title("电影频道")
+    public_row = row_for_title("资源群")
+    assert dialog.telegram_channel_usage_filter_combo.findData("listen") == -1
+    assert dialog.telegram_channel_table.columnCount() == 8
+    assert dialog.telegram_channel_table.horizontalHeaderItem(2).text() == "名称"
+    assert dialog.telegram_channel_table.item(private_row, 4).text() == "私密"
+    assert dialog.telegram_channel_table.item(private_row, 5).text() == "Web不可访问"
+    assert dialog.telegram_channel_table.cellWidget(private_row, 0).isEnabled() is True
+    assert dialog.telegram_channel_table.item(public_row, 4).text() == "公开"
+    assert dialog.telegram_channel_table.item(public_row, 5).text() == "可访问"
+    assert dialog.telegram_channel_table.item(public_row, 0).text() == ""
+    assert dialog.telegram_channel_table.cellWidget(public_row, 0).isEnabled() is False
+
+    dialog.telegram_channel_search_edit.setText("资源")
+    assert visible_titles() == ["资源群"]
+    assert dialog.telegram_channel_count_label.text() == "1/3"
+
+    dialog.telegram_channel_search_edit.clear()
+    dialog.telegram_channel_usage_filter_combo.setCurrentIndex(
+        dialog.telegram_channel_usage_filter_combo.findData("")
+    )
+    dialog.telegram_channel_type_filter_combo.setCurrentIndex(
+        dialog.telegram_channel_type_filter_combo.findData("group")
+    )
+    assert visible_titles() == ["资源群"]
+
+    dialog.telegram_channel_type_filter_combo.setCurrentIndex(
+        dialog.telegram_channel_type_filter_combo.findData("")
+    )
+    dialog.telegram_channel_visibility_filter_combo.setCurrentIndex(
+        dialog.telegram_channel_visibility_filter_combo.findData("public")
+    )
+    assert visible_titles() == ["资源群"]
+
+    dialog.telegram_channel_visibility_filter_combo.setCurrentIndex(
+        dialog.telegram_channel_visibility_filter_combo.findData("private")
+    )
+    assert visible_titles() == ["电影频道", "未配置频道"]
+
+    dialog.telegram_channel_visibility_filter_combo.setCurrentIndex(
+        dialog.telegram_channel_visibility_filter_combo.findData("")
+    )
+    dialog.telegram_channel_table.sortItems(6, Qt.SortOrder.AscendingOrder)
+
+    assert [
+        int(dialog.telegram_channel_table.item(row, 6).text())
+        for row in range(dialog.telegram_channel_table.rowCount())
+    ] == [-100, -10, -2]
+
+
+def test_advanced_settings_dialog_checks_telegram_status_in_background(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    release = threading.Event()
+
+    class TelegramController:
+        def get_local_user_info(self):
+            release.wait(1)
+            return SimpleNamespace(display_name="Alice", username="alice")
+
+        def list_local_chats(self):
+            return []
+
+    started_at = time.monotonic()
+    dialog = AdvancedSettingsDialog(
+        AppConfig(telegram_api_id=12345, telegram_api_hash="hash"),
+        save_config=lambda: None,
+        telegram_controller=TelegramController(),
+    )
+    elapsed = time.monotonic() - started_at
+    qtbot.addWidget(dialog)
+
+    assert elapsed < 0.2
+    assert dialog.telegram_status_label.text() == "检查登录状态中..."
+
+    release.set()
+    qtbot.waitUntil(lambda: dialog.telegram_status_label.text() == "已登录：Alice @alice", timeout=1000)
+
+
+def test_advanced_settings_dialog_starts_qr_login_in_background(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    started = threading.Event()
+    release = threading.Event()
+    saved: list[bool] = []
+
+    class TelegramController:
+        def get_local_user_info(self):
+            return None
+
+        def list_local_chats(self):
+            return []
+
+        def start_local_qr_login(self):
+            started.set()
+            release.wait(1)
+            return SimpleNamespace(url="tg://login?token=demo")
+
+    dialog = AdvancedSettingsDialog(
+        AppConfig(telegram_api_id=12345, telegram_api_hash="hash"),
+        save_config=lambda: saved.append(True),
+        telegram_controller=TelegramController(),
+    )
+    qtbot.addWidget(dialog)
+
+    started_at = time.monotonic()
+    dialog._start_telegram_qr_login()
+    elapsed = time.monotonic() - started_at
+
+    assert elapsed < 0.2
+    qtbot.waitUntil(started.is_set, timeout=1000)
+    assert dialog.telegram_qr_login_button.isEnabled() is False
+    assert dialog.telegram_status_label.text() == "正在生成扫码二维码..."
+
+    release.set()
+    qtbot.waitUntil(lambda: dialog.telegram_status_label.text() == "等待扫码确认", timeout=1000)
+    assert saved == [True]
+    assert dialog.telegram_qr_login_button.isEnabled() is True
+    assert dialog.telegram_qr_label.pixmap() is not None
 
 
 def test_advanced_settings_dialog_loads_network_proxy_values(qtbot) -> None:

@@ -18,6 +18,8 @@ dependencies = [
     "pycryptodome>=3.23.0",
     "pyquery>=2.0.1",
     "requests>=2.33.1",
+    "telethon>=1.42.0",
+    "qrcode[pil]>=8.2",
 ]
 
 [project.scripts]

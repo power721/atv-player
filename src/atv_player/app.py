@@ -107,6 +107,7 @@ from atv_player.proxy.server import LocalHlsProxyServer
 from atv_player.search import SmartSearchController
 from atv_player.yt_dlp_service import YtdlpPlaybackService
 from atv_player.storage import SettingsRepository
+from atv_player.telegram_media import TelegramMediaRepository, TelegramMediaService
 from atv_player.time_utils import is_refresh_stale
 from atv_player.ui.poster_loader import set_proxy_decider_loader
 from atv_player.ui.login_window import LoginWindow
@@ -451,6 +452,7 @@ class AppCoordinator(QObject):
         self.login_window: LoginWindow | None = None
         self.main_window: MainWindow | None = None
         self._api_client: ApiClient | None = None
+        self._telegram_media_service: TelegramMediaService | None = None
         initial_config = self.repo.load_config()
         set_proxy_decider_loader(self._build_proxy_decider)
         set_spider_proxy_decider_loader(self._build_proxy_decider)
@@ -483,6 +485,16 @@ class AppCoordinator(QObject):
             self._favorites_repository = FavoritesRepository(repo.database_path)
             self._following_repository = FollowingRepository(repo.database_path)
             self._favorite_tmdb_binding_repository = FavoriteTMDBBindingRepository(repo.database_path)
+            self._telegram_media_service = TelegramMediaService(
+                repository=TelegramMediaRepository(repo.database_path),
+                api_id=initial_config.telegram_api_id,
+                api_hash=initial_config.telegram_api_hash,
+                session_path=app_data_dir() / "telegram",
+            )
+            proxy_server = getattr(self._m3u8_ad_filter, "_proxy_server", None)
+            set_telegram_media_service = getattr(proxy_server, "set_telegram_media_service", None)
+            if callable(set_telegram_media_service):
+                set_telegram_media_service(self._telegram_media_service)
             cache_dir = app_cache_dir() / "plugins"
             self._plugin_loader = self._build_spider_plugin_loader(cache_dir)
             self._plugin_manager = SpiderPluginManager(
@@ -524,6 +536,12 @@ class AppCoordinator(QObject):
         update_segment_prefetch_size = getattr(proxy_server, "set_segment_prefetch_size", None)
         if callable(update_segment_prefetch_size):
             update_segment_prefetch_size(config.m3u_proxy_segment_prefetch_size)
+        if self._telegram_media_service is not None:
+            self._telegram_media_service.configure(
+                api_id=config.telegram_api_id,
+                api_hash=config.telegram_api_hash,
+                session_path=app_data_dir() / "telegram",
+            )
 
     def _save_shared_config(self, config: AppConfig) -> None:
         self._apply_runtime_config(config)
@@ -1949,6 +1967,13 @@ class AppCoordinator(QObject):
                 payload,
                 source_name="电报影视",
             ),
+            local_media_service=self._telegram_media_service,
+            prefer_local_media=False,
+        )
+        telegram_channels_controller = TelegramSearchController(
+            self._api_client,
+            local_media_service=self._telegram_media_service,
+            prefer_local_media=self._telegram_media_service is not None,
         )
         live_controller = LiveController(self._api_client, custom_live_service=live_source_manager)
         bilibili_controller = BilibiliController(
@@ -2105,6 +2130,7 @@ class AppCoordinator(QObject):
             global_catalog_controller=global_catalog_controller,
             media_detail_controller=media_detail_controller,
             telegram_controller=telegram_controller,
+            telegram_channels_controller=telegram_channels_controller,
             bilibili_controller=bilibili_controller,
             youtube_controller=youtube_controller,
             live_controller=live_controller,
@@ -2256,4 +2282,6 @@ class AppCoordinator(QObject):
         close_filter = getattr(self._m3u8_ad_filter, "close", None)
         if callable(close_filter):
             close_filter()
+        if self._telegram_media_service is not None:
+            self._telegram_media_service.close()
         self._close_api_client()
