@@ -86,16 +86,23 @@ def _resource_type_name(kind: str) -> str:
     }.get(kind, kind)
 
 
-def _map_local_resource(resource: TelegramResource) -> VodItem:
+def _map_local_resource(
+    resource: TelegramResource,
+    telegram_thumbnail_url_factory: Callable[[int, int], str] | None = None,
+) -> VodItem:
+    vod_pic = ""
     if resource.kind == "media":
         vod_id = telegram_media_uri(resource.chat_id, resource.msg_id)
         remarks = _format_size(resource.size) or "可在线播放"
+        if telegram_thumbnail_url_factory is not None:
+            vod_pic = telegram_thumbnail_url_factory(resource.chat_id, resource.msg_id)
     else:
         vod_id = resource.url
         remarks = {"drive": "网盘", "magnet": "磁力", "ed2k": "电驴"}.get(resource.kind, resource.kind)
     return VodItem(
         vod_id=vod_id,
         vod_name=resource.title or resource.file_name or resource.url,
+        vod_pic=vod_pic,
         vod_remarks=remarks,
         vod_play_from=resource.chat_title,
         vod_play_url=vod_id,
@@ -129,12 +136,14 @@ class TelegramSearchController:
         playback_history_saver: Callable[[str, dict[str, object]], None] | None = None,
         local_media_service: TelegramMediaService | None = None,
         prefer_local_media: bool = False,
+        telegram_thumbnail_url_factory: Callable[[int, int], str] | None = None,
     ) -> None:
         self._api_client = api_client
         self._playback_history_loader = playback_history_loader
         self._playback_history_saver = playback_history_saver
         self._local_media_service = local_media_service
         self._prefer_local_media = prefer_local_media
+        self._telegram_thumbnail_url_factory = telegram_thumbnail_url_factory
         self._local_index_lock = threading.Lock()
         self._local_background_indexing_chat_ids: set[int] = set()
 
@@ -171,7 +180,10 @@ class TelegramSearchController:
                     resources = self._local_media_service.browse_chat(chat_id, limit=self._PAGE_SIZE, offset=offset)
             else:
                 resources = self._local_media_service.browse_recent(limit=self._PAGE_SIZE, offset=offset)
-            return [_map_local_resource(resource) for resource in resources], page
+            return [
+                _map_local_resource(resource, self._telegram_thumbnail_url_factory)
+                for resource in resources
+            ], page
         payload = self._api_client.list_telegram_search_items(category_id, page=page)
         items = [_map_item(item) for item in payload.get("list", [])]
         page_count = page_count_from_payload(payload, fallback_total=len(items), page_size=self._PAGE_SIZE)
@@ -201,7 +213,10 @@ class TelegramSearchController:
                     limit=self._PAGE_SIZE,
                     offset=offset,
                 )
-            return [_map_local_resource(resource) for resource in resources], page
+            return [
+                _map_local_resource(resource, self._telegram_thumbnail_url_factory)
+                for resource in resources
+            ], page
         payload = self._api_client.search_telegram_items(keyword, page=page)
         items = [_map_item(item) for item in payload.get("list", [])]
         page_count = page_count_from_payload(payload, fallback_total=len(items), page_size=self._PAGE_SIZE)

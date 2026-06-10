@@ -448,6 +448,28 @@ def test_local_telegram_search_maps_media_drive_magnet_and_ed2k_results() -> Non
     assert channel_items[0].vod_remarks == "2.0 GB"
 
 
+def test_local_telegram_media_items_use_thumbnail_url_factory() -> None:
+    resource = TelegramResource(
+        key="media:-100:1",
+        kind="media",
+        chat_id=-100,
+        msg_id=1,
+        chat_title="私密频道",
+        title="Movie",
+        file_name="Movie.mkv",
+    )
+    controller = TelegramSearchController(
+        FakeApiClient(),
+        local_media_service=FakeLocalMediaService([resource]),
+        prefer_local_media=True,
+        telegram_thumbnail_url_factory=lambda chat_id, msg_id: f"http://127.0.0.1/tg/thumb/{chat_id}/{msg_id}",
+    )
+
+    items, _page_count = controller.load_items("chat:-100", page=1)
+
+    assert items[0].vod_pic == "http://127.0.0.1/tg/thumb/-100/1"
+
+
 def test_local_telegram_search_and_browse_use_separate_chat_switches() -> None:
     resources = [
         TelegramResource(
@@ -739,6 +761,34 @@ def test_telegram_media_service_aligns_large_download_offset_and_slices_payload(
     assert download_calls == [(1_048_576, 512 * 1024)]
 
 
+def test_telegram_media_service_downloads_largest_thumbnail(tmp_path) -> None:
+    thumbnail = b"\xff\xd8thumbnail\xff\xd9"
+    calls: list[tuple[object, object, int]] = []
+
+    class FakeClient:
+        async def connect(self) -> None:
+            return None
+
+        async def get_messages(self, chat_id: int, ids: int):
+            assert chat_id == -100
+            assert ids == 1
+            return SimpleNamespace(media="media")
+
+        async def download_media(self, message, file=None, *, thumb=None):
+            calls.append((message, file, thumb))
+            return thumbnail
+
+    service = TelegramMediaService(
+        repository=TelegramMediaRepository(tmp_path / "app.db"),
+        client_factory=lambda _session, _api_id, _api_hash: FakeClient(),
+    )
+
+    data = service.get_media_thumbnail_bytes(-100, 1)
+
+    assert data == thumbnail
+    assert calls == [(SimpleNamespace(media="media"), bytes, -1)]
+
+
 def test_telegram_media_repository_extracts_links_and_media_from_indexed_resources(tmp_path) -> None:
     repo = TelegramMediaRepository(tmp_path / "app.db")
     repo.upsert_resources(
@@ -810,6 +860,29 @@ def test_telegram_message_resources_only_index_video_files_as_media() -> None:
         for resource in _resources_from_message(audio_with_link, chat_id=-100, chat_title="频道")
     ] == ["drive"]
     assert _resources_from_message(archive, chat_id=-100, chat_title="频道") == []
+
+
+def test_telegram_video_resource_uses_first_message_paragraph_as_title() -> None:
+    msg = SimpleNamespace(
+        id=5,
+        message=(
+            "《恐怖地窖》地窖台阶永无止境？全家人陷入“数数”诅咒\n"
+            "\n"
+            " #恐怖   《#恐怖地窖》\n"
+            "\n"
+            "主演： 伊丽莎·库斯伯特/欧文·马肯/Dylan Fitzmaurice Brady"
+        ),
+        file=SimpleNamespace(
+            name="The.Cellar.2022.1080p.mkv",
+            size=123,
+            mime_type="video/x-matroska",
+        ),
+    )
+
+    resource = _resources_from_message(msg, chat_id=-100, chat_title="频道")[0]
+
+    assert resource.title == "《恐怖地窖》地窖台阶永无止境？全家人陷入“数数”诅咒"
+    assert resource.file_name == "The.Cellar.2022.1080p.mkv"
 
 
 def test_telegram_media_repository_persists_channel_usage_flags(tmp_path) -> None:

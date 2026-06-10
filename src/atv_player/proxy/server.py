@@ -382,6 +382,9 @@ class LocalHlsProxyServer:
         chat_id, msg_id = parsed
         return f"http://{self.host}:{self.port}/tg/video/{chat_id}/{msg_id}"
 
+    def create_telegram_thumbnail_url(self, chat_id: int | str, msg_id: int | str) -> str:
+        return f"http://{self.host}:{self.port}/tg/thumb/{int(chat_id)}/{int(msg_id)}"
+
     def create_iso_media_url(
         self,
         url: str,
@@ -885,6 +888,54 @@ class LocalHlsProxyServer:
             raise KeyError("telegram media")
         return int(chat_id_text), int(msg_id_text)
 
+    @staticmethod
+    def _telegram_thumbnail_path(path: str) -> tuple[int, int]:
+        prefix = "/tg/thumb/"
+        if not path.startswith(prefix):
+            raise KeyError("telegram thumbnail")
+        payload = path.removeprefix(prefix)
+        chat_id_text, separator, msg_id_text = payload.partition("/")
+        if not separator or not chat_id_text or not msg_id_text:
+            raise KeyError("telegram thumbnail")
+        return int(chat_id_text), int(msg_id_text)
+
+    @staticmethod
+    def _image_content_type(payload: bytes) -> str:
+        if payload.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image/png"
+        if payload.startswith(b"GIF87a") or payload.startswith(b"GIF89a"):
+            return "image/gif"
+        if payload.startswith(b"RIFF") and payload[8:12] == b"WEBP":
+            return "image/webp"
+        return "image/jpeg"
+
+    def _stream_telegram_thumbnail_response(
+        self,
+        path: str,
+        handler: BaseHTTPRequestHandler,
+    ) -> bool:
+        parsed = urlparse(path)
+        if not parsed.path.startswith("/tg/thumb/"):
+            return False
+        if self._telegram_media_service is None:
+            raise TelegramMediaError("telegram media service is not configured")
+        chat_id, msg_id = self._telegram_thumbnail_path(parsed.path)
+        payload = self._telegram_media_service.get_media_thumbnail_bytes(chat_id, msg_id)
+        if not payload:
+            message = b"telegram thumbnail not found"
+            handler.send_response(404)
+            handler.send_header("Content-Length", str(len(message)))
+            handler.end_headers()
+            handler.wfile.write(message)
+            return True
+        handler.send_response(200)
+        handler.send_header("Content-Type", self._image_content_type(payload))
+        handler.send_header("Content-Length", str(len(payload)))
+        handler.send_header("Cache-Control", "public, max-age=86400")
+        handler.end_headers()
+        handler.wfile.write(payload)
+        return True
+
     def _telegram_media_response_metadata(
         self,
         path: str,
@@ -1141,6 +1192,8 @@ class LocalHlsProxyServer:
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:
                 try:
+                    if parent._stream_telegram_thumbnail_response(self.path, self):
+                        return
                     if parent._stream_telegram_media_response(self.path, dict(self.headers.items()), self):
                         return
                     if parent._stream_dash_asset_response(self.path, dict(self.headers.items()), self):

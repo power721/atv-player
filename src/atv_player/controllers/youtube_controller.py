@@ -7,8 +7,11 @@ from time import monotonic
 from urllib.parse import parse_qs, urlparse
 
 from atv_player.api import ApiError
-from atv_player.controllers.pagination import page_count_from_total
-from atv_player.controllers.youtube_category_config import normalize_youtube_vod_id, plan_youtube_query
+from atv_player.controllers.pagination import PageInfo, page_count_from_total
+from atv_player.controllers.youtube_category_config import (
+    normalize_youtube_vod_id,
+    plan_youtube_query,
+)
 from atv_player.models import (
     AppConfig,
     CategoryFilter,
@@ -26,11 +29,38 @@ from atv_player.models import (
 logger = logging.getLogger(__name__)
 
 
+class _FlatEntries(list):
+    def __init__(self, entries: list[dict], total: int | None = None) -> None:
+        super().__init__(entries)
+        self.total = total
+
+
 def _page_count_for_loaded_youtube_page(page_number: int, item_count: int) -> int:
     normalized_page = max(1, int(page_number or 1))
     if item_count >= 30:
         return normalized_page + 1
     return normalized_page if item_count > 0 else 0
+
+
+def _optional_total(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _page_info_for_loaded_youtube_page(
+    page_number: int,
+    item_count: int,
+    *,
+    total: int | None = None,
+) -> int:
+    page_count = _page_count_for_loaded_youtube_page(page_number, item_count)
+    if total is None:
+        return page_count
+    return PageInfo(page_count, total)
 
 _DEFAULT_CATEGORIES = [
     {"id": "cat_recommend", "name": "首页推荐", "query": "推荐", "order": 1},
@@ -476,13 +506,18 @@ class YouTubeController:
             return []
         started_at = monotonic()
         try:
-            entries = list(extract(url, page=page, page_size=page_size) or [])
+            extracted = extract(url, page=page, page_size=page_size)
+            entries = _FlatEntries(
+                list(extracted or []),
+                _optional_total(getattr(extracted, "total", None)),
+            )
             logger.info(
-                "YouTube yt-dlp list loaded url=%s page=%s page_size=%s entries=%s elapsed=%.3fs",
+                "YouTube yt-dlp list loaded url=%s page=%s page_size=%s entries=%s total=%s elapsed=%.3fs",
                 url,
                 page,
                 page_size,
                 len(entries),
+                entries.total,
                 monotonic() - started_at,
             )
             return entries
@@ -691,7 +726,11 @@ class YouTubeController:
             )
             if category_id == "cat_sub_channels":
                 items = self._enrich_channel_thumbnails(items)
-            page_count = _page_count_for_loaded_youtube_page(page_number, len(items))
+            page_count = _page_info_for_loaded_youtube_page(
+                page_number,
+                len(items),
+                total=_optional_total(getattr(entries, "total", None)),
+            )
             if items:
                 self._store_login_list_cache(cache_key, items, page_count)
             logger.info(
@@ -753,7 +792,11 @@ class YouTubeController:
             _missing_pic_count(items),
             _first_pic_sample(items),
         )
-        page_count = _page_count_for_loaded_youtube_page(page_number, len(items))
+        page_count = _page_info_for_loaded_youtube_page(
+            page_number,
+            len(items),
+            total=_optional_total(getattr(entries, "total", None)),
+        )
         return items, page_count
 
     def search_items(
@@ -777,7 +820,11 @@ class YouTubeController:
             _missing_pic_count(items),
             _first_pic_sample(items),
         )
-        page_count = _page_count_for_loaded_youtube_page(page_number, len(items))
+        page_count = _page_info_for_loaded_youtube_page(
+            page_number,
+            len(items),
+            total=_optional_total(getattr(entries, "total", None)),
+        )
         return items, page_count
 
     def _entry_for_video(self, video_id: str) -> dict:

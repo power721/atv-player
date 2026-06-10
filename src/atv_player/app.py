@@ -1954,6 +1954,11 @@ class AppCoordinator(QObject):
                 if config.metadata_enhancement_enabled
                 else None,
             )
+        proxy_server = getattr(self._m3u8_ad_filter, "_proxy_server", None)
+        create_telegram_thumbnail_url = getattr(proxy_server, "create_telegram_thumbnail_url", None)
+        telegram_thumbnail_url_factory = (
+            create_telegram_thumbnail_url if callable(create_telegram_thumbnail_url) else None
+        )
         telegram_controller = TelegramSearchController(
             self._api_client,
             playback_history_loader=None
@@ -1969,11 +1974,13 @@ class AppCoordinator(QObject):
             ),
             local_media_service=self._telegram_media_service,
             prefer_local_media=False,
+            telegram_thumbnail_url_factory=telegram_thumbnail_url_factory,
         )
         telegram_channels_controller = TelegramSearchController(
             self._api_client,
             local_media_service=self._telegram_media_service,
             prefer_local_media=self._telegram_media_service is not None,
+            telegram_thumbnail_url_factory=telegram_thumbnail_url_factory,
         )
         live_controller = LiveController(self._api_client, custom_live_service=live_source_manager)
         bilibili_controller = BilibiliController(

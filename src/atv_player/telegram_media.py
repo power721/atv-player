@@ -916,6 +916,21 @@ class TelegramMediaService:
     def get_media(self, chat_id: int, msg_id: int) -> TelegramResource | None:
         return self.repository.get_media(chat_id, msg_id)
 
+    def get_media_thumbnail_bytes(self, chat_id: int, msg_id: int) -> bytes:
+        async def run() -> bytes:
+            client = await self._ensure_client()
+            msg = await client.get_messages(int(chat_id), ids=int(msg_id))
+            if msg is None or not getattr(msg, "media", None):
+                return b""
+            payload = await client.download_media(msg, file=bytes, thumb=-1)
+            if isinstance(payload, bytes):
+                return payload
+            if isinstance(payload, bytearray):
+                return bytes(payload)
+            return b""
+
+        return self._run(run())
+
     def iter_media_bytes(
         self,
         chat_id: int,
@@ -1071,7 +1086,7 @@ def _resources_from_message(msg: Any, *, chat_id: int, chat_title: str) -> list[
                     chat_id=chat_id,
                     msg_id=msg_id,
                     chat_title=chat_title,
-                    title=file_name,
+                    title=_message_title(text) or file_name,
                     text=text,
                     file_name=file_name,
                     size=size,
@@ -1122,6 +1137,23 @@ def _resources_from_message(msg: Any, *, chat_id: int, chat_title: str) -> list[
             )
         )
     return resources
+
+
+def _message_title(text: str) -> str:
+    normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    for paragraph in re.split(r"\n\s*\n+", normalized):
+        cleaned = " ".join(line.strip() for line in paragraph.splitlines()).strip()
+        if not cleaned:
+            continue
+        for link in (
+            *extract_drive_links(cleaned),
+            *extract_magnet_links(cleaned),
+            *extract_ed2k_links(cleaned),
+        ):
+            cleaned = cleaned.replace(link, "").strip(" -:：\t")
+        if cleaned:
+            return cleaned[:120]
+    return ""
 
 
 def _link_title(text: str, link: str) -> str:

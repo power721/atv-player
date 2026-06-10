@@ -1570,6 +1570,57 @@ def test_local_hls_proxy_server_streams_telegram_range_as_one_download() -> None
     assert service.calls == [(-100, 2583, 10, 90)]
 
 
+def test_local_hls_proxy_server_creates_telegram_thumbnail_url() -> None:
+    server = LocalHlsProxyServer(host="127.0.0.1", port=8765)
+
+    assert (
+        server.create_telegram_thumbnail_url(-100, 2583)
+        == "http://127.0.0.1:8765/tg/thumb/-100/2583"
+    )
+
+
+def test_local_hls_proxy_server_streams_telegram_thumbnail() -> None:
+    thumbnail = b"\xff\xd8thumbnail\xff\xd9"
+
+    class FakeTelegramMediaService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[int, int]] = []
+
+        def get_media_thumbnail_bytes(self, chat_id: int, msg_id: int) -> bytes:
+            self.calls.append((chat_id, msg_id))
+            return thumbnail
+
+    class FakeHandler:
+        def __init__(self) -> None:
+            self.status_code: int | None = None
+            self.headers: list[tuple[str, str]] = []
+            self.wfile = BytesIO()
+            self.ended = False
+
+        def send_response(self, status_code: int) -> None:
+            self.status_code = status_code
+
+        def send_header(self, key: str, value: str) -> None:
+            self.headers.append((key, value))
+
+        def end_headers(self) -> None:
+            self.ended = True
+
+    service = FakeTelegramMediaService()
+    server = LocalHlsProxyServer(telegram_media_service=service)
+    handler = FakeHandler()
+
+    handled = server._stream_telegram_thumbnail_response("/tg/thumb/-100/2583", handler)
+
+    assert handled is True
+    assert handler.status_code == 200
+    assert ("Content-Type", "image/jpeg") in handler.headers
+    assert ("Content-Length", str(len(thumbnail))) in handler.headers
+    assert ("Cache-Control", "public, max-age=86400") in handler.headers
+    assert handler.wfile.getvalue() == thumbnail
+    assert service.calls == [(-100, 2583)]
+
+
 def test_local_hls_proxy_server_streams_unranged_telegram_get_as_full_response() -> None:
     payload = bytes(index % 251 for index in range(6 * 1024 * 1024))
 
