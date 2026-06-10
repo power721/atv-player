@@ -1445,6 +1445,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             douban_controller=None,
             global_catalog_controller=None,
             telegram_controller=None,
+            telegram_channels_controller=None,
             bilibili_controller=None,
             youtube_controller=None,
             live_controller=None,
@@ -1591,6 +1592,15 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             initial_category_id=self._initial_category_id_for_tab("telegram"),
             filter_panel_state=self._filter_panel_state,
         )
+        self.telegram_channels_page = None
+        if telegram_channels_controller is not None:
+            self.telegram_channels_page = PosterGridPage(
+                telegram_channels_controller,
+                click_action="open",
+                search_enabled=True,
+                initial_category_id=self._initial_category_id_for_tab("telegram_channels"),
+                filter_panel_state=self._filter_panel_state,
+            )
         self.bilibili_page = None
         if show_bilibili_tab:
             self.bilibili_page = PosterGridPage(
@@ -1681,6 +1691,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             )
         self.browse_controller = browse_controller
         self.telegram_controller = telegram_controller or _EmptyTelegramController()
+        self.telegram_channels_controller = telegram_channels_controller
         self._skip_next_telegram_open_request_vod_id = ""
         self.bilibili_controller = bilibili_controller or _EmptyBilibiliController()
         self.youtube_controller = youtube_controller or _EmptyYouTubeController()
@@ -1843,6 +1854,15 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             _TabDefinition("global_catalog", "全球片单", self.global_catalog_page),
             _TabDefinition("telegram", "电报影视", self.telegram_page, self.telegram_controller),
         ]
+        if self.telegram_channels_page is not None and self.telegram_channels_controller is not None:
+            self._static_tab_definitions.append(
+                _TabDefinition(
+                    "telegram_channels",
+                    "电报频道",
+                    self.telegram_channels_page,
+                    self.telegram_channels_controller,
+                )
+            )
         if self.bilibili_page is not None:
             self._static_tab_definitions.append(
                 _TabDefinition("bilibili", "B站", self.bilibili_page, self.bilibili_controller)
@@ -2021,6 +2041,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._connect_video_item_context_menu(self.telegram_page)
         self.telegram_page.item_open_requested.connect(self._handle_telegram_item_open_requested)
         self.telegram_page.open_requested.connect(self._handle_telegram_open_requested)
+        if self.telegram_channels_page is not None:
+            self._connect_video_item_context_menu(self.telegram_channels_page)
+            self.telegram_channels_page.item_open_requested.connect(self._handle_telegram_item_open_requested)
+            self.telegram_channels_page.open_requested.connect(self._handle_telegram_open_requested)
         if self.bilibili_page is not None:
             bilibili_page = self.bilibili_page
             self._connect_video_item_context_menu(bilibili_page)
@@ -2103,6 +2127,11 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.telegram_page.selected_category_changed.connect(
             lambda category_id, page=self.telegram_page: self._handle_selected_category_changed(page, category_id)
         )
+        if self.telegram_channels_page is not None:
+            self.telegram_channels_page.unauthorized.connect(self.logout_requested.emit)
+            self.telegram_channels_page.selected_category_changed.connect(
+                lambda category_id, page=self.telegram_channels_page: self._handle_selected_category_changed(page, category_id)
+            )
         if self.bilibili_page is not None:
             self.bilibili_page.unauthorized.connect(self.logout_requested.emit)
             self.bilibili_page.selected_category_changed.connect(
@@ -2950,6 +2979,15 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             _BuiltinTabDefinition("global_catalog", "全球片单", self.global_catalog_page),
             _BuiltinTabDefinition("telegram", "电报影视", self.telegram_page, self.telegram_controller),
         ]
+        if self.telegram_channels_page is not None and self.telegram_channels_controller is not None:
+            definitions.append(
+                _BuiltinTabDefinition(
+                    "telegram_channels",
+                    "电报频道",
+                    self.telegram_channels_page,
+                    self.telegram_channels_controller,
+                )
+            )
         if self.bilibili_page is not None:
             definitions.append(_BuiltinTabDefinition("bilibili", "B站", self.bilibili_page, self.bilibili_controller))
         if self.youtube_page is not None:
@@ -3790,6 +3828,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if widget is self.telegram_page:
             self.telegram_page.ensure_loaded()
             return
+        if widget is self.telegram_channels_page and self.telegram_channels_page is not None:
+            self.telegram_channels_page.ensure_loaded()
+            return
         if widget is self.bilibili_page and self.bilibili_page is not None:
             self.bilibili_page.ensure_loaded()
             return
@@ -4127,6 +4168,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     def _video_item_favorite_source(self, page: PosterGridPage) -> tuple[str, str, str] | None:
         static_sources = {
             self.telegram_page: ("telegram", "", "电报影视"),
+            self.telegram_channels_page: ("telegram", "channels", "电报频道"),
             self.live_page: ("live", "", "网络直播"),
             self.emby_page: ("emby", "", "Emby"),
             self.bilibili_page: ("bilibili", "", "B站"),
@@ -4316,6 +4358,17 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
     def _handle_telegram_item_open_requested(self, item) -> None:
         vod_id = item.vod_id
         self._skip_next_telegram_open_request_vod_id = str(vod_id or "")
+        if _looks_like_offline_download_link(str(vod_id or "")):
+            self._open_player_immediately(self._build_offline_download_placeholder_player_request(vod_id))
+            self._start_open_request(lambda: self._build_offline_download_request(vod_id))
+            return
+        if _looks_like_drive_share_link(str(vod_id or "")):
+            self._open_player_immediately(self._build_drive_placeholder_player_request(vod_id))
+            self._start_open_request(lambda: self._build_drive_detail_request(vod_id))
+            return
+        if _looks_like_http_url(str(vod_id or "")):
+            self._start_open_request(lambda: self._build_parse_request(vod_id))
+            return
         def build_request() -> OpenPlayerRequest:
             request = self.telegram_controller.build_request(vod_id)
             return self._apply_request_fallback_metadata(request, item, prefer_fallback_media_title=True)
@@ -4326,6 +4379,17 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         normalized_vod_id = str(vod_id or "")
         if normalized_vod_id and normalized_vod_id == self._skip_next_telegram_open_request_vod_id:
             self._skip_next_telegram_open_request_vod_id = ""
+            return
+        if _looks_like_offline_download_link(normalized_vod_id):
+            self._open_player_immediately(self._build_offline_download_placeholder_player_request(normalized_vod_id))
+            self._start_open_request(lambda: self._build_offline_download_request(normalized_vod_id))
+            return
+        if _looks_like_drive_share_link(normalized_vod_id):
+            self._open_player_immediately(self._build_drive_placeholder_player_request(normalized_vod_id))
+            self._start_open_request(lambda: self._build_drive_detail_request(normalized_vod_id))
+            return
+        if _looks_like_http_url(normalized_vod_id):
+            self._start_open_request(lambda: self._build_parse_request(normalized_vod_id))
             return
         self._start_open_request(lambda: self.telegram_controller.build_request(vod_id))
 
@@ -5363,15 +5427,32 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._dismiss_visible_global_search_popup()
         self._close_plugin_overflow_drawer()
         self._close_help_dialog()
-        dialog = AdvancedSettingsDialog(
-            self.config,
-            self._save_config,
-            self,
+        dialog_kwargs = dict(
+            parent=self,
             apply_theme=self._apply_application_theme,
             app_log_service=self._app_log_service,
             youtube_category_text_loader=self._youtube_category_text_loader,
+            telegram_controller=self.telegram_channels_controller or self.telegram_controller,
         )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        try:
+            dialog = AdvancedSettingsDialog(
+                self.config,
+                self._save_config,
+                **dialog_kwargs,
+            )
+        except TypeError as exc:
+            if "telegram_controller" not in str(exc):
+                raise
+            dialog_kwargs.pop("telegram_controller", None)
+            dialog = AdvancedSettingsDialog(
+                self.config,
+                self._save_config,
+                **dialog_kwargs,
+            )
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        if self.telegram_channels_page is not None:
+            self.telegram_channels_page.reload_categories()
+        if not accepted:
             return
         if self.player_window is not None and hasattr(self.player_window, "refresh_runtime_video_output_settings"):
             self.player_window.refresh_runtime_video_output_settings()

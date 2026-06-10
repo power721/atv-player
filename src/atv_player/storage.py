@@ -147,6 +147,14 @@ def _normalize_ai_timeout(value: object) -> int:
     return max(5, min(timeout, 120))
 
 
+def _normalize_telegram_api_id(value: object) -> int:
+    try:
+        api_id = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, api_id)
+
+
 def _normalize_disabled_provider_ids(value: object, valid_ids: set[str]) -> list[str]:
     if isinstance(value, str):
         try:
@@ -437,6 +445,8 @@ class SettingsRepository:
                     metadata_tmdb_api_key TEXT NOT NULL DEFAULT '',
                     metadata_tmdb_proxy_base_url TEXT NOT NULL DEFAULT '',
                     metadata_bangumi_access_token TEXT NOT NULL DEFAULT '',
+                    telegram_api_id INTEGER NOT NULL DEFAULT 0,
+                    telegram_api_hash TEXT NOT NULL DEFAULT '',
                     network_proxy_mode TEXT NOT NULL DEFAULT 'direct',
                     network_proxy_url TEXT NOT NULL DEFAULT '',
                     network_proxy_bypass_rules TEXT NOT NULL DEFAULT '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]',
@@ -557,6 +567,14 @@ class SettingsRepository:
             if "metadata_bangumi_access_token" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN metadata_bangumi_access_token TEXT NOT NULL DEFAULT ''"
+                )
+            if "telegram_api_id" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN telegram_api_id INTEGER NOT NULL DEFAULT 0"
+                )
+            if "telegram_api_hash" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN telegram_api_hash TEXT NOT NULL DEFAULT ''"
                 )
             if "network_proxy_mode" not in columns:
                 conn.execute(
@@ -867,6 +885,8 @@ class SettingsRepository:
                     metadata_tmdb_api_key,
                     metadata_tmdb_proxy_base_url,
                     metadata_bangumi_access_token,
+                    telegram_api_id,
+                    telegram_api_hash,
                     network_proxy_mode,
                     network_proxy_url,
                     network_proxy_bypass_rules,
@@ -939,7 +959,7 @@ class SettingsRepository:
                     home_mode
                 )
                 VALUES (
-                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', '', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 'auto', 512, 'auto-safe', 15, 20, '', 0, 0, 2, '/', 'main', 'browse', '', '', '', '', '',
+                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', '', '', '', '', 0, '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 'auto', 512, 'auto-safe', 15, 20, '', 0, 0, 2, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
                     NULL, NULL, NULL, NULL, 'douban', '', '', '', '[]', '360', 0, '', '', '', 30, 1, 1, 1, 1, 'poster', 1, 'browse'
                 )
@@ -1013,6 +1033,8 @@ class SettingsRepository:
                     metadata_tmdb_api_key,
                     metadata_tmdb_proxy_base_url,
                     metadata_bangumi_access_token,
+                    telegram_api_id,
+                    telegram_api_hash,
                     network_proxy_mode,
                     network_proxy_url,
                     network_proxy_bypass_rules,
@@ -1104,6 +1126,8 @@ class SettingsRepository:
             metadata_tmdb_api_key,
             metadata_tmdb_proxy_base_url,
             metadata_bangumi_access_token,
+            telegram_api_id,
+            telegram_api_hash,
             network_proxy_mode,
             network_proxy_url,
             network_proxy_bypass_rules,
@@ -1197,6 +1221,8 @@ class SettingsRepository:
             metadata_tmdb_api_key=str(metadata_tmdb_api_key or "").strip(),
             metadata_tmdb_proxy_base_url=_normalize_tmdb_proxy_base_url(metadata_tmdb_proxy_base_url),
             metadata_bangumi_access_token=str(metadata_bangumi_access_token or "").strip(),
+            telegram_api_id=_normalize_telegram_api_id(telegram_api_id),
+            telegram_api_hash=str(telegram_api_hash or "").strip(),
             network_proxy_mode=_normalize_network_proxy_mode(network_proxy_mode),
             network_proxy_url=_normalize_network_proxy_url(network_proxy_url),
             network_proxy_bypass_rules=_normalize_network_proxy_bypass_rules(network_proxy_bypass_rules),
@@ -1309,6 +1335,8 @@ class SettingsRepository:
                     metadata_tmdb_api_key = ?,
                     metadata_tmdb_proxy_base_url = ?,
                     metadata_bangumi_access_token = ?,
+                    telegram_api_id = ?,
+                    telegram_api_hash = ?,
                     network_proxy_mode = ?,
                     network_proxy_url = ?,
                     network_proxy_bypass_rules = ?,
@@ -1409,6 +1437,8 @@ class SettingsRepository:
                     str(config.metadata_tmdb_api_key or "").strip(),
                     _normalize_tmdb_proxy_base_url(config.metadata_tmdb_proxy_base_url),
                     str(config.metadata_bangumi_access_token or "").strip(),
+                    _normalize_telegram_api_id(getattr(config, "telegram_api_id", 0)),
+                    str(getattr(config, "telegram_api_hash", "") or "").strip(),
                     _normalize_network_proxy_mode(config.network_proxy_mode),
                     _normalize_network_proxy_url(config.network_proxy_url),
                     json.dumps(_normalize_network_proxy_bypass_rules(config.network_proxy_bypass_rules), ensure_ascii=False),

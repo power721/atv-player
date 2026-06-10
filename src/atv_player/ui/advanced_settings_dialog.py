@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from io import BytesIO
 from pathlib import Path
 import threading
 import time
@@ -8,7 +9,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 from PySide6.QtCore import QObject, QTimer, Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -18,11 +19,13 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -59,6 +62,14 @@ _TMDB_ENDPOINT_OPTIONS = [
     ("Worker - https://tmdb.8866033.workers.dev", "https://tmdb.8866033.workers.dev", "https://tmdb.8866033.workers.dev"),
 ]
 _TMDB_ENDPOINT_PRESET_VALUES = {item[1] for item in _TMDB_ENDPOINT_OPTIONS}
+_TELEGRAM_COL_SEARCH = 0
+_TELEGRAM_COL_BROWSE = 1
+_TELEGRAM_COL_TITLE = 2
+_TELEGRAM_COL_KIND = 3
+_TELEGRAM_COL_VISIBILITY = 4
+_TELEGRAM_COL_WEB_ACCESS = 5
+_TELEGRAM_COL_ID = 6
+_TELEGRAM_COL_INDEXED = 7
 
 
 def _normalize_tmdb_proxy_base_url(value: object) -> str:
@@ -94,6 +105,35 @@ class _InitialContentSignals(QObject):
     tmdb_speed_test_finished = Signal(object)
 
 
+class _TelegramSignals(QObject):
+    status_checked = Signal(object)
+    status_failed = Signal(str)
+    qr_login_started = Signal(object)
+    qr_login_failed = Signal(str)
+    qr_login_completed = Signal(object)
+    qr_login_password_needed = Signal()
+    qr_login_complete_failed = Signal(str)
+    chats_refreshed = Signal(object, str)
+    chats_refresh_failed = Signal(str, str)
+    sync_finished = Signal(int, object)
+    sync_failed = Signal(str)
+
+
+class _SortValueTableWidgetItem(QTableWidgetItem):
+    def __init__(self, text: str, sort_value: int) -> None:
+        super().__init__(text)
+        self._sort_value = int(sort_value)
+        self.setData(Qt.ItemDataRole.UserRole, self._sort_value)
+
+    def __lt__(self, other) -> bool:
+        if isinstance(other, _SortValueTableWidgetItem):
+            return self._sort_value < other._sort_value
+        try:
+            return self._sort_value < int(other.data(Qt.ItemDataRole.UserRole))
+        except (TypeError, ValueError):
+            return super().__lt__(other)
+
+
 class AdvancedSettingsDialog(ThemedDialogBase):
     def __init__(
         self,
@@ -104,6 +144,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         app_log_service=None,
         youtube_category_text_loader: Callable[[str], str] | None = None,
         ai_client_factory: Callable[[AIProviderConfig], object] | None = None,
+        telegram_controller=None,
     ) -> None:
         super().__init__(title="高级设置", parent=parent)
         self._config = config
@@ -111,10 +152,18 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self._apply_application_theme = apply_theme
         self._app_log_service = app_log_service
         self._youtube_category_text_loader = youtube_category_text_loader
+        self._telegram_controller = telegram_controller
         self._initial_deferred_load_scheduled = False
         self._initial_content_signals = _InitialContentSignals(self)
+        self._telegram_signals = _TelegramSignals(self)
+        self._telegram_logged_in = False
+        self._telegram_status_running = False
+        self._telegram_qr_login_running = False
+        self._telegram_qr_complete_running = False
+        self._telegram_refresh_running = False
+        self._telegram_sync_running = False
         self._ai_client_factory = ai_client_factory or OpenAICompatibleClient
-        self.resize(920, 560)
+        self.resize(1100, 640)
 
         self.settings_tabs = QTabWidget()
         self.settings_tabs.tabBar().setCursor(Qt.CursorShape.PointingHandCursor)
@@ -202,6 +251,76 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             "覆盖范围：API、元数据、解析源、弹幕、海报、插件下载、HLS 上游请求、yt-dlp"
         )
         self.network_proxy_scope_label.setWordWrap(True)
+        self.telegram_tab = QWidget()
+        self.telegram_group = QGroupBox("Telegram 用户登录")
+        self.telegram_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        self.telegram_api_id_edit = QLineEdit()
+        self.telegram_api_id_edit.setPlaceholderText("Telegram API ID")
+        self.telegram_api_hash_edit = QLineEdit()
+        self.telegram_api_hash_edit.setPlaceholderText("Telegram API Hash")
+        self.telegram_api_hash_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.telegram_status_label = QLabel("未登录")
+        self.telegram_status_label.setWordWrap(True)
+        self.telegram_qr_label = QLabel("")
+        self.telegram_qr_label.setFixedSize(300, 300)
+        self.telegram_qr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.telegram_qr_label.setStyleSheet("background: #ffffff; color: #111111;")
+        self.telegram_qr_login_button = QPushButton("扫码登录")
+        self.telegram_qr_complete_button = QPushButton("完成扫码登录")
+        self.telegram_logout_button = QPushButton("退出登录")
+        self.telegram_phone_edit = QLineEdit()
+        self.telegram_phone_edit.setPlaceholderText("例如 +8613800000000")
+        self.telegram_code_edit = QLineEdit()
+        self.telegram_code_edit.setPlaceholderText("验证码")
+        self.telegram_password_edit = QLineEdit()
+        self.telegram_password_edit.setPlaceholderText("二步验证密码，可选")
+        self.telegram_password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.telegram_send_code_button = QPushButton("发送验证码")
+        self.telegram_phone_login_button = QPushButton("验证码登录")
+        self.telegram_channels_group = QGroupBox("频道管理")
+        self.telegram_channels_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        self.telegram_channel_search_edit = QLineEdit()
+        self.telegram_channel_search_edit.setPlaceholderText("搜索频道名称、用户名或 ID")
+        self.telegram_channel_search_edit.setMinimumWidth(260)
+        self.telegram_channel_usage_filter_combo = FlatComboBox()
+        self.telegram_channel_usage_filter_combo.addItem("全部用途", "")
+        self.telegram_channel_usage_filter_combo.addItem("参与搜索", "search")
+        self.telegram_channel_usage_filter_combo.addItem("参与浏览", "browse")
+        self.telegram_channel_usage_filter_combo.addItem("未配置", "unused")
+        self.telegram_channel_usage_filter_combo.setFixedWidth(130)
+        self.telegram_channel_type_filter_combo = FlatComboBox()
+        self.telegram_channel_type_filter_combo.addItem("全部类型", "")
+        self.telegram_channel_type_filter_combo.addItem("频道", "channel")
+        self.telegram_channel_type_filter_combo.addItem("群组", "group")
+        self.telegram_channel_type_filter_combo.setFixedWidth(120)
+        self.telegram_channel_visibility_filter_combo = FlatComboBox()
+        self.telegram_channel_visibility_filter_combo.addItem("全部", "")
+        self.telegram_channel_visibility_filter_combo.addItem("私密", "private")
+        self.telegram_channel_visibility_filter_combo.addItem("公开", "public")
+        self.telegram_channel_visibility_filter_combo.setFixedWidth(110)
+        self.telegram_channel_count_label = QLabel("")
+        self.telegram_channel_count_label.setMinimumWidth(60)
+        self.telegram_refresh_chats_button = QPushButton("刷新频道")
+        self.telegram_sync_button = QPushButton("同步索引")
+        self.telegram_channel_status_label = QLabel("")
+        self.telegram_channel_status_label.setWordWrap(True)
+        self.telegram_channel_table = QTableWidget(0, 8)
+        self.telegram_channel_table.setHorizontalHeaderLabels(
+            ["搜索", "浏览", "名称", "类型", "可见性", "Web访问", "ID", "已索引消息"]
+        )
+        self.telegram_channel_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.telegram_channel_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.telegram_channel_table.setSortingEnabled(True)
+        self.telegram_channel_table.verticalHeader().setVisible(False)
+        telegram_header = self.telegram_channel_table.horizontalHeader()
+        telegram_header.setSectionResizeMode(_TELEGRAM_COL_SEARCH, QHeaderView.ResizeMode.ResizeToContents)
+        telegram_header.setSectionResizeMode(_TELEGRAM_COL_BROWSE, QHeaderView.ResizeMode.ResizeToContents)
+        telegram_header.setSectionResizeMode(_TELEGRAM_COL_TITLE, QHeaderView.ResizeMode.Stretch)
+        telegram_header.setSectionResizeMode(_TELEGRAM_COL_KIND, QHeaderView.ResizeMode.ResizeToContents)
+        telegram_header.setSectionResizeMode(_TELEGRAM_COL_VISIBILITY, QHeaderView.ResizeMode.ResizeToContents)
+        telegram_header.setSectionResizeMode(_TELEGRAM_COL_WEB_ACCESS, QHeaderView.ResizeMode.ResizeToContents)
+        telegram_header.setSectionResizeMode(_TELEGRAM_COL_ID, QHeaderView.ResizeMode.ResizeToContents)
+        telegram_header.setSectionResizeMode(_TELEGRAM_COL_INDEXED, QHeaderView.ResizeMode.ResizeToContents)
         self.playback_group = QGroupBox("播放设置")
         self.playback_auto_switch_source_on_failure_checkbox = QCheckBox("播放失败自动切换线路")
         self.bilibili_grouped_playlist_tree_enabled_checkbox = QCheckBox("B站播放列表显示为分组树")
@@ -350,6 +469,8 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.tmdb_api_key_edit.setText(config.metadata_tmdb_api_key)
         self._select_tmdb_endpoint(config.metadata_tmdb_proxy_base_url)
         self.bangumi_access_token_edit.setText(config.metadata_bangumi_access_token)
+        self.telegram_api_id_edit.setText(str(config.telegram_api_id or ""))
+        self.telegram_api_hash_edit.setText(config.telegram_api_hash)
         self.ai_enabled_checkbox.setChecked(config.ai_enabled)
         self.ai_metadata_enrichment_checkbox.setChecked(config.ai_metadata_enrichment_enabled)
         self.ai_danmaku_enrichment_checkbox.setChecked(config.ai_danmaku_enrichment_enabled)
@@ -480,6 +601,50 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         network_proxy_tab_layout.addWidget(self.network_proxy_group)
         network_proxy_tab_layout.addStretch(1)
 
+        telegram_layout = QFormLayout()
+        telegram_layout.addRow("API ID", self.telegram_api_id_edit)
+        telegram_layout.addRow("API Hash", self.telegram_api_hash_edit)
+        telegram_layout.addRow("状态", self.telegram_status_label)
+        logout_actions = QHBoxLayout()
+        logout_actions.addWidget(self.telegram_logout_button)
+        logout_actions.addStretch(1)
+        telegram_layout.addRow("账号", logout_actions)
+        qr_row = QHBoxLayout()
+        qr_row.addWidget(self.telegram_qr_label)
+        qr_actions = QVBoxLayout()
+        qr_actions.addWidget(self.telegram_qr_login_button)
+        qr_actions.addWidget(self.telegram_qr_complete_button)
+        qr_actions.addStretch(1)
+        qr_row.addLayout(qr_actions)
+        telegram_layout.addRow("扫码", qr_row)
+        telegram_layout.addRow("手机号", self.telegram_phone_edit)
+        telegram_layout.addRow("验证码", self.telegram_code_edit)
+        telegram_layout.addRow("二步密码", self.telegram_password_edit)
+        phone_actions = QHBoxLayout()
+        phone_actions.addWidget(self.telegram_send_code_button)
+        phone_actions.addWidget(self.telegram_phone_login_button)
+        phone_actions.addStretch(1)
+        telegram_layout.addRow("手机号登录", phone_actions)
+        self.telegram_group.setLayout(telegram_layout)
+        self._telegram_login_form = telegram_layout
+        telegram_channel_actions = QHBoxLayout()
+        telegram_channel_actions.addWidget(self.telegram_channel_search_edit, 1)
+        telegram_channel_actions.addWidget(self.telegram_channel_usage_filter_combo)
+        telegram_channel_actions.addWidget(self.telegram_channel_type_filter_combo)
+        telegram_channel_actions.addWidget(self.telegram_channel_visibility_filter_combo)
+        telegram_channel_actions.addWidget(self.telegram_channel_count_label)
+        telegram_channel_actions.addStretch(1)
+        telegram_channel_actions.addWidget(self.telegram_refresh_chats_button)
+        telegram_channel_actions.addWidget(self.telegram_sync_button)
+        telegram_channels_layout = QVBoxLayout()
+        telegram_channels_layout.addLayout(telegram_channel_actions)
+        telegram_channels_layout.addWidget(self.telegram_channel_status_label)
+        telegram_channels_layout.addWidget(self.telegram_channel_table)
+        self.telegram_channels_group.setLayout(telegram_channels_layout)
+        telegram_tab_layout = QVBoxLayout(self.telegram_tab)
+        telegram_tab_layout.addWidget(self.telegram_group, 0)
+        telegram_tab_layout.addWidget(self.telegram_channels_group, 1)
+
         playback_layout = QFormLayout()
         playback_layout.addRow(self.playback_auto_switch_source_on_failure_checkbox)
         playback_layout.addRow(self.bilibili_grouped_playlist_tree_enabled_checkbox)
@@ -550,6 +715,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.settings_tabs.addTab(self.metadata_tab, "元数据")
         self.settings_tabs.addTab(self.ai_tab, "AI")
         self.settings_tabs.addTab(self.network_proxy_tab, "网络代理")
+        self.settings_tabs.addTab(self.telegram_tab, "Telegram")
         self.settings_tabs.addTab(self.cache_tab, "缓存管理")
         self.settings_tabs.addTab(self.logs_tab, "日志")
 
@@ -570,6 +736,28 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.youtube_category_browse_button.clicked.connect(self._browse_youtube_category_file)
         self.youtube_category_test_button.clicked.connect(self._test_youtube_category_source)
         self.youtube_category_refresh_button.clicked.connect(self._refresh_youtube_category_cache)
+        self.telegram_qr_login_button.clicked.connect(self._start_telegram_qr_login)
+        self.telegram_qr_complete_button.clicked.connect(self._complete_telegram_qr_login)
+        self.telegram_send_code_button.clicked.connect(self._send_telegram_login_code)
+        self.telegram_phone_login_button.clicked.connect(self._sign_in_telegram_phone)
+        self.telegram_logout_button.clicked.connect(self._logout_telegram)
+        self.telegram_refresh_chats_button.clicked.connect(self._refresh_telegram_chats)
+        self.telegram_sync_button.clicked.connect(self._sync_telegram_index)
+        self.telegram_channel_search_edit.textChanged.connect(self._apply_telegram_channel_filters)
+        self.telegram_channel_usage_filter_combo.currentIndexChanged.connect(self._apply_telegram_channel_filters)
+        self.telegram_channel_type_filter_combo.currentIndexChanged.connect(self._apply_telegram_channel_filters)
+        self.telegram_channel_visibility_filter_combo.currentIndexChanged.connect(self._apply_telegram_channel_filters)
+        self._telegram_signals.status_checked.connect(self._apply_telegram_status_checked)
+        self._telegram_signals.status_failed.connect(self._show_telegram_status_error)
+        self._telegram_signals.qr_login_started.connect(self._apply_telegram_qr_login_started)
+        self._telegram_signals.qr_login_failed.connect(self._show_telegram_qr_login_error)
+        self._telegram_signals.qr_login_completed.connect(self._apply_telegram_qr_login_completed)
+        self._telegram_signals.qr_login_password_needed.connect(self._request_telegram_qr_password)
+        self._telegram_signals.qr_login_complete_failed.connect(self._show_telegram_qr_login_complete_error)
+        self._telegram_signals.chats_refreshed.connect(self._apply_telegram_chats_refreshed)
+        self._telegram_signals.chats_refresh_failed.connect(self._show_telegram_chats_refresh_error)
+        self._telegram_signals.sync_finished.connect(self._apply_telegram_sync_finished)
+        self._telegram_signals.sync_failed.connect(self._show_telegram_sync_error)
         self.ai_load_models_button.clicked.connect(self._load_ai_models)
         self.ai_check_connectivity_button.clicked.connect(self._check_ai_connectivity)
         self.cache_open_root_button.clicked.connect(self._open_cache_root)
@@ -581,6 +769,9 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self._sync_metadata_inputs(self.metadata_enabled_checkbox.isChecked())
         self._sync_tmdb_endpoint_inputs()
         self._sync_network_proxy_inputs()
+        self._sync_telegram_login_controls(False)
+        self._start_telegram_status_refresh()
+        self._populate_telegram_channels()
         self._apply_theme()
 
     def showEvent(self, event) -> None:
@@ -636,6 +827,9 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self.home_mode_combo,
             self.tmdb_endpoint_combo,
             self.network_proxy_mode_combo,
+            self.telegram_channel_usage_filter_combo,
+            self.telegram_channel_type_filter_combo,
+            self.telegram_channel_visibility_filter_combo,
             self.youtube_cookie_browser_combo,
             self.youtube_max_height_combo,
             self.youtube_video_codec_combo,
@@ -656,6 +850,12 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self.ai_base_url_edit,
             self.ai_api_key_edit,
             self.ai_timeout_edit,
+            self.telegram_api_id_edit,
+            self.telegram_api_hash_edit,
+            self.telegram_phone_edit,
+            self.telegram_code_edit,
+            self.telegram_password_edit,
+            self.telegram_channel_search_edit,
             self.network_proxy_url_edit,
             self.youtube_category_source_edit,
             self.youtube_category_local_path_edit,
@@ -669,6 +869,577 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         if self.ai_chat_model_combo.lineEdit() is not None:
             self.ai_chat_model_combo.lineEdit().setStyleSheet(line_edit_qss)
         self.log_console.apply_theme()
+
+    def _validated_telegram_values(self) -> tuple[int, str] | None:
+        raw_api_id = self.telegram_api_id_edit.text().strip()
+        try:
+            api_id = int(raw_api_id or "0")
+        except ValueError:
+            QMessageBox.warning(self, "Telegram 配置无效", "API ID 必须是整数")
+            return None
+        api_hash = self.telegram_api_hash_edit.text().strip()
+        if (api_id > 0 and not api_hash) or (api_hash and api_id <= 0):
+            QMessageBox.warning(self, "Telegram 配置无效", "API ID 和 API Hash 必须同时填写")
+            return None
+        return max(0, api_id), api_hash
+
+    def _persist_telegram_config_for_action(self) -> bool:
+        values = self._validated_telegram_values()
+        if values is None:
+            return False
+        self._config.telegram_api_id, self._config.telegram_api_hash = values
+        self._save_config()
+        return True
+
+    def _telegram_controller_required(self):
+        if self._telegram_controller is None:
+            QMessageBox.warning(self, "Telegram 不可用", "当前未初始化 Telegram 控制器")
+            return None
+        return self._telegram_controller
+
+    def _telegram_user_status_text(self, user) -> str:
+        username = f"@{user.username}" if getattr(user, "username", "") else ""
+        return f"已登录：{user.display_name} {username}".strip()
+
+    def _sync_telegram_login_controls(self, logged_in: bool) -> None:
+        self._telegram_logged_in = bool(logged_in)
+        if hasattr(self, "_telegram_login_form"):
+            for row in (0, 1, 4, 5, 6, 7, 8):
+                self._telegram_login_form.setRowVisible(row, not logged_in)
+            self._telegram_login_form.setRowVisible(3, logged_in)
+        if logged_in:
+            self.telegram_qr_label.clear()
+        self.telegram_refresh_chats_button.setEnabled(logged_in and not self._telegram_refresh_running)
+        self.telegram_sync_button.setEnabled(logged_in and not self._telegram_sync_running)
+        self.telegram_channel_table.setEnabled(logged_in)
+
+    def _apply_telegram_logged_in_user(self, user) -> None:
+        self.telegram_status_label.setText(self._telegram_user_status_text(user))
+        self._sync_telegram_login_controls(True)
+
+    def _start_telegram_status_refresh(self) -> None:
+        if self._telegram_status_running:
+            return
+        controller = self._telegram_controller
+        if controller is None:
+            self.telegram_status_label.setText("未启用")
+            self._sync_telegram_login_controls(False)
+            return
+        if not (self._config.telegram_api_id and self._config.telegram_api_hash):
+            self.telegram_status_label.setText("未配置 API ID / API Hash")
+            self._sync_telegram_login_controls(False)
+            return
+        self._telegram_status_running = True
+        self.telegram_status_label.setText("检查登录状态中...")
+        threading.Thread(
+            target=self._refresh_telegram_status_in_background,
+            args=(controller,),
+            daemon=True,
+        ).start()
+
+    def _refresh_telegram_status_in_background(self, controller) -> None:
+        try:
+            user = controller.get_local_user_info()
+        except Exception as exc:
+            self._emit_initial_content_signal(self._telegram_signals.status_failed, str(exc))
+            return
+        self._emit_initial_content_signal(self._telegram_signals.status_checked, user)
+
+    def _apply_telegram_status_checked(self, user) -> None:
+        self._telegram_status_running = False
+        if user is None:
+            self.telegram_status_label.setText("未登录")
+            self._sync_telegram_login_controls(False)
+            return
+        self._apply_telegram_logged_in_user(user)
+        self._populate_telegram_channels()
+
+    def _show_telegram_status_error(self, message: str) -> None:
+        self._telegram_status_running = False
+        self.telegram_status_label.setText(f"未登录：{message}")
+        self._sync_telegram_login_controls(False)
+
+    def _refresh_telegram_status(self) -> bool:
+        controller = self._telegram_controller
+        if controller is None:
+            self.telegram_status_label.setText("未启用")
+            self._sync_telegram_login_controls(False)
+            return False
+        if not (self._config.telegram_api_id and self._config.telegram_api_hash):
+            self.telegram_status_label.setText("未配置 API ID / API Hash")
+            self._sync_telegram_login_controls(False)
+            return False
+        try:
+            user = controller.get_local_user_info()
+        except Exception as exc:
+            self.telegram_status_label.setText(f"未登录：{exc}")
+            self._sync_telegram_login_controls(False)
+            return False
+        if user is None:
+            self.telegram_status_label.setText("未登录")
+            self._sync_telegram_login_controls(False)
+            return False
+        self._apply_telegram_logged_in_user(user)
+        return True
+
+    def _set_telegram_qr_url(self, url: str) -> None:
+        if not url:
+            self.telegram_qr_label.setText("无二维码")
+            return
+        try:
+            import qrcode
+
+            qr = qrcode.QRCode(
+                error_correction=qrcode.constants.ERROR_CORRECT_M,
+                box_size=8,
+                border=4,
+            )
+            qr.add_data(url)
+            qr.make(fit=True)
+            image = qr.make_image(fill_color="black", back_color="white").convert("RGB")
+            buffer = BytesIO()
+            image.save(buffer, format="PNG")
+            pixmap = QPixmap()
+            pixmap.loadFromData(buffer.getvalue(), "PNG")
+            self.telegram_qr_label.setPixmap(
+                pixmap.scaled(
+                    self.telegram_qr_label.size(),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.FastTransformation,
+                )
+            )
+        except Exception:
+            self.telegram_qr_label.setText(url)
+
+    def _start_telegram_qr_login(self) -> None:
+        if not self._persist_telegram_config_for_action():
+            return
+        controller = self._telegram_controller_required()
+        if controller is None:
+            return
+        if self._telegram_qr_login_running:
+            return
+        self._telegram_qr_login_running = True
+        self.telegram_qr_login_button.setEnabled(False)
+        self.telegram_qr_complete_button.setEnabled(False)
+        self.telegram_status_label.setText("正在生成扫码二维码...")
+        threading.Thread(
+            target=self._start_telegram_qr_login_in_background,
+            args=(controller,),
+            daemon=True,
+        ).start()
+
+    def _start_telegram_qr_login_in_background(self, controller) -> None:
+        try:
+            qr_info = controller.start_local_qr_login()
+        except Exception as exc:
+            self._emit_initial_content_signal(self._telegram_signals.qr_login_failed, str(exc))
+            return
+        self._emit_initial_content_signal(self._telegram_signals.qr_login_started, qr_info)
+
+    def _apply_telegram_qr_login_started(self, qr_info) -> None:
+        self._telegram_qr_login_running = False
+        self.telegram_qr_login_button.setEnabled(True)
+        self.telegram_qr_complete_button.setEnabled(True)
+        self._set_telegram_qr_url(str(getattr(qr_info, "url", "") or ""))
+        self.telegram_status_label.setText("等待扫码确认")
+
+    def _show_telegram_qr_login_error(self, message: str) -> None:
+        self._telegram_qr_login_running = False
+        self.telegram_qr_login_button.setEnabled(True)
+        self.telegram_qr_complete_button.setEnabled(True)
+        self.telegram_status_label.setText("扫码登录失败")
+        QMessageBox.warning(self, "Telegram 扫码登录失败", message)
+
+    def _complete_telegram_qr_login(self) -> None:
+        self._start_telegram_qr_complete(password="")
+
+    def _start_telegram_qr_complete(self, *, password: str = "") -> None:
+        controller = self._telegram_controller_required()
+        if controller is None:
+            return
+        if self._telegram_qr_complete_running:
+            return
+        self._telegram_qr_complete_running = True
+        self.telegram_qr_complete_button.setEnabled(False)
+        self.telegram_status_label.setText("正在确认扫码登录...")
+        threading.Thread(
+            target=self._complete_telegram_qr_login_in_background,
+            args=(controller, password),
+            daemon=True,
+        ).start()
+
+    def _complete_telegram_qr_login_in_background(self, controller, password: str) -> None:
+        try:
+            user = controller.complete_local_qr_login(password=password)
+        except Exception as exc:
+            if exc.__class__.__name__ == "SessionPasswordNeededError" and not password:
+                self._emit_initial_content_signal(self._telegram_signals.qr_login_password_needed)
+                return
+            self._emit_initial_content_signal(self._telegram_signals.qr_login_complete_failed, str(exc))
+            return
+        self._emit_initial_content_signal(self._telegram_signals.qr_login_completed, user)
+
+    def _request_telegram_qr_password(self) -> None:
+        self._telegram_qr_complete_running = False
+        self.telegram_qr_complete_button.setEnabled(True)
+        password, ok = QInputDialog.getText(
+            self,
+            "Telegram 二步验证",
+            "请输入二步验证密码",
+            QLineEdit.EchoMode.Password,
+        )
+        if not ok:
+            self.telegram_status_label.setText("等待扫码确认")
+            return
+        self._start_telegram_qr_complete(password=password)
+
+    def _apply_telegram_qr_login_completed(self, user) -> None:
+        self._telegram_qr_complete_running = False
+        self.telegram_qr_complete_button.setEnabled(True)
+        self.telegram_qr_label.clear()
+        self._apply_telegram_logged_in_user(user)
+        controller = self._telegram_controller
+        if controller is None:
+            return
+        self._start_telegram_chats_refresh(controller, reason="login")
+
+    def _show_telegram_qr_login_complete_error(self, message: str) -> None:
+        self._telegram_qr_complete_running = False
+        self.telegram_qr_complete_button.setEnabled(True)
+        self.telegram_status_label.setText("扫码登录失败")
+        QMessageBox.warning(self, "Telegram 扫码登录失败", message)
+
+    def _send_telegram_login_code(self) -> None:
+        if not self._persist_telegram_config_for_action():
+            return
+        controller = self._telegram_controller_required()
+        if controller is None:
+            return
+        phone = self.telegram_phone_edit.text().strip()
+        if not phone:
+            QMessageBox.warning(self, "Telegram 手机号无效", "请填写手机号")
+            return
+        try:
+            controller.send_local_login_code(phone)
+        except Exception as exc:
+            QMessageBox.warning(self, "Telegram 发送验证码失败", str(exc))
+            return
+        self.telegram_status_label.setText("验证码已发送")
+
+    def _sign_in_telegram_phone(self) -> None:
+        controller = self._telegram_controller_required()
+        if controller is None:
+            return
+        phone = self.telegram_phone_edit.text().strip()
+        code = self.telegram_code_edit.text().strip()
+        password = self.telegram_password_edit.text().strip()
+        if not phone or not code:
+            QMessageBox.warning(self, "Telegram 登录信息无效", "请填写手机号和验证码")
+            return
+        try:
+            user = controller.sign_in_local(phone=phone, code=code, password=password)
+        except Exception as exc:
+            QMessageBox.warning(self, "Telegram 登录失败", str(exc))
+            return
+        self._apply_telegram_logged_in_user(user)
+        self._start_telegram_chats_refresh(controller, reason="login")
+
+    def _logout_telegram(self) -> None:
+        controller = self._telegram_controller_required()
+        if controller is None:
+            return
+        try:
+            controller.logout_local()
+        except Exception as exc:
+            QMessageBox.warning(self, "Telegram 退出登录失败", str(exc))
+            return
+        self.telegram_status_label.setText("未登录")
+        self._sync_telegram_login_controls(False)
+        self.telegram_channel_table.setRowCount(0)
+        self.telegram_channel_status_label.setText("已退出登录")
+
+    def _populate_telegram_channels(self, chats=None) -> None:
+        if not self._telegram_logged_in:
+            self.telegram_channel_table.setRowCount(0)
+            self._apply_telegram_channel_filters()
+            return
+        if chats is None:
+            controller = self._telegram_controller
+            chats = []
+            if controller is not None:
+                try:
+                    chats = list(controller.list_local_chats())
+                except Exception:
+                    chats = []
+        self.telegram_channel_table.setUpdatesEnabled(False)
+        sorting_was_enabled = self.telegram_channel_table.isSortingEnabled()
+        self.telegram_channel_table.setSortingEnabled(False)
+        try:
+            self.telegram_channel_table.setRowCount(len(chats))
+            for row, chat in enumerate(chats):
+                chat_id = int(getattr(chat, "id", 0))
+                username = str(getattr(chat, "username", "") or "").strip()
+                public_channel = bool(username)
+                search_enabled = bool(getattr(chat, "enabled", False)) and not public_channel
+                browse_enabled = bool(getattr(chat, "browse_enabled", False))
+                search_checkbox = QCheckBox()
+                search_checkbox.setChecked(search_enabled)
+                search_checkbox.setEnabled(not public_channel)
+                search_checkbox.setToolTip(
+                    "公开频道已由电报影视/盘搜覆盖；本地搜索只使用私密频道"
+                    if public_channel
+                    else "参与本地 Telegram 私密频道搜索"
+                )
+                search_checkbox.toggled.connect(
+                    lambda enabled, chat_id=chat_id, checkbox=search_checkbox: self._set_telegram_channel_enabled(
+                        chat_id,
+                        enabled,
+                        checkbox=checkbox,
+                    )
+                )
+                browse_checkbox = QCheckBox()
+                browse_checkbox.setChecked(browse_enabled)
+                browse_checkbox.toggled.connect(
+                    lambda enabled, chat_id=chat_id, checkbox=browse_checkbox: self._set_telegram_channel_browse_enabled(
+                        chat_id,
+                        enabled,
+                        checkbox=checkbox,
+                    )
+                )
+                self.telegram_channel_table.setItem(row, _TELEGRAM_COL_SEARCH, self._telegram_usage_item(search_enabled))
+                self.telegram_channel_table.setItem(row, _TELEGRAM_COL_BROWSE, self._telegram_usage_item(browse_enabled))
+                self.telegram_channel_table.setCellWidget(row, _TELEGRAM_COL_SEARCH, search_checkbox)
+                self.telegram_channel_table.setCellWidget(row, _TELEGRAM_COL_BROWSE, browse_checkbox)
+                title_item = QTableWidgetItem(str(getattr(chat, "title", "")))
+                title_item.setData(Qt.ItemDataRole.UserRole, username)
+                if username:
+                    title_item.setToolTip(f"@{username}")
+                self.telegram_channel_table.setItem(row, _TELEGRAM_COL_TITLE, title_item)
+                self.telegram_channel_table.setItem(row, _TELEGRAM_COL_KIND, QTableWidgetItem(str(getattr(chat, "kind", ""))))
+                self.telegram_channel_table.setItem(
+                    row,
+                    _TELEGRAM_COL_VISIBILITY,
+                    self._telegram_visibility_item(username),
+                )
+                self.telegram_channel_table.setItem(
+                    row,
+                    _TELEGRAM_COL_WEB_ACCESS,
+                    self._telegram_web_access_item(username),
+                )
+                self.telegram_channel_table.setItem(row, _TELEGRAM_COL_ID, self._telegram_numeric_item(chat_id))
+                self.telegram_channel_table.setItem(
+                    row,
+                    _TELEGRAM_COL_INDEXED,
+                    self._telegram_numeric_item(int(getattr(chat, "last_indexed_msg_id", 0) or 0)),
+                )
+        finally:
+            self.telegram_channel_table.setSortingEnabled(sorting_was_enabled)
+            self.telegram_channel_table.setUpdatesEnabled(True)
+        self._apply_telegram_channel_filters()
+
+    def _telegram_usage_item(self, enabled: bool) -> QTableWidgetItem:
+        item = _SortValueTableWidgetItem("", 1 if enabled else 0)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        return item
+
+    def _telegram_numeric_item(self, value: int) -> QTableWidgetItem:
+        return _SortValueTableWidgetItem(str(int(value)), int(value))
+
+    def _telegram_visibility_item(self, username: str) -> QTableWidgetItem:
+        item = _SortValueTableWidgetItem("公开" if username else "私密", 1 if username else 0)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item.setToolTip(f"公开频道：@{username}" if username else "私密频道：Web 端不可访问")
+        return item
+
+    def _telegram_web_access_item(self, username: str) -> QTableWidgetItem:
+        item = _SortValueTableWidgetItem("可访问" if username else "Web不可访问", 1 if username else 0)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item.setToolTip(
+            f"可通过公开用户名 @{username} 访问"
+            if username
+            else "没有公开用户名，只能通过当前登录账号访问"
+        )
+        return item
+
+    def _telegram_channel_row_for_widget(self, widget: QWidget, column: int) -> int:
+        for row in range(self.telegram_channel_table.rowCount()):
+            if self.telegram_channel_table.cellWidget(row, column) is widget:
+                return row
+        return -1
+
+    def _update_telegram_usage_cell(self, checkbox: QCheckBox | None, column: int, enabled: bool) -> None:
+        if checkbox is None:
+            return
+        row = self._telegram_channel_row_for_widget(checkbox, column)
+        if row < 0:
+            return
+        self.telegram_channel_table.setItem(row, column, self._telegram_usage_item(enabled))
+        self._apply_telegram_channel_filters()
+
+    def _telegram_row_usage_enabled(self, row: int, column: int) -> bool:
+        item = self.telegram_channel_table.item(row, column)
+        if item is None:
+            return False
+        return int(item.data(Qt.ItemDataRole.UserRole) or 0) > 0
+
+    def _apply_telegram_channel_filters(self, *_args) -> None:
+        query = self.telegram_channel_search_edit.text().strip().casefold()
+        usage_filter = str(self.telegram_channel_usage_filter_combo.currentData() or "")
+        type_filter = str(self.telegram_channel_type_filter_combo.currentData() or "")
+        visibility_filter = str(self.telegram_channel_visibility_filter_combo.currentData() or "")
+        visible_count = 0
+        total_count = self.telegram_channel_table.rowCount()
+        for row in range(total_count):
+            title_item = self.telegram_channel_table.item(row, _TELEGRAM_COL_TITLE)
+            type_item = self.telegram_channel_table.item(row, _TELEGRAM_COL_KIND)
+            visibility_item = self.telegram_channel_table.item(row, _TELEGRAM_COL_VISIBILITY)
+            web_access_item = self.telegram_channel_table.item(row, _TELEGRAM_COL_WEB_ACCESS)
+            id_item = self.telegram_channel_table.item(row, _TELEGRAM_COL_ID)
+            title = title_item.text() if title_item is not None else ""
+            username = str(title_item.data(Qt.ItemDataRole.UserRole) or "") if title_item is not None else ""
+            kind = type_item.text() if type_item is not None else ""
+            visibility = visibility_item.text() if visibility_item is not None else ""
+            web_access = web_access_item.text() if web_access_item is not None else ""
+            chat_id = id_item.text() if id_item is not None else ""
+            public_channel = bool(username)
+            haystack = " ".join((title, username, f"@{username}" if username else "", kind, visibility, web_access, chat_id)).casefold()
+            matches_query = not query or query in haystack
+            matches_type = not type_filter or kind == type_filter
+            matches_visibility = (
+                not visibility_filter
+                or (visibility_filter == "public" and public_channel)
+                or (visibility_filter == "private" and not public_channel)
+            )
+            search_enabled = self._telegram_row_usage_enabled(row, _TELEGRAM_COL_SEARCH)
+            browse_enabled = self._telegram_row_usage_enabled(row, _TELEGRAM_COL_BROWSE)
+            matches_usage = (
+                not usage_filter
+                or (usage_filter == "search" and search_enabled)
+                or (usage_filter == "browse" and browse_enabled)
+                or (usage_filter == "unused" and not (search_enabled or browse_enabled))
+            )
+            visible = matches_query and matches_type and matches_visibility and matches_usage
+            self.telegram_channel_table.setRowHidden(row, not visible)
+            if visible:
+                visible_count += 1
+        self.telegram_channel_count_label.setText(f"{visible_count}/{total_count}")
+
+    def _set_telegram_channel_enabled(self, chat_id: int, enabled: bool, checkbox: QCheckBox | None = None) -> None:
+        controller = self._telegram_controller
+        if controller is None or not chat_id:
+            return
+        try:
+            controller.set_local_chat_enabled(chat_id, enabled)
+        except Exception as exc:
+            QMessageBox.warning(self, "Telegram 频道设置失败", str(exc))
+            if checkbox is not None:
+                checkbox.blockSignals(True)
+                checkbox.setChecked(not enabled)
+                checkbox.blockSignals(False)
+            return
+        self._update_telegram_usage_cell(checkbox, _TELEGRAM_COL_SEARCH, enabled)
+
+    def _set_telegram_channel_browse_enabled(self, chat_id: int, enabled: bool, checkbox: QCheckBox | None = None) -> None:
+        controller = self._telegram_controller
+        if controller is None or not chat_id:
+            return
+        try:
+            controller.set_local_chat_browse_enabled(chat_id, enabled)
+        except Exception as exc:
+            QMessageBox.warning(self, "Telegram 频道设置失败", str(exc))
+            if checkbox is not None:
+                checkbox.blockSignals(True)
+                checkbox.setChecked(not enabled)
+                checkbox.blockSignals(False)
+            return
+        self._update_telegram_usage_cell(checkbox, _TELEGRAM_COL_BROWSE, enabled)
+
+    def _start_telegram_chats_refresh(self, controller, *, reason: str) -> None:
+        if self._telegram_refresh_running:
+            self.telegram_channel_status_label.setText("频道刷新中...")
+            return
+        self._telegram_refresh_running = True
+        self._sync_telegram_login_controls(self._telegram_logged_in)
+        self.telegram_channel_status_label.setText("频道刷新中...")
+        threading.Thread(
+            target=self._refresh_telegram_chats_in_background,
+            args=(controller, reason),
+            daemon=True,
+        ).start()
+
+    def _refresh_telegram_chats_in_background(self, controller, reason: str) -> None:
+        try:
+            chats = list(controller.refresh_local_chats())
+        except Exception as exc:
+            self._emit_initial_content_signal(self._telegram_signals.chats_refresh_failed, str(exc), reason)
+            return
+        self._emit_initial_content_signal(self._telegram_signals.chats_refreshed, chats, reason)
+
+    def _apply_telegram_chats_refreshed(self, chats, _reason: str) -> None:
+        self._telegram_refresh_running = False
+        self._sync_telegram_login_controls(self._telegram_logged_in)
+        if not self._telegram_logged_in:
+            return
+        self._populate_telegram_channels(chats)
+        self.telegram_channel_status_label.setText(f"已刷新 {len(chats)} 个频道/群组")
+
+    def _show_telegram_chats_refresh_error(self, message: str, reason: str) -> None:
+        self._telegram_refresh_running = False
+        self._sync_telegram_login_controls(self._telegram_logged_in)
+        self.telegram_channel_status_label.setText(f"频道刷新失败：{message}")
+        if reason != "login":
+            QMessageBox.warning(self, "Telegram 频道刷新失败", message)
+
+    def _refresh_telegram_chats(self) -> None:
+        controller = self._telegram_controller_required()
+        if controller is None:
+            return
+        if not self._telegram_logged_in and not self._refresh_telegram_status():
+            QMessageBox.warning(self, "Telegram 未登录", "请先登录 Telegram")
+            return
+        self._start_telegram_chats_refresh(controller, reason="manual")
+
+    def _sync_telegram_index_in_background(self, controller) -> None:
+        try:
+            count = int(controller.sync_local_chats())
+            chats = list(controller.list_local_chats())
+        except Exception as exc:
+            self._emit_initial_content_signal(self._telegram_signals.sync_failed, str(exc))
+            return
+        self._emit_initial_content_signal(self._telegram_signals.sync_finished, count, chats)
+
+    def _apply_telegram_sync_finished(self, count: int, chats) -> None:
+        self._telegram_sync_running = False
+        self._sync_telegram_login_controls(self._telegram_logged_in)
+        if self._telegram_logged_in:
+            self._populate_telegram_channels(chats)
+        self.telegram_channel_status_label.setText(f"同步完成，已索引 {count} 条资源")
+
+    def _show_telegram_sync_error(self, message: str) -> None:
+        self._telegram_sync_running = False
+        self._sync_telegram_login_controls(self._telegram_logged_in)
+        self.telegram_channel_status_label.setText(f"同步失败：{message}")
+        QMessageBox.warning(self, "Telegram 同步失败", message)
+
+    def _sync_telegram_index(self) -> None:
+        controller = self._telegram_controller_required()
+        if controller is None:
+            return
+        if not self._telegram_logged_in and not self._refresh_telegram_status():
+            QMessageBox.warning(self, "Telegram 未登录", "请先登录 Telegram")
+            return
+        if self._telegram_sync_running:
+            self.telegram_channel_status_label.setText("索引同步中...")
+            return
+        self._telegram_sync_running = True
+        self._sync_telegram_login_controls(self._telegram_logged_in)
+        self.telegram_channel_status_label.setText("索引同步中...")
+        threading.Thread(
+            target=self._sync_telegram_index_in_background,
+            args=(controller,),
+            daemon=True,
+        ).start()
 
     def _refresh_cache_summary(self) -> None:
         try:
@@ -1268,6 +2039,9 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         ai_values = self._validated_ai_values()
         if ai_values is None:
             return
+        telegram_values = self._validated_telegram_values()
+        if telegram_values is None:
+            return
         self._config.theme_mode = str(self.theme_mode_combo.currentData() or "system")
         self._config.home_mode = str(self.home_mode_combo.currentData() or "browse")
         self._config.logging_enabled = self.logging_enabled_checkbox.isChecked()
@@ -1287,6 +2061,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self._config.metadata_tmdb_api_key = self.tmdb_api_key_edit.text().strip()
         self._config.metadata_tmdb_proxy_base_url = self._current_tmdb_proxy_base_url()
         self._config.metadata_bangumi_access_token = self.bangumi_access_token_edit.text().strip()
+        self._config.telegram_api_id, self._config.telegram_api_hash = telegram_values
         (
             self._config.ai_enabled,
             self._config.ai_base_url,

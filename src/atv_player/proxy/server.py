@@ -26,6 +26,7 @@ from atv_player.proxy.m3u8 import rewrite_playlist
 from atv_player.proxy.segment import SegmentProxy
 from atv_player.proxy.session import DashRepresentation, ProxySession, ProxySessionRegistry
 from atv_player.request_headers import normalize_media_request_headers
+from atv_player.telegram_media import TelegramMediaError, TelegramMediaService, parse_telegram_media_uri
 
 logger = logging.getLogger(__name__)
 
@@ -373,6 +374,7 @@ class LocalHlsProxyServer:
         get=httpx.get,
         stream=_default_stream,
         segment_prefetch_size: int = 2,
+        telegram_media_service: TelegramMediaService | None = None,
     ) -> None:
         self.host = host
         self.port = port
@@ -381,6 +383,7 @@ class LocalHlsProxyServer:
         self._stream = stream
         self._registry = ProxySessionRegistry()
         self._segment_proxy = SegmentProxy(self._registry, get=get, segment_prefetch_size=segment_prefetch_size)
+        self._telegram_media_service = telegram_media_service
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -416,6 +419,9 @@ class LocalHlsProxyServer:
     def set_segment_prefetch_size(self, segment_prefetch_size: int) -> None:
         self._segment_proxy.set_segment_prefetch_size(segment_prefetch_size)
 
+    def set_telegram_media_service(self, service: TelegramMediaService | None) -> None:
+        self._telegram_media_service = service
+
     def create_playlist_url(self, url: str, headers: dict[str, str] | None = None) -> str:
         token = self._registry.create_session(url, normalize_media_request_headers(url, headers))
         return f"http://{self.host}:{self.port}/m3u/{quote(token, safe='')}"
@@ -423,6 +429,16 @@ class LocalHlsProxyServer:
     def create_media_url(self, url: str, headers: dict[str, str] | None = None) -> str:
         token = self._registry.create_session(url, normalize_media_request_headers(url, headers))
         return f"http://{self.host}:{self.port}/raw?v={quote(token)}"
+
+    def create_telegram_media_url(self, url: str) -> str:
+        parsed = parse_telegram_media_uri(url)
+        if parsed is None:
+            raise ValueError("invalid telegram media url")
+        chat_id, msg_id = parsed
+        return f"http://{self.host}:{self.port}/tg/video/{chat_id}/{msg_id}"
+
+    def create_telegram_thumbnail_url(self, chat_id: int | str, msg_id: int | str) -> str:
+        return f"http://{self.host}:{self.port}/tg/thumb/{int(chat_id)}/{int(msg_id)}"
 
     def create_iso_media_url(
         self,
@@ -916,6 +932,202 @@ class LocalHlsProxyServer:
         handler.end_headers()
         return True
 
+    @staticmethod
+    def _telegram_video_path(path: str) -> tuple[int, int]:
+        prefix = "/tg/video/"
+        if not path.startswith(prefix):
+            raise KeyError("telegram media")
+        payload = path.removeprefix(prefix)
+        chat_id_text, separator, msg_id_text = payload.partition("/")
+        if not separator or not chat_id_text or not msg_id_text:
+            raise KeyError("telegram media")
+        return int(chat_id_text), int(msg_id_text)
+
+    @staticmethod
+    def _telegram_thumbnail_path(path: str) -> tuple[int, int]:
+        prefix = "/tg/thumb/"
+        if not path.startswith(prefix):
+            raise KeyError("telegram thumbnail")
+        payload = path.removeprefix(prefix)
+        chat_id_text, separator, msg_id_text = payload.partition("/")
+        if not separator or not chat_id_text or not msg_id_text:
+            raise KeyError("telegram thumbnail")
+        return int(chat_id_text), int(msg_id_text)
+
+    @staticmethod
+    def _image_content_type(payload: bytes) -> str:
+        if payload.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image/png"
+        if payload.startswith(b"GIF87a") or payload.startswith(b"GIF89a"):
+            return "image/gif"
+        if payload.startswith(b"RIFF") and payload[8:12] == b"WEBP":
+            return "image/webp"
+        return "image/jpeg"
+
+    def _stream_telegram_thumbnail_response(
+        self,
+        path: str,
+        handler: BaseHTTPRequestHandler,
+    ) -> bool:
+        parsed = urlparse(path)
+        if not parsed.path.startswith("/tg/thumb/"):
+            return False
+        if self._telegram_media_service is None:
+            raise TelegramMediaError("telegram media service is not configured")
+        chat_id, msg_id = self._telegram_thumbnail_path(parsed.path)
+        payload = self._telegram_media_service.get_media_thumbnail_bytes(chat_id, msg_id)
+        if not payload:
+            message = b"telegram thumbnail not found"
+            handler.send_response(404)
+            handler.send_header("Content-Length", str(len(message)))
+            handler.end_headers()
+            handler.wfile.write(message)
+            return True
+        handler.send_response(200)
+        handler.send_header("Content-Type", self._image_content_type(payload))
+        handler.send_header("Content-Length", str(len(payload)))
+        handler.send_header("Cache-Control", "public, max-age=86400")
+        handler.end_headers()
+        handler.wfile.write(payload)
+        return True
+
+    def _telegram_media_response_metadata(
+        self,
+        path: str,
+        request_headers: dict[str, str],
+    ) -> tuple[int, int, int, int, int, str]:
+        parsed = urlparse(path)
+        if not parsed.path.startswith("/tg/video/"):
+            raise KeyError("telegram media")
+        if self._telegram_media_service is None:
+            raise TelegramMediaError("telegram media service is not configured")
+        chat_id, msg_id = self._telegram_video_path(parsed.path)
+        media = self._telegram_media_service.get_media(chat_id, msg_id)
+        if media is None:
+            raise TelegramMediaError("telegram media not found")
+        total_size = int(media.size)
+        range_header = request_headers.get("Range") or request_headers.get("range") or ""
+        parsed_range = _parse_byte_range_header(range_header) if range_header else None
+        start = parsed_range[0] if parsed_range is not None else 0
+        inclusive_end = (
+            total_size - 1
+            if parsed_range is None or parsed_range[1] is None
+            else min(parsed_range[1], total_size - 1)
+        )
+        if total_size <= 0 or start < 0 or start >= total_size or inclusive_end < start:
+            return chat_id, msg_id, total_size, start, inclusive_end, media.mime_type or "application/octet-stream"
+        return chat_id, msg_id, total_size, start, inclusive_end, media.mime_type or "application/octet-stream"
+
+    def _send_invalid_telegram_range(
+        self,
+        total_size: int,
+        handler: BaseHTTPRequestHandler,
+        *,
+        write_body: bool,
+    ) -> bool:
+        payload = b"invalid telegram media range"
+        handler.send_response(416)
+        handler.send_header("Content-Length", str(len(payload) if write_body else 0))
+        handler.send_header("Content-Range", f"bytes */{max(total_size, 0)}")
+        handler.end_headers()
+        if write_body:
+            handler.wfile.write(payload)
+        return True
+
+    def _stream_telegram_media_response(
+        self,
+        path: str,
+        request_headers: dict[str, str],
+        handler: BaseHTTPRequestHandler,
+    ) -> bool:
+        parsed = urlparse(path)
+        if not parsed.path.startswith("/tg/video/"):
+            return False
+        chat_id, msg_id, total_size, start, inclusive_end, content_type = self._telegram_media_response_metadata(
+            path,
+            request_headers,
+        )
+        if total_size <= 0 or start < 0 or start >= total_size or inclusive_end < start:
+            return self._send_invalid_telegram_range(total_size, handler, write_body=True)
+        range_header = request_headers.get("Range") or request_headers.get("range")
+        status_code = 206 if range_header else 200
+        content_length = inclusive_end - start + 1
+        logger.info(
+            "Telegram media proxy GET chat_id=%s msg_id=%s range=%s status=%s content_range=%s-%s/%s length=%s",
+            chat_id,
+            msg_id,
+            range_header or "",
+            status_code,
+            start,
+            inclusive_end,
+            total_size,
+            content_length,
+            extra={"log_category": "network", "log_source": "telegram"},
+        )
+        handler.send_response(status_code)
+        handler.send_header("Content-Type", content_type)
+        handler.send_header("Content-Length", str(content_length))
+        handler.send_header("Accept-Ranges", "bytes")
+        if range_header:
+            handler.send_header("Content-Range", f"bytes {start}-{inclusive_end}/{total_size}")
+        handler.end_headers()
+        assert self._telegram_media_service is not None
+        for chunk in self._telegram_media_service.iter_media_bytes(
+            chat_id,
+            msg_id,
+            offset=start,
+            limit=content_length,
+        ):
+            if not chunk:
+                continue
+            try:
+                handler.wfile.write(chunk)
+                handler.wfile.flush()
+            except Exception as exc:
+                if _is_client_disconnect_error(exc):
+                    return True
+                raise
+        return True
+
+    def _send_telegram_media_head_response(
+        self,
+        path: str,
+        request_headers: dict[str, str],
+        handler: BaseHTTPRequestHandler,
+    ) -> bool:
+        parsed = urlparse(path)
+        if not parsed.path.startswith("/tg/video/"):
+            return False
+        _chat_id, _msg_id, total_size, start, inclusive_end, content_type = self._telegram_media_response_metadata(
+            path,
+            request_headers,
+        )
+        if total_size <= 0 or start < 0 or start >= total_size or inclusive_end < start:
+            return self._send_invalid_telegram_range(total_size, handler, write_body=False)
+        range_header = request_headers.get("Range") or request_headers.get("range")
+        status_code = 206 if range_header else 200
+        content_length = inclusive_end - start + 1
+        logger.info(
+            "Telegram media proxy HEAD chat_id=%s msg_id=%s range=%s status=%s content_range=%s-%s/%s length=%s",
+            _chat_id,
+            _msg_id,
+            range_header or "",
+            status_code,
+            start,
+            inclusive_end,
+            total_size,
+            content_length,
+            extra={"log_category": "network", "log_source": "telegram"},
+        )
+        handler.send_response(status_code)
+        handler.send_header("Content-Type", content_type)
+        handler.send_header("Content-Length", str(content_length))
+        handler.send_header("Accept-Ranges", "bytes")
+        if range_header:
+            handler.send_header("Content-Range", f"bytes {start}-{inclusive_end}/{total_size}")
+        handler.end_headers()
+        return True
+
     def handle_request(
         self,
         method: str,
@@ -1037,6 +1249,10 @@ class LocalHlsProxyServer:
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:
                 try:
+                    if parent._stream_telegram_thumbnail_response(self.path, self):
+                        return
+                    if parent._stream_telegram_media_response(self.path, dict(self.headers.items()), self):
+                        return
                     if parent._stream_dash_asset_response(self.path, dict(self.headers.items()), self):
                         return
                     if parent._stream_iso_response(self.path, dict(self.headers.items()), self):
@@ -1070,6 +1286,8 @@ class LocalHlsProxyServer:
 
             def do_HEAD(self) -> None:
                 try:
+                    if parent._send_telegram_media_head_response(self.path, dict(self.headers.items()), self):
+                        return
                     if parent._send_dash_asset_head_response(self.path, dict(self.headers.items()), self):
                         return
                     if parent._send_iso_head_response(self.path, dict(self.headers.items()), self):

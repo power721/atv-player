@@ -302,6 +302,43 @@ def test_youtube_controller_searches_all_result_types_for_channels() -> None:
     assert service.flat_calls == [("ytsearchall:openai", 1, 30)]
 
 
+def test_youtube_controller_search_preserves_ytdlp_total_for_global_search_count() -> None:
+    class FlatResult(list):
+        total = 186
+
+    class SearchService(FakeYtdlpService):
+        def extract_flat_playlist(
+            self,
+            url: str,
+            *,
+            page: int = 1,
+            page_size: int = 30,
+        ):
+            self.flat_calls.append((url, page, page_size))
+            return FlatResult(
+                [
+                    {
+                        "id": "abc123xyz89",
+                        "title": "OpenAI Video",
+                        "url": "https://www.youtube.com/watch?v=abc123xyz89",
+                        "ie_key": "Youtube",
+                    }
+                ]
+            )
+
+    service = SearchService()
+    controller = YouTubeController(
+        AppConfig(),
+        yt_dlp_service=service,
+    )
+
+    items, page_info = controller.search_items("openai", 1)
+
+    assert [item.vod_name for item in items] == ["OpenAI Video"]
+    assert int(page_info) == 1
+    assert page_info.total == 186
+
+
 def test_youtube_controller_loads_category_through_ytdlp_search_all_scheme() -> None:
     service = FakeYtdlpService()
     controller = YouTubeController(

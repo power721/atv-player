@@ -28,6 +28,36 @@ from atv_player.player.ytdlp_runtime import (
 
 logger = logging.getLogger(__name__)
 
+
+class FlatPlaylistResult(list):
+    def __init__(self, entries: list[dict], total: int | None = None) -> None:
+        super().__init__(entries)
+        self.total = total
+
+
+def _optional_playlist_total(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _playlist_total_from_info(info: dict) -> int | None:
+    for key in (
+        "playlist_count",
+        "n_entries",
+        "total_entries",
+        "entries_count",
+        "playlist_n_entries",
+    ):
+        total = _optional_playlist_total(info.get(key))
+        if total is not None:
+            return total
+    return None
+
+
 _KNOWN_YTDLP_DOMAINS = frozenset({
     "youtube.com",
     "youtu.be",
@@ -1414,11 +1444,12 @@ class YtdlpPlaybackService:
         if not isinstance(info, dict):
             return []
         entries = info.get("entries")
+        total = _playlist_total_from_info(info)
         if entries is None:
-            return [info]
+            return FlatPlaylistResult([info], total)
         if not isinstance(entries, list):
-            return []
-        return [entry for entry in entries if isinstance(entry, dict)]
+            return FlatPlaylistResult([], total)
+        return FlatPlaylistResult([entry for entry in entries if isinstance(entry, dict)], total)
 
     def can_resolve(self, url: str) -> bool:
         if not self.is_available():

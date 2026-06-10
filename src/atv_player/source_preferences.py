@@ -37,4 +37,5 @@ VALID_METADATA_PROVIDER_IDS = {item.id for item in METADATA_SOURCE_PREFERENCES} 
     "plugin",
     "douban",
     "remote_douban",
+    "migu",
 }

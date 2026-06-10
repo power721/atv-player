@@ -194,6 +194,33 @@ class TestIsAvailable:
         assert command[command.index("--playlist-end") + 1] == "60"
         assert command[command.index("--cookies-from-browser") + 1] == "edge"
 
+    def test_extract_flat_playlist_preserves_playlist_count_total(self, monkeypatch) -> None:
+        from atv_player.yt_dlp_service import YtdlpPlaybackService
+
+        def fake_run(command, **_kwargs):
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({
+                    "playlist_count": 186,
+                    "entries": [
+                        {"id": "abc123", "title": "搜索结果"},
+                    ],
+                }),
+                stderr="",
+            )
+
+        monkeypatch.setattr("atv_player.yt_dlp_service.subprocess.run", fake_run)
+        service = YtdlpPlaybackService()
+
+        entries = service.extract_flat_playlist(
+            "ytsearchall:openai",
+            page=1,
+            page_size=30,
+        )
+
+        assert entries == [{"id": "abc123", "title": "搜索结果"}]
+        assert entries.total == 186
+
     def test_extract_flat_playlist_returns_single_video_info_without_entries(self, monkeypatch) -> None:
         from atv_player.yt_dlp_service import YtdlpPlaybackService
 

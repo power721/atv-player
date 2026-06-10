@@ -16,6 +16,7 @@ from atv_player.player.bluray_iso import BlurayIsoInspector, is_remote_iso_url
 from atv_player.proxy.server import LocalHlsProxyServer
 from atv_player.proxy.stripper import TS_PACKET_SIZE, repair_segment_bytes
 from atv_player.request_headers import normalize_media_request_headers
+from atv_player.telegram_media import parse_telegram_media_uri
 
 _AD_MARKERS = ("/adjump/", "/video/adjump/")
 _PLAYLIST_TIMEOUT_SECONDS = 10.0
@@ -196,6 +197,8 @@ class M3U8AdFilter:
         self._bluray_iso_inspector = bluray_iso_inspector or BlurayIsoInspector()
 
     def should_prepare(self, url: str) -> bool:
+        if parse_telegram_media_uri(url) is not None:
+            return True
         if is_remote_iso_url(url):
             return True
         if _is_dash_data_uri(url):
@@ -211,6 +214,8 @@ class M3U8AdFilter:
         if not self.should_prepare(url):
             return url
         self._proxy_server.start()
+        if parse_telegram_media_uri(url) is not None:
+            return self._proxy_server.create_telegram_media_url(url)
         normalized_headers = normalize_media_request_headers(url, headers)
         if is_remote_iso_url(url):
             prepare_playback = getattr(self._bluray_iso_inspector, "prepare_playback", None)

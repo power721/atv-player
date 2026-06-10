@@ -33,6 +33,8 @@ class AppConfig:
     metadata_tmdb_api_key: str = ""
     metadata_tmdb_proxy_base_url: str = ""
     metadata_bangumi_access_token: str = ""
+    telegram_api_id: int = 0
+    telegram_api_hash: str = ""
     network_proxy_mode: str = "direct"
     network_proxy_url: str = ""
     network_proxy_bypass_rules: list[str] = field(default_factory=_default_network_proxy_bypass_rules)
