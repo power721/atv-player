@@ -413,3 +413,95 @@ def test_following_repository_load_recent_recommendation_candidates_prefers_rece
     rows = repo.load_recent_recommendation_candidates(limit=1)
 
     assert [row.provider_id for row in rows] == ["tv:2"]
+
+
+def _apply_backend(repo: FollowingRepository, record_id: int, **kwargs):
+    values = dict(
+        subscription_id=7,
+        playable_episodes=5,
+        source_key="http://192.168.50.60:4567",
+        source_name="服务端追剧",
+        updated_at=200,
+    )
+    values.update(kwargs)
+    return repo.apply_backend_signal(record_id, **values)
+
+
+def test_apply_backend_signal_raises_latest_and_upserts_binding(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(_record(latest_episode=3, current_episode=3, watched_latest_episode=True))
+
+    changed = _apply_backend(repo, record_id, playable_episodes=5)
+
+    assert changed is True
+    record = repo.get(record_id)
+    assert record.latest_episode == 5
+    assert record.has_update is True
+    assert record.new_episode_count == 2
+    assert record.homepage_prompt_pending is True
+    bindings = [b for b in record.source_bindings if b.source_kind == "msub"]
+    assert len(bindings) == 1
+    assert bindings[0].vod_id == "msub:7"
+    assert bindings[0].source_key == "http://192.168.50.60:4567"
+
+
+def test_apply_backend_signal_does_not_regress_latest(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(_record(latest_episode=8, current_episode=8, watched_latest_episode=True))
+
+    changed = _apply_backend(repo, record_id, playable_episodes=5)
+
+    assert changed is False
+    record = repo.get(record_id)
+    assert record.latest_episode == 8
+    assert record.has_update is False
+    assert record.new_episode_count == 0
+
+
+def test_apply_backend_signal_replaces_stale_msub_binding(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(_record(latest_episode=3, current_episode=3, watched_latest_episode=True))
+    _apply_backend(repo, record_id, subscription_id=7)
+    _apply_backend(repo, record_id, subscription_id=9, playable_episodes=4)
+
+    record = repo.get(record_id)
+    msub_bindings = [b for b in record.source_bindings if b.source_kind == "msub"]
+    assert [b.vod_id for b in msub_bindings] == ["msub:9"]
+
+
+def test_apply_backend_signal_skips_prompt_when_not_caught_up(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(_record(latest_episode=3, current_episode=1, watched_latest_episode=False))
+
+    _apply_backend(repo, record_id, playable_episodes=5)
+
+    record = repo.get(record_id)
+    assert record.has_update is True
+    assert record.homepage_prompt_pending is False
+
+
+def test_apply_backend_signal_respects_snooze_and_dismissed_watermark(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    snoozed_id = repo.upsert(_record(latest_episode=3, current_episode=3, watched_latest_episode=True, prompt_snoozed_until=999))
+    dismissed_id = repo.upsert(
+        _record(
+            provider="tmdb",
+            provider_id="tv:999:season:1",
+            latest_episode=3,
+            current_episode=3,
+            watched_latest_episode=True,
+            prompt_dismissed_latest_episode=5,
+            prompt_dismissed_latest_season=1,
+        )
+    )
+
+    _apply_backend(repo, snoozed_id, playable_episodes=5)
+    _apply_backend(repo, dismissed_id, playable_episodes=5)
+
+    assert repo.get(snoozed_id).homepage_prompt_pending is False
+    assert repo.get(dismissed_id).homepage_prompt_pending is False
+
+
+def test_apply_backend_signal_missing_record_returns_false(tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    assert _apply_backend(repo, 12345) is False

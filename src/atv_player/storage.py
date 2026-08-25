@@ -559,6 +559,8 @@ class SettingsRepository:
                     ai_following_summary_enabled INTEGER NOT NULL DEFAULT 1,
                     following_episode_display_mode TEXT NOT NULL DEFAULT 'poster',
                     following_episode_grid_columns INTEGER NOT NULL DEFAULT 1,
+                    following_backend_enabled INTEGER NOT NULL DEFAULT 0,
+                    following_backend_auto_subscribe INTEGER NOT NULL DEFAULT 0,
                     home_mode TEXT NOT NULL DEFAULT 'browse'
                 )
                 """
@@ -938,6 +940,14 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN following_episode_grid_columns INTEGER NOT NULL DEFAULT 1"
                 )
+            if "following_backend_enabled" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN following_backend_enabled INTEGER NOT NULL DEFAULT 0"
+                )
+            if "following_backend_auto_subscribe" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN following_backend_auto_subscribe INTEGER NOT NULL DEFAULT 0"
+                )
             if "network_proxy_rules" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN network_proxy_rules TEXT NOT NULL DEFAULT '[]'"
@@ -1037,12 +1047,14 @@ class SettingsRepository:
                     ai_following_summary_enabled,
                     following_episode_display_mode,
                     following_episode_grid_columns,
+                    following_backend_enabled,
+                    following_backend_auto_subscribe,
                     home_mode
                 )
                 VALUES (
                     1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', 0, 0, '[]', '', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 'auto', 512, 'auto-safe', 15, 20, '', 0, 0, 2, 'smart', '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
-                    NULL, NULL, NULL, NULL, 'douban', '', '', '', '[]', '360', 0, '', '', '', 30, 1, 1, 1, 1, 'poster', 1, 'browse'
+                    NULL, NULL, NULL, NULL, 'douban', '', '', '', '[]', '360', 0, '', '', '', 30, 1, 1, 1, 1, 'poster', 1, 0, 0, 'browse'
                 )
                 ON CONFLICT(id) DO NOTHING
                 """
@@ -1188,6 +1200,8 @@ class SettingsRepository:
                     ai_following_summary_enabled,
                     following_episode_display_mode,
                     following_episode_grid_columns,
+                    following_backend_enabled,
+                    following_backend_auto_subscribe,
                     home_mode,
                     dandan_base_url,
                     bangumi_data_danmaku_enabled,
@@ -1290,6 +1304,8 @@ class SettingsRepository:
             ai_following_summary_enabled,
             following_episode_display_mode,
             following_episode_grid_columns,
+            following_backend_enabled,
+            following_backend_auto_subscribe,
             home_mode,
             dandan_base_url,
             bangumi_data_danmaku_enabled,
@@ -1419,6 +1435,8 @@ class SettingsRepository:
                     following_episode_display_mode
                 )
             ),
+            following_backend_enabled=bool(following_backend_enabled),
+            following_backend_auto_subscribe=bool(following_backend_auto_subscribe),
             home_mode=_normalize_home_mode(home_mode),
             dandan_base_url=str(dandan_base_url or "").strip(),
             bangumi_data_danmaku_enabled=bool(bangumi_data_danmaku_enabled),
@@ -1530,6 +1548,8 @@ class SettingsRepository:
                     ai_following_summary_enabled = ?,
                     following_episode_display_mode = ?,
                     following_episode_grid_columns = ?,
+                    following_backend_enabled = ?,
+                    following_backend_auto_subscribe = ?,
                     home_mode = ?,
                     dandan_base_url = ?,
                     bangumi_data_danmaku_enabled = ?,
@@ -1653,6 +1673,8 @@ class SettingsRepository:
                     _normalize_following_episode_grid_columns(
                         config.following_episode_grid_columns
                     ),
+                    int(config.following_backend_enabled),
+                    int(config.following_backend_auto_subscribe),
                     _normalize_home_mode(config.home_mode),
                     str(config.dandan_base_url or "").strip(),
                     int(config.bangumi_data_danmaku_enabled),

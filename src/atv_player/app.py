@@ -45,6 +45,7 @@ from atv_player.controllers.history_controller import HistoryController
 from atv_player.controllers.login_controller import LoginController
 from atv_player.controllers.player_controller import PlayerController
 from atv_player.controllers.pansou_controller import PansouController
+from atv_player.controllers.msub_controller import MsubController
 from atv_player.controllers.telegram_search_controller import TelegramSearchController
 from atv_player.controllers.telegram_channel_controller import TelegramChannelController
 from atv_player.controllers.youtube_category_config import load_youtube_category_config
@@ -68,6 +69,7 @@ from atv_player.live_epg_service import LiveEpgService
 from atv_player.local_playback_history import LocalPlaybackHistoryRepository
 from atv_player.favorite_tmdb_bindings import FavoriteTMDBBindingRepository
 from atv_player.favorites_repository import FavoritesRepository
+from atv_player.following_backend import FollowingBackendSyncService
 from atv_player.following_metadata import FollowingMetadataGateway
 from atv_player.following_repository import FollowingRepository
 from atv_player.following_update_service import FollowingUpdateService
@@ -480,6 +482,7 @@ class AppCoordinator(QObject):
         self.login_window: LoginWindow | None = None
         self.main_window: MainWindow | None = None
         self._playback_sync_service: PlaybackHistorySyncService | None = None
+        self._following_backend_sync_service: FollowingBackendSyncService | None = None
         self._activation_pull_filter: _ActivationPullFilter | None = None
         self._api_client: ApiClient | None = None
         initial_config = self.repo.load_config()
@@ -1998,6 +2001,7 @@ class AppCoordinator(QObject):
     def _show_login(self, error_message: str = "") -> LoginWindow:
         logger.info("Show login window has_error=%s", bool(error_message))
         self._stop_playback_sync_service()
+        self._stop_following_backend_sync_service()
         self._close_api_client()
         login_controller = LoginController(
             self.repo,
@@ -2300,6 +2304,7 @@ class AppCoordinator(QObject):
         )
         following_controller = None
         following_update_service = None
+        following_backend_sync_service = None
         if self._following_repository is not None:
             following_search_service = self._build_following_metadata_search_service(self._api_client)
             following_discovery_service = self._build_following_tmdb_discovery_service()
@@ -2307,6 +2312,17 @@ class AppCoordinator(QObject):
                 self._following_repository,
                 metadata_gateway=FollowingMetadataGateway(following_search_service),
             )
+            following_backend_sync_service = FollowingBackendSyncService(
+                self._api_client,
+                self._following_repository,
+                settings_provider=lambda: {
+                    "enabled": config.following_backend_enabled,
+                    "auto_subscribe": config.following_backend_auto_subscribe,
+                },
+                parent=self,
+            )
+            self._stop_following_backend_sync_service()
+            self._following_backend_sync_service = following_backend_sync_service
             following_controller = FollowingController(
                 self._following_repository,
                 metadata_search_service=following_search_service,
@@ -2314,7 +2330,22 @@ class AppCoordinator(QObject):
                 discovery_service=following_discovery_service,
                 favorite_tmdb_binding_repository=self._favorite_tmdb_binding_repository,
                 ai_enrichment_service=following_ai_enrichment_service,
+                backend_sync_service=following_backend_sync_service,
             )
+        msub_controller = MsubController(
+            self._api_client,
+            playback_history_loader=None
+            if self._playback_history_repository is None
+            else lambda vod_id: self._playback_history_repository.get_history("msub", vod_id),
+            playback_history_saver=None
+            if self._playback_history_repository is None
+            else lambda vod_id, payload: self._playback_history_repository.save_history(
+                "msub",
+                vod_id,
+                payload,
+                source_name="服务端追剧",
+            ),
+        )
         smart_search_controller = self._build_smart_search_controller(
             config,
             favorites_controller=favorites_controller,
@@ -2373,6 +2404,7 @@ class AppCoordinator(QObject):
             jellyfin_controller=jellyfin_controller,
             feiniu_controller=feiniu_controller,
             pansou_controller=pansou_controller,
+            msub_controller=msub_controller,
             spider_plugins=[],
             plugin_loader_task=plugin_loader_task,
             plugin_manager=self._plugin_manager,
@@ -2422,6 +2454,9 @@ class AppCoordinator(QObject):
         self.main_window.logout_requested.connect(self._handle_logout_requested)
         if following_update_service is not None:
             following_update_service.start()
+        if following_backend_sync_service is not None:
+            following_backend_sync_service.start()
+            following_backend_sync_service.sync_finished.connect(self._handle_following_backend_sync)
         if self._playback_sync_service is not None:
             self._playback_sync_service.start()
         if self.main_window is not None:
@@ -2464,6 +2499,32 @@ class AppCoordinator(QObject):
         self._playback_sync_service.flush()
         self._playback_sync_service.deleteLater()
         self._playback_sync_service = None
+
+    def _handle_following_backend_sync(self, results: object) -> None:
+        main_window = self.main_window
+        if main_window is None:
+            return
+        show_prompts = getattr(main_window, "show_following_homepage_prompts", None)
+        if callable(show_prompts):
+            show_prompts()
+        following_page = getattr(main_window, "following_page", None)
+        load_page = getattr(following_page, "load_page", None)
+        nav_tabs = getattr(main_window, "nav_tabs", None)
+        page_is_visible = (
+            following_page is not None
+            and nav_tabs is not None
+            and nav_tabs.currentWidget() is following_page
+        )
+        if callable(load_page) and page_is_visible:
+            load_page()
+
+    def _stop_following_backend_sync_service(self) -> None:
+        service = getattr(self, "_following_backend_sync_service", None)
+        if service is None:
+            return
+        service.stop()
+        service.deleteLater()
+        self._following_backend_sync_service = None
 
     def _to_playback_sync_source_key(self, source_kind: str, source_key: str) -> str | None:
         if source_kind != "spider_plugin":
@@ -2587,6 +2648,7 @@ class AppCoordinator(QObject):
 
     def close(self) -> None:
         self._stop_playback_sync_service()
+        self._stop_following_backend_sync_service()
         close_filter = getattr(self._m3u8_ad_filter, "close", None)
         if callable(close_filter):
             close_filter()

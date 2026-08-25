@@ -117,6 +117,8 @@ class AppConfig:
     ai_following_summary_enabled: bool = True
     following_episode_display_mode: str = "poster"
     following_episode_grid_columns: int = 1
+    following_backend_enabled: bool = False
+    following_backend_auto_subscribe: bool = False
     home_mode: str = "browse"
 
 

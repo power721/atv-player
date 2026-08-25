@@ -253,6 +253,14 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         )
         self.network_proxy_scope_label.setWordWrap(True)
         self.playback_group = QGroupBox("播放设置")
+        self.following_backend_group = QGroupBox("服务端追剧联动")
+        self.following_backend_enabled_checkbox = QCheckBox("接入服务端追剧系统(更新即有源可播)")
+        self.following_backend_auto_subscribe_checkbox = QCheckBox("本地追更自动在服务端建立订阅")
+        self.following_backend_hint_label = QLabel(
+            "需要服务器已启用追剧系统且当前账号为管理员/普通用户。开启后追更检查会并入服务端"
+            "挂载资源的可播集数,并可通过「继续播放」直达网盘资源;播放进度多端互通。"
+        )
+        self.following_backend_hint_label.setWordWrap(True)
         self.playback_auto_switch_source_on_failure_checkbox = QCheckBox("播放失败自动切换线路")
         self.bilibili_grouped_playlist_tree_enabled_checkbox = QCheckBox("B站播放列表显示为分组树")
         self.youtube_group = QGroupBox("YouTube")
@@ -427,6 +435,8 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.ai_danmaku_enrichment_checkbox.setChecked(config.ai_danmaku_enrichment_enabled)
         self.ai_episode_title_rewrite_checkbox.setChecked(config.ai_episode_title_rewrite_enabled)
         self.ai_following_summary_checkbox.setChecked(config.ai_following_summary_enabled)
+        self.following_backend_enabled_checkbox.setChecked(config.following_backend_enabled)
+        self.following_backend_auto_subscribe_checkbox.setChecked(config.following_backend_auto_subscribe)
         self.ai_base_url_edit.setText(config.ai_base_url)
         self.ai_api_key_edit.setText(config.ai_api_key)
         if config.ai_chat_model:
@@ -609,8 +619,14 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         playback_layout.addRow("更多 MPV 配置", self.mpv_extra_options_edit)
         playback_layout.addRow("说明", self.playback_scope_label)
         self.playback_group.setLayout(playback_layout)
+        following_backend_layout = QFormLayout()
+        following_backend_layout.addRow(self.following_backend_enabled_checkbox)
+        following_backend_layout.addRow(self.following_backend_auto_subscribe_checkbox)
+        following_backend_layout.addRow(self.following_backend_hint_label)
+        self.following_backend_group.setLayout(following_backend_layout)
         playback_tab_layout = QVBoxLayout(self.playback_tab)
         playback_tab_layout.addWidget(self.playback_group)
+        playback_tab_layout.addWidget(self.following_backend_group)
         playback_tab_layout.addStretch(1)
 
         youtube_layout = QFormLayout()
@@ -1485,6 +1501,8 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self._config.ai_danmaku_enrichment_enabled = self.ai_danmaku_enrichment_checkbox.isChecked()
         self._config.ai_episode_title_rewrite_enabled = self.ai_episode_title_rewrite_checkbox.isChecked()
         self._config.ai_following_summary_enabled = self.ai_following_summary_checkbox.isChecked()
+        self._config.following_backend_enabled = self.following_backend_enabled_checkbox.isChecked()
+        self._config.following_backend_auto_subscribe = self.following_backend_auto_subscribe_checkbox.isChecked()
         self._config.network_proxy_mode, self._config.network_proxy_url, self._config.network_proxy_bypass_rules, self._config.network_proxy_rules = proxy_values
         (
             self._config.youtube_cookie_browser,

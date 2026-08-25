@@ -658,6 +658,96 @@ class FollowingRepository:
                 ),
             )
 
+    def apply_backend_signal(
+        self,
+        following_id: int,
+        *,
+        subscription_id: int,
+        playable_episodes: int,
+        source_key: str = "",
+        source_name: str = "",
+        updated_at: int,
+    ) -> bool:
+        """服务端追剧信号并入:latest 取 max、upsert msub 绑定、按需抬首页提示。
+
+        必须在元数据巡检落库之后调用——update_check_state 对 latest_episode 是直写覆盖,
+        本方法用 max 语义兜住"服务端资源先于官方元数据可播"的抬升不被压回。
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT season_number, latest_episode, current_season_number, current_episode, watched_latest_episode, prompt_snoozed_until, prompt_dismissed_latest_episode, prompt_dismissed_latest_season, source_bindings_json FROM following WHERE id = ?",
+                (following_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            season_number = int(row[0] or 0)
+            previous_latest = int(row[1] or 0)
+            current_season_number = int(row[2] or 0)
+            current_episode = int(row[3] or 0)
+            watched_latest = bool(row[4])
+            prompt_snoozed_until = int(row[5] or 0)
+            dismissed_latest_episode = int(row[6] or 0)
+            dismissed_latest_season = int(row[7] or 0)
+            bindings = [_binding_from_dict(item) for item in _json_loads(row[8], [])]
+            normalized_latest = max(previous_latest, int(playable_episodes or 0))
+            latest_advanced = normalized_latest > previous_latest
+            has_update = normalized_latest > current_episode
+            new_episode_count = max(0, normalized_latest - current_episode)
+            vod_id = f"msub:{int(subscription_id)}"
+            bindings = [binding for binding in bindings if not (binding.source_kind == "msub" and binding.vod_id != vod_id)]
+            if not any(binding.source_kind == "msub" and binding.vod_id == vod_id for binding in bindings):
+                bindings.append(
+                    FollowingSourceBinding(
+                        source_kind="msub",
+                        source_key=str(source_key or ""),
+                        source_name=str(source_name or "服务端追剧"),
+                        vod_id=vod_id,
+                    )
+                )
+            caught_up = watched_latest or progress_at_or_beyond(
+                current_season_number,
+                current_episode,
+                season_number,
+                normalized_latest,
+                current_fallback_season=season_number,
+                latest_fallback_season=season_number,
+            )
+            homepage_prompt = bool(
+                has_update
+                and caught_up
+                and prompt_snoozed_until <= updated_at
+                and progress_after_dismissed_prompt(
+                    season_number,
+                    normalized_latest,
+                    dismissed_latest_season,
+                    dismissed_latest_episode,
+                    dismissed_fallback_season=season_number,
+                    latest_fallback_season=season_number,
+                )
+            )
+            conn.execute(
+                """
+                UPDATE following
+                SET source_bindings_json = ?, latest_episode = ?,
+                    has_update = CASE WHEN ? THEN 1 ELSE has_update END,
+                    new_episode_count = CASE WHEN ? THEN ? ELSE new_episode_count END,
+                    homepage_prompt_pending = CASE WHEN ? THEN 1 ELSE homepage_prompt_pending END,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    _json_dumps([_binding_to_dict(binding) for binding in bindings]),
+                    normalized_latest,
+                    1 if has_update else 0,
+                    1 if latest_advanced else 0,
+                    new_episode_count,
+                    1 if homepage_prompt else 0,
+                    updated_at,
+                    following_id,
+                ),
+            )
+        return latest_advanced or homepage_prompt
+
     def update_check_state(
         self,
         following_id: int,

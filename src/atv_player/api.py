@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import platform
+import urllib.parse
 from collections.abc import Callable
 from typing import Any
 
@@ -61,6 +62,14 @@ class ApiClient:
     @property
     def playback_sync_identity(self) -> str:
         return self._playback_sync_identity
+
+    @property
+    def username(self) -> str:
+        return self._username
+
+    @property
+    def base_url(self) -> str:
+        return self._base_url
 
     def _build_playback_sync_identity(self, token: str) -> str:
         stable = self._username or token
@@ -408,6 +417,34 @@ class ApiClient:
 
     def telegram_search(self, keyword: str) -> dict[str, Any]:
         return self._request("GET", "/api/telegram/search", params={"wd": keyword})
+
+    def list_media_subscriptions(self) -> list[dict[str, Any]]:
+        # 服务端追剧系统:返回当前用户全部订阅(含 metaProvider/metaId/doubanId 与
+        # currentEpisodes=挂载资源实际可播集数)。需 ADMIN/USER 会话令牌。
+        data = self._request("GET", "/api/media-subscriptions")
+        return data if isinstance(data, list) else []
+
+    def create_media_subscription(self, payload: dict[str, Any]) -> dict[str, Any]:
+        # 后端按 (name, season) 幂等,重复创建会返回既有订阅并可能再次触发巡检,
+        # 调用方需自带负缓存避免每轮同步都 POST。
+        data = self._request("POST", "/api/media-subscriptions", json=payload)
+        return data if isinstance(data, dict) else {}
+
+    def get_media_subscription_detail(self, subscription_id: int) -> dict[str, Any]:
+        data = self._request("GET", f"/api/media-subscriptions/{subscription_id}/detail")
+        return data if isinstance(data, dict) else {}
+
+    def resolve_msub_episode(self, subscription_id: int, episode: int) -> dict[str, Any]:
+        # /play 无 token 路径会被服务端 checkToken("") 直接 400,必须带路径 token:
+        # 用户名令牌经 resolveUid 精确映射到本人;无用户名时退 vod token(解析到首个管理员)。
+        token = urllib.parse.quote(self._username or self._vod_token or "-", safe="")
+        data = self._request(
+            "GET",
+            f"/play/{token}",
+            params={"id": f"msubep-{subscription_id}-{episode}"},
+            headers={"X-CLIENT": "atv-player"},
+        )
+        return data if isinstance(data, dict) else {}
 
     def resolve_share_link(self, link: str) -> str:
         data = self._request(

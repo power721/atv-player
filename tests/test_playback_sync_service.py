@@ -918,3 +918,43 @@ def test_push_without_playing_provider_stays_unlimited() -> None:
         service._run_sync()
 
     assert len(api.pushed) == MAX_IDLE_PUSHES + 3
+
+
+def test_msub_records_push_as_csp_media_and_round_trip() -> None:
+    record = _record(key="msub:5", source_kind="msub", updated_at=100)
+    record.episode_url = "msubep-5-3@0@2"
+    api = FakeApi()
+    service = PlaybackHistorySyncService(api, FakeRepository([record]))
+
+    service._push()
+
+    payload = api.pushed[0][0]
+    # 与 web/TVBox 端共写同一 History 分区,服务端 watchedEpisode 按 vodId=msub:{id} 解析
+    assert payload["sourceKind"] == "site"
+    assert payload["sourceKey"] == "csp_Media"
+    assert payload["vodId"] == "msub:5"
+    assert "msubep-5-3" in payload["episodeUrl"]
+
+    local_kind, local_key = PlaybackHistorySyncService._local_source("site", "csp_Media")
+    assert (local_kind, local_key) == ("msub", "")
+    assert PlaybackHistorySyncService._sync_source("msub", "http://192.168.50.60:4567") == ("site", "csp_Media")
+
+
+def test_msub_pulled_records_land_in_local_history() -> None:
+    payload = {
+        "sourceKind": "site",
+        "sourceKey": "csp_Media",
+        "vodId": "msub:5",
+        "episodeUrl": "msubep-5-3@0@2",
+        "updatedAt": 300,
+    }
+    repository = FakeRepository([])
+    service = PlaybackHistorySyncService(
+        FakeApi({"items": [payload], "nextSince": 1}),
+        repository,
+    )
+
+    service._pull()
+
+    assert repository.saved[0] == ("msub", "", "msub:5")
+    assert "msubep-5-3" in repository.saved_payloads[0]["episodeUrl"]

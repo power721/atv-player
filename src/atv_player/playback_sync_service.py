@@ -38,6 +38,7 @@ SYNC_SOURCE_KINDS = frozenset(
         "feiniu",
         "direct_parse",
         "spider_plugin",
+        "msub",
     }
 )
 SYNC_NAMESPACE_VERSION = "v7-plugin-source-name"
@@ -55,6 +56,8 @@ TVBOX_SITE_TO_ATV_KIND = {
     "csp_FeiNiu": "feiniu",
     "csp_Emby": "emby",
     "csp_Jellyfin": "jellyfin",
+    # 服务端追剧:与 web/TVBox 端共写同一 History 分区,观看进度互通
+    "csp_Media": "msub",
 }
 ATV_KIND_TO_TVBOX_SITE = {
     "telegram": "csp_TgDouBan",
@@ -63,6 +66,7 @@ ATV_KIND_TO_TVBOX_SITE = {
     "feiniu": "csp_FeiNiu",
     "emby": "csp_Emby",
     "jellyfin": "csp_Jellyfin",
+    "msub": "csp_Media",
 }
 TELEGRAM_SITE_KEYS = frozenset(
     {"csp_TgDouBan", "csp_TgSearch", "csp_TgWeb", "csp_FishPanSou", "csp_FishPanSouGroup"}

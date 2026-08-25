@@ -1457,6 +1457,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             jellyfin_controller=None,
             feiniu_controller=None,
             pansou_controller=None,
+            msub_controller=None,
             spider_plugins=None,
             plugin_loader_task=None,
             plugin_manager=None,
@@ -1719,6 +1720,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self.jellyfin_controller = jellyfin_controller or _EmptyJellyfinController()
         self.feiniu_controller = feiniu_controller or _EmptyFeiniuController()
         self.pansou_controller = pansou_controller
+        self.msub_controller = msub_controller
         self.player_controller = player_controller
         self.player_window: PlayerWindow | None = None
         self.help_dialog: ShortcutHelpDialog | None = None
@@ -6180,7 +6182,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             return
         self._following_controller.clear_homepage_prompt(int(following_id))
         self._close_following_prompt_dialog(already_handled=True)
-        self._start_open_request(lambda: self._build_following_bound_source_request(binding))
+        record = getattr(view, "record", None)
+        self._start_open_request(lambda: self._build_following_bound_source_request(binding, record=record))
 
     def _first_playable_following_binding(self, record):
         for binding in list(getattr(record, "source_bindings", []) or []):
@@ -6190,12 +6193,21 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                 return binding
         return None
 
-    def _build_following_bound_source_request(self, binding):
+    def _build_following_bound_source_request(self, binding, record=None):
         source_kind = str(getattr(binding, "source_kind", "") or "").strip()
         source_key = str(getattr(binding, "source_key", "") or "").strip()
         vod_id = str(getattr(binding, "vod_id", "") or "").strip()
         if source_kind == "browse":
             return self.browse_controller.build_request_from_detail(vod_id)
+        if source_kind == "msub":
+            if self.msub_controller is None:
+                raise RuntimeError("服务端追剧不可用")
+            # 继续播放语义:从上次看到的下一集开始(本地无进度时由服务端观看记录兜底)。
+            start_episode = 0
+            current_episode = int(getattr(record, "current_episode", 0) or 0)
+            if current_episode > 0:
+                start_episode = current_episode + 1
+            return self.msub_controller.build_request(vod_id, start_episode=start_episode)
         if source_kind in {"plugin", "spider_plugin"}:
             controller = self._plugin_controller_by_id(source_key)
             if controller is None:
@@ -6679,7 +6691,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if (
             request.danmaku_controller is None
             and self._danmaku_controller_factory is not None
-            and request.source_kind in {"browse", "telegram", "telegram_channel", "emby", "jellyfin", "feiniu"}
+            and request.source_kind in {"browse", "telegram", "telegram_channel", "emby", "jellyfin", "feiniu", "msub"}
         ):
             request.danmaku_controller = self._danmaku_controller_factory(
                 request=request,
@@ -6690,7 +6702,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if (
             request.episode_title_enhancer is None
             and self._episode_title_enhancer_factory is not None
-            and request.source_kind in {"browse", "telegram", "telegram_channel", "emby", "jellyfin", "feiniu"}
+            and request.source_kind in {"browse", "telegram", "telegram_channel", "emby", "jellyfin", "feiniu", "msub"}
         ):
             request.episode_title_enhancer = self._episode_title_enhancer_factory(
                 request=request,

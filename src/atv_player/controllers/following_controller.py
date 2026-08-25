@@ -73,6 +73,7 @@ class FollowingController:
         discovery_service=None,
         favorite_tmdb_binding_repository=None,
         ai_enrichment_service=None,
+        backend_sync_service=None,
     ) -> None:
         self._repository = repository
         self._metadata_search_service = metadata_search_service
@@ -81,6 +82,7 @@ class FollowingController:
         self._discovery_service = discovery_service
         self._favorite_tmdb_binding_repository = favorite_tmdb_binding_repository
         self._ai_enrichment_service = ai_enrichment_service
+        self._backend_sync_service = backend_sync_service
         self._discovery_memory_cache: dict[str, DiscoveryResult] = {}
 
     def search_media(self, keyword: str, *, year: str = ""):
@@ -1271,8 +1273,13 @@ class FollowingController:
 
     def check_all_due(self):
         if self._update_service is None:
-            return []
-        return self._update_service.check_due_records()
+            results = []
+        else:
+            results = self._update_service.check_due_records()
+        # 手动"检查更新"同时并入服务端追剧信号(元数据之后跑,latest 取 max 不被压回)。
+        if self._backend_sync_service is not None:
+            self._backend_sync_service.sync_blocking()
+        return results
 
     def delete(self, following_id: int) -> None:
         self._repository.delete(following_id)

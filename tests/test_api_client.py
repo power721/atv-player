@@ -1,4 +1,5 @@
 import logging
+import json
 
 import httpx
 import pytest
@@ -1350,3 +1351,114 @@ def test_api_client_stops_jellyfin_playback() -> None:
     client.stop_jellyfin_playback("1-3458")
 
     assert seen == {"path": "/jellyfin-play/Harold", "query": "t=-1&id=1-3458"}
+
+
+def test_api_client_lists_media_subscriptions() -> None:
+    seen = {"path": "", "auth": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["auth"] = request.headers.get("Authorization", "")
+        return httpx.Response(200, json=[{"id": 1, "name": "凡人修仙传", "metaProvider": "tmdb", "metaId": "456"}])
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="session-token",
+        transport=httpx.MockTransport(handler),
+    )
+
+    subscriptions = client.list_media_subscriptions()
+
+    assert seen["path"] == "/api/media-subscriptions"
+    assert seen["auth"] == "session-token"
+    assert subscriptions[0]["metaId"] == "456"
+
+
+def test_api_client_creates_media_subscription() -> None:
+    seen = {"path": "", "method": "", "body": None}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["method"] = request.method
+        seen["body"] = json.loads(request.content.decode())
+        return httpx.Response(200, json={"id": 9})
+
+    client = ApiClient(base_url="http://127.0.0.1:4567", transport=httpx.MockTransport(handler))
+
+    payload = client.create_media_subscription({"name": "凡人修仙传", "season": 1, "metaProvider": "tmdb", "metaId": "456"})
+
+    assert seen == {
+        "path": "/api/media-subscriptions",
+        "method": "POST",
+        "body": {"name": "凡人修仙传", "season": 1, "metaProvider": "tmdb", "metaId": "456"},
+    }
+    assert payload == {"id": 9}
+
+
+def test_api_client_gets_media_subscription_detail() -> None:
+    seen = {"path": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        return httpx.Response(200, json={"subscription": {"id": 5}, "media": {}, "episodes": []})
+
+    client = ApiClient(base_url="http://127.0.0.1:4567", transport=httpx.MockTransport(handler))
+
+    detail = client.get_media_subscription_detail(5)
+
+    assert seen["path"] == "/api/media-subscriptions/5/detail"
+    assert detail["subscription"]["id"] == 5
+
+
+def test_api_client_resolves_msub_episode_preferring_username_token() -> None:
+    seen = {"path": "", "query": "", "client": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        seen["client"] = request.headers.get("X-CLIENT", "")
+        return httpx.Response(200, json={"url": "http://d/1.mkv", "type": "alias", "header": {}})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        vod_token="vod-token",
+        username="harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    payload = client.resolve_msub_episode(5, 3)
+
+    # 无 token 路径会被 checkToken("") 拒绝;用户名令牌精确映射到本人 uid
+    assert seen["path"] == "/play/harold"
+    assert seen["query"] == "id=msubep-5-3"
+    assert seen["client"] == "atv-player"
+    assert payload["url"] == "http://d/1.mkv"
+
+
+def test_api_client_resolves_msub_episode_falls_back_to_vod_token() -> None:
+    seen = {"path": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        return httpx.Response(200, json={"url": "http://d/1.mkv"})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        vod_token="vod-token",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.resolve_msub_episode(5, 3)
+
+    assert seen["path"] == "/play/vod-token"
+
+
+def test_api_client_resolves_msub_episode_surfaces_failure_message() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"message": "第 3 集暂无可用播放源(已尝试 2 个源)", "status": 400})
+
+    client = ApiClient(base_url="http://127.0.0.1:4567", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(ApiError) as excinfo:
+        client.resolve_msub_episode(5, 3)
+    assert "暂无可用播放源" in str(excinfo.value)
