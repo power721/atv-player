@@ -42,6 +42,7 @@ class ProxySession:
     selected_dash_audio_id: str = ""
     cached_playlist_text: str | None = None
     media_encrypted: bool = False
+    cenc_reader: object | None = None
     created_at: float = field(default_factory=time.time)
     last_accessed_at: float = field(default_factory=time.time)
 

@@ -23,6 +23,7 @@ from atv_player.player.bluray_iso import (
     read_iso_stream_range_from_source,
 )
 from atv_player.proxy.ad_filter import MODE_MARKERS
+from atv_player.proxy.cenc import CencRangeReader
 from atv_player.proxy.m3u8 import rewrite_playlist
 from atv_player.proxy.segment import SegmentProxy
 from atv_player.proxy.session import DashRepresentation, ProxySession, ProxySessionRegistry
@@ -32,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 _ISO_STREAM_CHUNK_SIZE = 256 * 1024
 _DASH_STREAM_CHUNK_SIZE = 256 * 1024
+_CENC_STREAM_CHUNK_SIZE = 256 * 1024
 _DASH_HTTP_CHUNK_SIZE_SCHEME = "urn:atv-player:http-chunk-size"
 _TLS_PROTOCOL_MISMATCH_MARKERS = (
     "wrong version number",
@@ -433,6 +435,26 @@ class LocalHlsProxyServer:
     def create_media_url(self, url: str, headers: dict[str, str] | None = None) -> str:
         token = self._registry.create_session(url, normalize_media_request_headers(url, headers))
         return f"http://{self.host}:{self.port}/raw?v={quote(token)}"
+
+    def create_cenc_media_url(
+        self,
+        url: str,
+        headers: dict[str, str] | None = None,
+        *,
+        spade_a: str,
+    ) -> str:
+        """为整段 CENC 加密的 MP4 建立流式解密会话。"""
+        normalized_headers = normalize_media_request_headers(url, headers)
+        token = self._registry.create_session(url, normalized_headers)
+        session = self._registry.get(token)
+        if session is not None:
+            session.cenc_reader = CencRangeReader(
+                url,
+                normalized_headers,
+                spade_a,
+                get=self._get,
+            )
+        return f"http://{self.host}:{self.port}/cenc/{quote(token, safe='')}/video.mp4"
 
     def create_iso_media_url(
         self,
@@ -926,6 +948,129 @@ class LocalHlsProxyServer:
         handler.end_headers()
         return True
 
+    def _cenc_session(self, path: str) -> tuple[ProxySession | None, str]:
+        parsed = urlparse(path)
+        if not parsed.path.startswith("/cenc/"):
+            return None, ""
+        token = unquote(parsed.path[len("/cenc/") :].split("/", 1)[0])
+        return self._registry.get(token), token
+
+    def _stream_cenc_response(
+        self,
+        path: str,
+        request_headers: dict[str, str],
+        handler: BaseHTTPRequestHandler,
+    ) -> bool:
+        if not urlparse(path).path.startswith("/cenc/"):
+            return False
+        session, _token = self._cenc_session(path)
+        if session is None or session.cenc_reader is None:
+            payload = b"missing proxy session"
+            handler.send_response(404)
+            handler.send_header("Content-Length", str(len(payload)))
+            handler.end_headers()
+            handler.wfile.write(payload)
+            return True
+        reader: CencRangeReader = session.cenc_reader
+        try:
+            total_size = reader.ensure_index().total_size
+        except Exception as exc:
+            payload = f"cenc media error: {exc}".encode("utf-8")
+            handler.send_response(502)
+            handler.send_header("Content-Length", str(len(payload)))
+            handler.end_headers()
+            handler.wfile.write(payload)
+            return True
+        range_header = request_headers.get("Range") or request_headers.get("range") or ""
+        parsed_range = _parse_byte_range_header(range_header) if range_header else None
+        start = parsed_range[0] if parsed_range is not None else 0
+        inclusive_end = (
+            total_size - 1
+            if parsed_range is None or parsed_range[1] is None
+            else min(parsed_range[1], total_size - 1)
+        )
+        if total_size <= 0 or start < 0 or start > total_size or inclusive_end < start:
+            payload = b"invalid cenc range"
+            handler.send_response(416)
+            handler.send_header("Content-Length", str(len(payload)))
+            handler.send_header("Content-Range", f"bytes */{max(total_size, 0)}")
+            handler.end_headers()
+            handler.wfile.write(payload)
+            return True
+        status_code = 206 if parsed_range is not None else 200
+        content_length = inclusive_end - start + 1
+        handler.send_response(status_code)
+        handler.send_header("Content-Type", "video/mp4")
+        handler.send_header("Content-Length", str(content_length))
+        handler.send_header("Accept-Ranges", "bytes")
+        if parsed_range is not None:
+            handler.send_header("Content-Range", f"bytes {start}-{inclusive_end}/{total_size}")
+        handler.end_headers()
+        cursor = start
+        try:
+            while cursor <= inclusive_end:
+                chunk_end = min(cursor + _CENC_STREAM_CHUNK_SIZE - 1, inclusive_end)
+                chunk = reader.read_range(cursor, chunk_end)
+                if not chunk:
+                    break
+                handler.wfile.write(chunk)
+                cursor += len(chunk)
+        except Exception as exc:
+            if _is_client_disconnect_error(exc):
+                return True
+            raise
+        return True
+
+    def _send_cenc_head_response(
+        self,
+        path: str,
+        request_headers: dict[str, str],
+        handler: BaseHTTPRequestHandler,
+    ) -> bool:
+        if not urlparse(path).path.startswith("/cenc/"):
+            return False
+        session, _token = self._cenc_session(path)
+        if session is None or session.cenc_reader is None:
+            payload = b"missing proxy session"
+            handler.send_response(404)
+            handler.send_header("Content-Length", str(len(payload)))
+            handler.end_headers()
+            return True
+        reader: CencRangeReader = session.cenc_reader
+        try:
+            total_size = reader.ensure_index().total_size
+        except Exception as exc:
+            payload = f"cenc media error: {exc}".encode("utf-8")
+            handler.send_response(502)
+            handler.send_header("Content-Length", str(len(payload)))
+            handler.end_headers()
+            return True
+        range_header = request_headers.get("Range") or request_headers.get("range") or ""
+        parsed_range = _parse_byte_range_header(range_header) if range_header else None
+        start = parsed_range[0] if parsed_range is not None else 0
+        inclusive_end = (
+            total_size - 1
+            if parsed_range is None or parsed_range[1] is None
+            else min(parsed_range[1], total_size - 1)
+        )
+        if total_size <= 0 or start < 0 or start > total_size or inclusive_end < start:
+            payload = b"invalid cenc range"
+            handler.send_response(416)
+            handler.send_header("Content-Length", str(len(payload)))
+            handler.send_header("Content-Range", f"bytes */{max(total_size, 0)}")
+            handler.end_headers()
+            return True
+        status_code = 206 if parsed_range is not None else 200
+        content_length = inclusive_end - start + 1
+        handler.send_response(status_code)
+        handler.send_header("Content-Type", "video/mp4")
+        handler.send_header("Content-Length", str(content_length))
+        handler.send_header("Accept-Ranges", "bytes")
+        if parsed_range is not None:
+            handler.send_header("Content-Range", f"bytes {start}-{inclusive_end}/{total_size}")
+        handler.end_headers()
+        return True
+
     def handle_request(
         self,
         method: str,
@@ -1052,6 +1197,8 @@ class LocalHlsProxyServer:
                         return
                     if parent._stream_iso_response(self.path, dict(self.headers.items()), self):
                         return
+                    if parent._stream_cenc_response(self.path, dict(self.headers.items()), self):
+                        return
                 except Exception as exc:
                     if _is_client_disconnect_error(exc):
                         return
@@ -1084,6 +1231,8 @@ class LocalHlsProxyServer:
                     if parent._send_dash_asset_head_response(self.path, dict(self.headers.items()), self):
                         return
                     if parent._send_iso_head_response(self.path, dict(self.headers.items()), self):
+                        return
+                    if parent._send_cenc_head_response(self.path, dict(self.headers.items()), self):
                         return
                 except Exception as exc:
                     if _is_client_disconnect_error(exc):

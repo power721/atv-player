@@ -13,6 +13,7 @@ import httpx
 from atv_player.models import VideoQualityOption
 from atv_player.paths import app_cache_dir
 from atv_player.player.bluray_iso import BlurayIsoInspector, is_remote_iso_url
+from atv_player.proxy.cenc import parse_cenc_media_fragment
 from atv_player.proxy.server import LocalHlsProxyServer
 from atv_player.proxy.stripper import TS_PACKET_SIZE, repair_segment_bytes
 from atv_player.request_headers import normalize_media_request_headers
@@ -199,6 +200,8 @@ class M3U8AdFilter:
         self._bluray_iso_inspector = bluray_iso_inspector or BlurayIsoInspector()
 
     def should_prepare(self, url: str) -> bool:
+        if parse_cenc_media_fragment(url) is not None:
+            return True
         if is_remote_iso_url(url):
             return True
         if _is_dash_data_uri(url):
@@ -214,6 +217,14 @@ class M3U8AdFilter:
         if not self.should_prepare(url):
             return url
         self._proxy_server.start()
+        cenc_media = parse_cenc_media_fragment(url)
+        if cenc_media is not None:
+            media_url, spade_a = cenc_media
+            return self._proxy_server.create_cenc_media_url(
+                media_url,
+                headers=normalize_media_request_headers(media_url, headers),
+                spade_a=spade_a,
+            )
         normalized_headers = normalize_media_request_headers(url, headers)
         if is_remote_iso_url(url):
             prepare_playback = getattr(self._bluray_iso_inspector, "prepare_playback", None)
