@@ -12174,6 +12174,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         end_margin = max(2, int(ending_seconds or 0))
         return position + end_margin < duration
 
+    def _playback_finished_without_progress(self) -> bool:
+        # mpv 报告正常 EOF，但首帧从未渲染且播放进度从未离开 0：
+        # 播放地址失效或内容不可解码（如加密流），重载同一地址没有意义。
+        if self._startup_state.stage is PlaybackStartupStage.PLAYING:
+            return False
+        return self._last_playback_position_seconds <= 0
+
     def _handle_playback_finished(self) -> None:
         if self.session is None:
             return
@@ -12182,6 +12189,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._recover_current_item_after_seek()
             return
         if recent_seek_action == "ignore":
+            return
+        if self._playback_finished_without_progress():
+            self._handle_playback_finished_without_progress()
             return
         if self._playback_finished_is_premature():
             self._recover_current_item_after_premature_finish()
@@ -12309,6 +12319,33 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._update_play_button_icon()
         self._refresh_window_title()
         self._stop_current_playback()
+
+    def _handle_playback_finished_without_progress(self) -> None:
+        """EOF 时没有任何解码进度：按源不可用处理（自动换线或失败提示）。
+
+        与“提前结束恢复”不同：重载同一地址无法救活失效/加密的源，
+        且 duration 未知时也不应误判为“已播完”而自动切集。
+        """
+        position = max(0, int(self._last_playback_position_seconds))
+        duration = max(0, int(self._observed_media_duration_seconds))
+        logger.warning(
+            "PlayerWindow playback finished without progress index=%s position=%s duration=%s",
+            self.current_index,
+            position,
+            duration,
+        )
+        if self._try_auto_switch_source_after_failure():
+            return
+        self._show_failed_startup_state("播放失败: 无法解码任何内容，当前线路可能已失效或加密")
+        self._mark_playback_stopped()
+        self._append_log(
+            "播放失败: 无法解码任何内容（线路可能已失效或加密）: "
+            f"index={self.current_index} position={position} duration={duration}"
+        )
+        self._video_surface_ready = False
+        pixmap = self.video_poster_overlay.pixmap()
+        if pixmap is not None and not pixmap.isNull():
+            self._show_video_poster_overlay(pixmap)
 
     def _schedule_always_on_top_reapply(self) -> None:
         if (

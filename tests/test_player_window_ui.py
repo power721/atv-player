@@ -6999,6 +6999,7 @@ def test_player_window_auto_advance_loads_next_drive_subdirectory(qtbot) -> None
     window.video = RecordingVideo()
     window.open_session(session)
 
+    window._update_playback_observation(position=119, duration=120)
     window._handle_playback_finished()
 
     assert window.session is not None
@@ -7096,6 +7097,7 @@ def test_player_window_auto_advance_loads_next_nested_drive_subdirectory(qtbot) 
     window.open_session(session)
     window._apply_playback_loader_result(load_result)
 
+    window._update_playback_observation(position=119, duration=120)
     window._handle_playback_finished()
 
     assert window.session is not None
@@ -11797,6 +11799,62 @@ def test_player_window_keeps_existing_eof_behavior_when_duration_is_unknown(qtbo
     assert window.current_index == 1
 
 
+def test_player_window_marks_source_unplayable_when_eof_without_progress(qtbot) -> None:
+    class DeadSourceVideo(RecordingVideo):
+        def duration_seconds(self) -> int:
+            return 134
+
+        def position_seconds(self) -> int:
+            return 0
+
+    video = DeadSourceVideo()
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(make_player_session(start_index=0))
+    video.load_calls.clear()
+    window._sync_progress_slider()
+
+    window.video_widget.playback_finished.emit()
+
+    assert window.current_index == 0
+    assert video.load_calls == []
+    assert window.is_playing is False
+    assert (
+        window._startup_state.stage
+        is player_window_module.PlaybackStartupStage.FAILED
+    )
+    log_text = window.log_view.toPlainText()
+    assert "播放失败: 无法解码任何内容" in log_text
+    assert "播放提前结束" not in log_text
+
+
+def test_player_window_does_not_auto_advance_when_eof_without_progress_and_duration_unknown(
+    qtbot,
+) -> None:
+    class DeadSourceUnknownDurationVideo(RecordingVideo):
+        def duration_seconds(self) -> int:
+            return 0
+
+        def position_seconds(self) -> int:
+            return 0
+
+    video = DeadSourceUnknownDurationVideo()
+    window = PlayerWindow(RecordingPlayerController())
+    qtbot.addWidget(window)
+    window.video = video
+    window.open_session(make_player_session(start_index=0))
+    video.load_calls.clear()
+    window._sync_progress_slider()
+
+    window.video_widget.playback_finished.emit()
+
+    assert window.current_index == 0
+    assert video.load_calls == []
+    assert window.is_playing is False
+    assert "播放失败: 无法解码任何内容" in window.log_view.toPlainText()
+
+
 def test_player_window_recovers_current_item_when_playback_fails_after_progress_seek(
     qtbot,
     monkeypatch,
@@ -11937,6 +11995,7 @@ def test_player_window_advances_after_progress_seek_near_end(qtbot) -> None:
     window.progress.setValue(119)
 
     window._seek_from_slider()
+    window._sync_progress_slider()
     window.video_widget.playback_finished.emit()
 
     assert window.current_index == 1
@@ -20973,6 +21032,7 @@ def test_player_window_advances_to_next_item_when_playback_finishes(qtbot) -> No
     window.open_session(make_player_session(start_index=0))
 
     video.load_calls.clear()
+    window._update_playback_observation(position=119, duration=120)
 
     window.video_widget.playback_finished.emit()
 
@@ -23471,6 +23531,7 @@ def test_player_window_bilibili_tree_auto_advance_crosses_group_boundaries(qtbot
     session.start_index = 0
     window.open_session(session)
 
+    window._update_playback_observation(position=119, duration=120)
     window._handle_playback_finished()
 
     assert window.session is not None
