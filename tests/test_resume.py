@@ -135,3 +135,57 @@ def test_resolve_resume_index_falls_back_when_drive_path_not_found() -> None:
 
     # 播放列表没有网盘路径(如普通站点源),退回集数
     assert resolve_resume_index(history, playlist, clicked_index=0) == 1
+
+
+def test_resolve_resume_index_matches_msubep_logical_token_over_stale_index() -> None:
+    # 跨端拉回的 msub 历史:episode 下标失真为 0,真实集数在 msubep 逻辑 id 里
+    history = HistoryRecord(
+        id=1, key="msub:36", vod_name="盗妖行", vod_pic="", vod_remarks="",
+        episode=0, episode_url="msubep-36-51", position=138_000,
+        opening=0, ending=0, speed=1.0, create_time=1,
+    )
+    playlist = [
+        PlayItem(title=f"第{ep}集", url="", play_id=f"msubep-36-{ep}")
+        for ep in range(1, 57)
+    ]
+    # 集数空洞:43 不可播,playlist 缺 43,下标与集号错位
+    playlist = [item for item in playlist if item.play_id != "msubep-36-43"]
+
+    index = resolve_resume_index(history, playlist, clicked_index=45)
+
+    assert playlist[index].play_id == "msubep-36-51"
+    assert index != 0
+
+
+def test_resolve_resume_index_matches_own_saved_msubep_with_suffix() -> None:
+    # 本端上报的 episode_url 带 "@subgroup@index" 后缀,token 仍可命中
+    history = HistoryRecord(
+        id=1, key="msub:36", vod_name="盗妖行", vod_pic="", vod_remarks="",
+        episode=12, episode_url="msubep-36-13@0@12", position=50_000,
+        opening=0, ending=0, speed=1.0, create_time=1,
+    )
+    playlist = [
+        PlayItem(title=f"第{ep}集", url="", play_id=f"msubep-36-{ep}")
+        for ep in range(1, 21)
+    ]
+
+    index = resolve_resume_index(history, playlist, clicked_index=0)
+
+    assert playlist[index].play_id == "msubep-36-13"
+
+
+def test_resolve_resume_index_falls_through_when_token_not_in_playlist() -> None:
+    history = HistoryRecord(
+        id=1, key="msub:36", vod_name="盗妖行", vod_pic="", vod_remarks="",
+        episode=2, episode_url="msubep-36-99", position=10_000,
+        opening=0, ending=0, speed=1.0, create_time=1,
+    )
+    playlist = [
+        PlayItem(title=f"第{ep}集", url="", play_id=f"msubep-36-{ep}")
+        for ep in range(1, 11)
+    ]
+
+    index = resolve_resume_index(history, playlist, clicked_index=7)
+
+    # token 找不到 → 依序落到 episode 下标兜底(而非 clicked)
+    assert index == 2
