@@ -505,3 +505,50 @@ def test_apply_backend_signal_respects_snooze_and_dismissed_watermark(tmp_path: 
 def test_apply_backend_signal_missing_record_returns_false(tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     assert _apply_backend(repo, 12345) is False
+
+
+def test_apply_backend_signal_places_msub_binding_first(tmp_path: Path) -> None:
+    from atv_player.following_models import FollowingSourceBinding
+
+    repo = FollowingRepository(tmp_path / "app.db")
+    record = _record(
+        latest_episode=3,
+        current_episode=3,
+        watched_latest_episode=True,
+        source_bindings=[FollowingSourceBinding(source_kind="plugin", source_key="98", vod_id="70")],
+    )
+    record_id = repo.upsert(record)
+
+    _apply_backend(repo, record_id, playable_episodes=4)
+
+    bindings = repo.get(record_id).source_bindings
+    # 继续播放取首个绑定:服务端源就绪即默认,旧插件绑定退居次位
+    assert bindings[0].source_kind == "msub"
+    assert bindings[1].source_kind == "plugin"
+
+
+def test_record_playback_source_promotes_played_source_over_msub(tmp_path: Path) -> None:
+    """从插件源播放后,该源应顶回首位(最近使用优先),msub 退居次位。"""
+    from atv_player.controllers.following_controller import FollowingController
+    from atv_player.following_models import FollowingSourceBinding
+
+    repo = FollowingRepository(tmp_path / "app.db")
+    record_id = repo.upsert(_record(latest_episode=4, current_episode=3, watched_latest_episode=True))
+    _apply_backend(repo, record_id, playable_episodes=4)
+    assert repo.get(record_id).source_bindings[0].source_kind == "msub"
+
+    controller = FollowingController(repo, metadata_search_service=object())
+    controller.record_playback_source(
+        record_id,
+        source_kind="plugin",
+        source_key="98",
+        vod_id="70",
+        current_season_number=1,
+        current_episode=4,
+        playlist_latest_episode=4,
+    )
+
+    bindings = repo.get(record_id).source_bindings
+    assert bindings[0].source_kind == "plugin"
+    assert bindings[1].source_kind == "msub"
+    assert repo.get(record_id).latest_episode == 4

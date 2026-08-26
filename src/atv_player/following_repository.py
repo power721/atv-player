@@ -696,7 +696,10 @@ class FollowingRepository:
             vod_id = f"msub:{int(subscription_id)}"
             bindings = [binding for binding in bindings if not (binding.source_kind == "msub" and binding.vod_id != vod_id)]
             if not any(binding.source_kind == "msub" and binding.vod_id == vod_id for binding in bindings):
-                bindings.append(
+                # 插到列表头:"继续播放"取首个绑定,服务端可播源就绪即成为默认续播源;
+                # 用户之后实际播放的源会被 record_playback_source 的 insert(0) 顶回首位。
+                bindings.insert(
+                    0,
                     FollowingSourceBinding(
                         source_kind="msub",
                         source_key=str(source_key or ""),
