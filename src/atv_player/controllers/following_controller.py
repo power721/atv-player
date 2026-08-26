@@ -1155,8 +1155,13 @@ class FollowingController:
 
     def check_one(self, following_id: int):
         if self._update_service is None:
-            return None
-        return self._update_service.check_record(following_id)
+            result = None
+        else:
+            result = self._update_service.check_record(following_id)
+        # 详情页"检查更新"同样并入服务端追剧信号(check_all_due 的同款口径)。
+        if self._backend_sync_service is not None:
+            self._backend_sync_service.sync_blocking()
+        return result
 
     def refresh_metadata(self, following_id: int) -> FollowingDetailView:
         record = self._repository.get(following_id)

@@ -73,8 +73,10 @@ class FakeApiClient:
         self.create_result = create_result
         self.create_error = create_error
         self.create_calls: list[dict] = []
+        self.list_calls = 0
 
     def list_media_subscriptions(self):
+        self.list_calls += 1
         return list(self.subscriptions)
 
     def create_media_subscription(self, payload):
@@ -218,3 +220,36 @@ def test_sync_blocking_skips_when_background_sync_holds_lock(tmp_path: Path) -> 
     assert results == []
     assert service._sync_lock.locked()
     service._sync_lock.release()
+
+
+def test_sync_soon_respects_interval_and_disabled(tmp_path: Path, monkeypatch) -> None:
+    repository = FollowingRepository(tmp_path / "app.db")
+    repository.upsert(_record())
+    api = FakeApiClient(subscriptions=[_sub()])
+    clock = {"monotonic": 1000.0}
+    monkeypatch.setattr("atv_player.following_backend.time.monotonic", lambda: clock["monotonic"])
+    service = _service(api, repository)
+
+    service.sync_soon()  # 派发后台线程,等待完成
+    service._sync_lock.acquire()
+    service._sync_lock.release()
+    assert api.list_calls == 1
+
+    clock["monotonic"] = 1100.0  # 限频窗口内:被吞
+    service.sync_soon()
+    service._sync_lock.acquire()
+    service._sync_lock.release()
+    assert api.list_calls == 1
+
+    clock["monotonic"] = 1400.0  # 越过 5 分钟窗口:放行
+    service.sync_soon()
+    service._sync_lock.acquire()
+    service._sync_lock.release()
+    assert api.list_calls == 2
+
+    clock["monotonic"] = 2000.0
+    disabled = _service(api, repository, enabled=False)
+    disabled.sync_soon()
+    service._sync_lock.acquire()
+    service._sync_lock.release()
+    assert api.list_calls == 2

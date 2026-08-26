@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 INITIAL_DELAY_MS = 90_000
 SYNC_INTERVAL_MS = 60 * 60 * 1000
+# 窗口激活等外部触发的最小间隔,避免频繁切窗打爆服务端(对齐播放同步 pull_soon 口径)。
+SYNC_SOON_MIN_INTERVAL_SECONDS = 300
 # 匹配失败(含自动订阅失败)的负缓存:避免每轮同步都重复 POST——
 # 后端 create 幂等但会再次触发首轮巡检(五路搜索+挂载,数分钟/条)。
 NEGATIVE_CACHE_TTL_SECONDS = 7 * 24 * 3600
@@ -108,6 +110,7 @@ class FollowingBackendSyncService(QObject):
         self._now = now or (lambda: int(time.time()))
         self._negative_cache: dict[tuple[str, str], int] = {}
         self._sync_lock = threading.Lock()
+        self._last_sync_soon_at = 0.0
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._on_timer)
 
@@ -121,7 +124,14 @@ class FollowingBackendSyncService(QObject):
         self._timer.stop()
 
     def sync_soon(self) -> None:
-        """手动触发(检查更新按钮等),与定时共用一把锁防并发。"""
+        """外部触发(窗口激活/开关后回到前台),限频防切窗风暴;定时轮次不受限。"""
+        settings = self._settings()
+        if not settings.get("enabled"):
+            return
+        now = time.monotonic()
+        if now - self._last_sync_soon_at < SYNC_SOON_MIN_INTERVAL_SECONDS:
+            return
+        self._last_sync_soon_at = now
         self._on_timer()
 
     def _on_timer(self) -> None:

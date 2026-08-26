@@ -2410,3 +2410,51 @@ def test_following_controller_keeps_binding_when_switched_source_is_behind_curre
     ]
     assert loaded.latest_episode == 24
     assert loaded.has_update is True
+
+
+def test_check_all_due_and_check_one_both_trigger_backend_sync(tmp_path) -> None:
+    class StubBackendSync:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def sync_blocking(self):
+            self.calls += 1
+            return []
+
+    repo = FollowingRepository(tmp_path / "app.db")
+    backend = StubBackendSync()
+    controller = FollowingController(
+        repo,
+        metadata_search_service=FakeSearchService(),
+        update_service=FakeUpdateService(),
+        backend_sync_service=backend,
+        now=lambda: 100,
+    )
+
+    controller.check_all_due()
+    assert backend.calls == 1
+
+    record_id = repo.upsert(
+        FollowingRecord(
+            id=0,
+            title="凡人修仙传",
+            media_kind="anime",
+            provider="tmdb",
+            provider_id="tv:456",
+            season_number=1,
+            current_episode=3,
+            latest_episode=3,
+            created_at=1,
+            updated_at=1,
+        )
+    )
+    controller.check_one(record_id)
+    assert backend.calls == 2
+
+    no_service = FollowingController(
+        repo,
+        metadata_search_service=FakeSearchService(),
+        now=lambda: 100,
+    )
+    no_service.check_all_due()  # 无后端服务时不炸
+    no_service.check_one(record_id)

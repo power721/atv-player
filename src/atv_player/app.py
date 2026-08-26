@@ -207,7 +207,7 @@ class _ButtonCursorEventFilter(QObject):
 
 
 class _ActivationPullFilter(QObject):
-    """主窗口重新激活时请求一次播放记录 PULL,让跨端续播进度立即可见。"""
+    """主窗口重新激活时请求一次播放记录 PULL + 服务端追剧信号同步(均各自限频)。"""
 
     def __init__(self, callback, parent=None) -> None:
         super().__init__(parent)
@@ -2464,7 +2464,10 @@ class AppCoordinator(QObject):
                 lambda: (
                     self._playback_sync_service.pull_soon()
                     if self._playback_sync_service is not None
-                    else None
+                    else None,
+                    self._following_backend_sync_service.sync_soon()
+                    if self._following_backend_sync_service is not None
+                    else None,
                 ),
                 self.main_window,
             )
