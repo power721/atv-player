@@ -1493,6 +1493,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             metadata_binding_repository=None,
             episode_title_override_repository=None,
             danmaku_preference_store=None,
+            vod_token_options: list[str] | None = None,
+            can_select_vod_token: bool = False,
+            on_vod_token_changed=None,
     ) -> None:
         super().__init__(title="alist-tvbox Desktop Player", resizable=True)
         self._init_async_guard()
@@ -1530,6 +1533,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._global_search_hotkey_loader = global_search_hotkey_loader or load_global_search_hotkey_payload
         self._global_search_suggestion_loader = global_search_suggestion_loader or load_360_search_suggestions
         self._youtube_category_text_loader = youtube_category_text_loader
+        self._vod_token_options = list(vod_token_options or [])
+        self._can_select_vod_token = can_select_vod_token
+        self._on_vod_token_changed = on_vod_token_changed
         self._live_source_manager = live_source_manager
         self._plugin_pages: list[tuple[PosterGridPage, _PluginController, str]] = []
         self._static_tab_definitions: list[_TabDefinition] = []
@@ -5465,14 +5471,18 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._dismiss_visible_global_search_popup()
         self._close_plugin_overflow_drawer()
         self._close_help_dialog()
-        dialog = AdvancedSettingsDialog(
-            self.config,
-            self._save_config,
-            self,
-            apply_theme=self._apply_application_theme,
-            app_log_service=self._app_log_service,
-            youtube_category_text_loader=self._youtube_category_text_loader,
-        )
+        dialog_kwargs = {
+            "apply_theme": self._apply_application_theme,
+            "app_log_service": self._app_log_service,
+            "youtube_category_text_loader": self._youtube_category_text_loader,
+        }
+        if self._can_select_vod_token:
+            dialog_kwargs.update(
+                vod_token_options=self._vod_token_options,
+                can_select_vod_token=True,
+                on_vod_token_changed=self._on_vod_token_changed,
+            )
+        dialog = AdvancedSettingsDialog(self.config, self._save_config, self, **dialog_kwargs)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         if self.player_window is not None and hasattr(self.player_window, "refresh_runtime_video_output_settings"):

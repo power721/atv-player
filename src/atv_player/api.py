@@ -528,10 +528,26 @@ class ApiClient:
         )
         return data or {}
 
-    def fetch_vod_token(self) -> str:
+    def get_vod_token_info(self) -> dict[str, object]:
         data = self._request("GET", "/api/token")
         token = str(data.get("token") or "")
-        first = token.split(",")[0] if token else "-"
+        tokens = list(
+            dict.fromkeys(item.strip() for item in token.split(",") if item.strip())
+        )
+        return {
+            "tokens": tokens,
+            "role": str(data.get("role") or "").strip().upper(),
+        }
+
+    def fetch_vod_token(self) -> str:
+        """Return the legacy default VOD token.
+
+        New callers should use :meth:`get_vod_token_info` so administrators can
+        choose one of the tokens returned by the server.
+        """
+        info = self.get_vod_token_info()
+        tokens = info["tokens"]
+        first = tokens[0] if tokens else "-"
         self._vod_token = first
         return first
 

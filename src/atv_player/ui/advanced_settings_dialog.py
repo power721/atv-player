@@ -111,6 +111,9 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         app_log_service=None,
         youtube_category_text_loader: Callable[[str], str] | None = None,
         ai_client_factory: Callable[[AIProviderConfig], object] | None = None,
+        vod_token_options: list[str] | None = None,
+        can_select_vod_token: bool = False,
+        on_vod_token_changed: Callable[[str], None] | None = None,
     ) -> None:
         super().__init__(title="高级设置", parent=parent)
         self._config = config
@@ -118,6 +121,9 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self._apply_application_theme = apply_theme
         self._app_log_service = app_log_service
         self._youtube_category_text_loader = youtube_category_text_loader
+        self._vod_token_options = list(vod_token_options or [])
+        self._can_select_vod_token = can_select_vod_token
+        self._on_vod_token_changed = on_vod_token_changed
         self._initial_deferred_load_scheduled = False
         self._initial_content_signals = _InitialContentSignals(self)
         self._ai_client_factory = ai_client_factory or OpenAICompatibleClient
@@ -137,6 +143,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.logs_tab = QWidget()
         self.appearance_group = QGroupBox("外观")
         self.homepage_group = QGroupBox("首页模式")
+        self.vod_token_group = QGroupBox("VOD Token")
         self.theme_mode_combo = FlatComboBox()
         self.theme_mode_combo.addItem("浅色", "light")
         self.theme_mode_combo.addItem("深色", "dark")
@@ -149,6 +156,12 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         # self.home_mode_combo.addItem("电视 (直播)", "tv")
         self.theme_hint_label = QLabel("跟随系统会在应用启动时读取当前系统浅深色；播放器播放区保持偏暗。")
         self.theme_hint_label.setWordWrap(True)
+        self.vod_token_combo = FlatComboBox()
+        for token in self._vod_token_options:
+            self.vod_token_combo.addItem(token, token)
+        if self._vod_token_options:
+            current_index = self.vod_token_combo.findData(config.vod_token)
+            self.vod_token_combo.setCurrentIndex(max(0, current_index))
         self.metadata_group = QGroupBox("元数据增强配置")
         self.metadata_source_group = QGroupBox("刮削源")
         self.danmaku_source_group = QGroupBox("弹幕源")
@@ -505,9 +518,14 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         homepage_layout = QFormLayout()
         homepage_layout.addRow("模式", self.home_mode_combo)
         self.homepage_group.setLayout(homepage_layout)
+        vod_token_layout = QFormLayout()
+        vod_token_layout.addRow("当前 Token", self.vod_token_combo)
+        self.vod_token_group.setLayout(vod_token_layout)
         appearance_tab_layout = QVBoxLayout(self.appearance_tab)
         appearance_tab_layout.addWidget(self.appearance_group)
         appearance_tab_layout.addWidget(self.homepage_group)
+        if self._can_select_vod_token:
+            appearance_tab_layout.addWidget(self.vod_token_group)
         appearance_tab_layout.addStretch(1)
 
         metadata_layout = QFormLayout()
@@ -678,7 +696,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         cache_tab_layout = QVBoxLayout(self.cache_tab)
         cache_tab_layout.addWidget(self.cache_group)
 
-        self.settings_tabs.addTab(self.appearance_tab, "外观")
+        self.settings_tabs.addTab(self.appearance_tab, "通用")
         self.settings_tabs.addTab(self.playback_tab, "播放设置")
         self.settings_tabs.addTab(self.youtube_tab, "YouTube")
         self.settings_tabs.addTab(self.metadata_tab, "元数据")
@@ -771,6 +789,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         for combo in (
             self.theme_mode_combo,
             self.home_mode_combo,
+            self.vod_token_combo,
             self.tmdb_endpoint_combo,
             self.network_proxy_mode_combo,
             self.youtube_cookie_browser_combo,
@@ -1451,6 +1470,10 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         if ai_values is None:
             return
         self._config.theme_mode = str(self.theme_mode_combo.currentData() or "system")
+        if self._can_select_vod_token:
+            vod_token = str(self.vod_token_combo.currentData() or "").strip()
+            if vod_token:
+                self._config.vod_token = vod_token
         self._config.home_mode = str(self.home_mode_combo.currentData() or "browse")
         self._config.logging_enabled = self.logging_enabled_checkbox.isChecked()
         self._config.metadata_enhancement_enabled = self.metadata_enabled_checkbox.isChecked()
@@ -1529,6 +1552,8 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self._config.mpv_extra_options,
         ) = playback_values
         self._save_config()
+        if self._can_select_vod_token and callable(self._on_vod_token_changed):
+            self._on_vod_token_changed(self._config.vod_token)
         if self._apply_application_theme is not None:
             self._apply_application_theme()
         self.accept()

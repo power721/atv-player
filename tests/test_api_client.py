@@ -335,6 +335,20 @@ def test_api_client_fetches_vod_token_from_api_token() -> None:
     assert client.fetch_vod_token() == "vod-123"
 
 
+def test_api_client_gets_vod_token_options_and_role() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/token"
+        return httpx.Response(200, json={"token": "web,Harold,web,115", "role": "ADMIN"})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="auth-123",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert client.get_vod_token_info() == {"tokens": ["web", "Harold", "115"], "role": "ADMIN"}
+
+
 def test_api_client_gets_capabilities() -> None:
     seen = {"path": "", "query": ""}
 

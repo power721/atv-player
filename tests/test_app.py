@@ -5510,6 +5510,109 @@ def test_app_coordinator_start_does_not_require_vod_root_probe(monkeypatch) -> N
     assert FakeApiClient.list_vod_calls == 0
 
 
+def test_app_coordinator_uses_username_as_vod_token_for_normal_user(monkeypatch) -> None:
+    class FakeRepo(_FakeRepoBase):
+        def __init__(self) -> None:
+            self.config = AppConfig(username="alice", token="auth-123", vod_token="old-token")
+
+        def load_config(self) -> AppConfig:
+            return self.config
+
+        def save_config(self, config: AppConfig) -> None:
+            self.config = config
+
+    class FakeApiClient:
+        def __init__(self) -> None:
+            self.vod_token = ""
+
+        def get_vod_token_info(self) -> dict[str, object]:
+            return {"tokens": ["web", "shared"], "role": "USER"}
+
+        def set_vod_token(self, value: str) -> None:
+            self.vod_token = value
+
+    repo = FakeRepo()
+    coordinator = AppCoordinator(repo)
+    client = FakeApiClient()
+
+    assert coordinator._ensure_vod_token(client) == "alice"
+    assert client.vod_token == "alice"
+    assert repo.config.vod_token == "alice"
+    assert coordinator._vod_token_is_admin is False
+
+
+def test_app_coordinator_prompts_admin_to_choose_vod_token_after_login(monkeypatch) -> None:
+    class FakeRepo(_FakeRepoBase):
+        def __init__(self) -> None:
+            self.config = AppConfig(base_url="http://demo", username="admin", token="auth-123")
+
+        def load_config(self) -> AppConfig:
+            return self.config
+
+        def save_config(self, config: AppConfig) -> None:
+            self.config = config
+
+    class FakeApiClient:
+        def __init__(self, *_args, **_kwargs) -> None:
+            self.closed = False
+
+        def get_vod_token_info(self) -> dict[str, object]:
+            return {"tokens": ["web", "Harold", "115"], "role": "ADMIN"}
+
+        def close(self) -> None:
+            self.closed = True
+
+    repo = FakeRepo()
+    coordinator = AppCoordinator(repo)
+    coordinator.login_window = object()
+    monkeypatch.setattr(app_module, "ApiClient", FakeApiClient)
+    monkeypatch.setattr(
+        app_module.QInputDialog,
+        "getItem",
+        lambda parent, title, label, options, current, editable: (
+            "Harold",
+            parent is coordinator.login_window
+            and title == "选择 VOD Token"
+            and label == "请选择要使用的 VOD Token："
+            and options == ["web", "Harold", "115"]
+            and current == 0
+            and editable is False,
+        ),
+    )
+
+    assert coordinator._select_vod_token_after_login() is True
+    assert repo.config.vod_token == "Harold"
+    assert coordinator._vod_token_options == ["web", "Harold", "115"]
+    assert coordinator._vod_token_is_admin is True
+
+
+def test_advanced_settings_dialog_allows_admin_to_change_vod_token(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig(vod_token="web")
+    saved: list[str] = []
+    applied: list[str] = []
+    dialog = AdvancedSettingsDialog(
+        config,
+        save_config=lambda: saved.append(config.vod_token),
+        vod_token_options=["web", "Harold", "115"],
+        can_select_vod_token=True,
+        on_vod_token_changed=applied.append,
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.vod_token_combo.currentData() == "web"
+    assert dialog.vod_token_group.title() == "VOD Token"
+    assert dialog.vod_token_group.layout().labelForField(dialog.vod_token_combo).text() == "当前 Token"
+    assert dialog.vod_token_combo.styleSheet() == dialog.home_mode_combo.styleSheet()
+    dialog.vod_token_combo.setCurrentIndex(1)
+    dialog._save()
+
+    assert config.vod_token == "Harold"
+    assert saved == ["Harold"]
+    assert applied == ["Harold"]
+
+
 def test_app_coordinator_start_returns_login_window_when_vod_token_fetch_raises_api_error(monkeypatch) -> None:
     class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:

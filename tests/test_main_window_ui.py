@@ -7849,7 +7849,7 @@ def test_advanced_settings_dialog_adds_appearance_tab_and_populates_theme_mode(q
     dialog = AdvancedSettingsDialog(AppConfig(theme_mode="dark"), save_config=lambda: None)
     qtbot.addWidget(dialog)
 
-    assert dialog.settings_tabs.tabText(0) == "外观"
+    assert dialog.settings_tabs.tabText(0) == "通用"
     assert dialog.settings_tabs.tabText(1) == "播放设置"
     assert dialog.theme_mode_combo.currentData() == "dark"
 
@@ -7950,12 +7950,14 @@ def test_advanced_settings_dialog_loads_network_proxy_values(qtbot) -> None:
     dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
     qtbot.addWidget(dialog)
 
-    assert dialog.settings_tabs.tabText(0) == "外观"
+    assert dialog.settings_tabs.tabText(0) == "通用"
     assert dialog.settings_tabs.tabText(1) == "播放设置"
     assert dialog.settings_tabs.tabText(2) == "YouTube"
     assert dialog.settings_tabs.tabText(3) == "元数据"
-    assert dialog.settings_tabs.tabText(4) == "AI"
-    assert dialog.settings_tabs.tabText(5) == "网络代理"
+    assert dialog.settings_tabs.tabText(4) == "弹幕"
+    assert dialog.settings_tabs.tabText(5) == "字幕"
+    assert dialog.settings_tabs.tabText(6) == "AI"
+    assert dialog.settings_tabs.tabText(7) == "网络代理"
     assert dialog.network_proxy_mode_combo.currentData() == "socks5"
     assert dialog.network_proxy_url_edit.text() == "socks5://user:pass@127.0.0.1:1080"
     assert dialog.network_proxy_bypass_rules_edit.toPlainText() == "localhost\n127.0.0.1"
@@ -8045,7 +8047,7 @@ def test_advanced_settings_dialog_adds_playback_tab_and_populates_existing_value
     dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
     qtbot.addWidget(dialog)
 
-    assert dialog.settings_tabs.tabText(0) == "外观"
+    assert dialog.settings_tabs.tabText(0) == "通用"
     assert dialog.settings_tabs.tabText(1) == "播放设置"
     assert dialog.playback_auto_switch_source_on_failure_checkbox.isChecked() is True
     assert dialog.youtube_cookie_browser_combo.currentData() == "firefox"
@@ -8072,7 +8074,7 @@ def test_advanced_settings_dialog_adds_youtube_tab_and_populates_preferences(qtb
     qtbot.addWidget(dialog)
 
     tab_labels = [dialog.settings_tabs.tabText(index) for index in range(dialog.settings_tabs.count())]
-    assert tab_labels[:3] == ["外观", "播放设置", "YouTube"]
+    assert tab_labels[:3] == ["通用", "播放设置", "YouTube"]
     assert dialog.youtube_cookie_browser_combo.currentData() == "firefox"
     assert dialog.youtube_max_height_combo.currentData() == 1440
     assert dialog.youtube_video_codec_combo.currentData() == "av1"

@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer
-from PySide6.QtWidgets import QApplication, QPushButton, QToolButton, QWidget
+from PySide6.QtWidgets import QApplication, QInputDialog, QPushButton, QToolButton, QWidget
 
 from atv_player.api import ApiClient, ApiError, UnauthorizedError
 from atv_player.ai import (
@@ -485,6 +485,8 @@ class AppCoordinator(QObject):
         self._following_backend_sync_service: FollowingBackendSyncService | None = None
         self._activation_pull_filter: _ActivationPullFilter | None = None
         self._api_client: ApiClient | None = None
+        self._vod_token_options: list[str] = []
+        self._vod_token_is_admin = False
         initial_config = self.repo.load_config()
         set_proxy_decider_loader(self._build_proxy_decider)
         set_spider_proxy_decider_loader(self._build_proxy_decider)
@@ -757,14 +759,87 @@ class AppCoordinator(QObject):
 
     def _ensure_vod_token(self, api_client: ApiClient) -> str:
         config = self.repo.load_config()
-        if config.vod_token:
-            api_client.set_vod_token(config.vod_token)
-            return config.vod_token
-        vod_token = api_client.fetch_vod_token()
+        options, is_admin = self._load_vod_token_options(api_client)
+        self._vod_token_options = options
+        self._vod_token_is_admin = is_admin
+        if not is_admin and config.username:
+            vod_token = config.username
+        elif config.vod_token and (not options or config.vod_token in options):
+            vod_token = config.vod_token
+        else:
+            # Keeps existing installations working until an administrator makes
+            # an explicit choice on the next login.
+            vod_token = options[0] if options else "-"
+        api_client.set_vod_token(vod_token)
+        if config.vod_token == vod_token:
+            return vod_token
         config.vod_token = vod_token
         self.repo.save_config(config)
-        logger.info("Fetched and stored vod token")
+        logger.info("Stored vod token role=%s", "admin" if is_admin else "user")
         return vod_token
+
+    @staticmethod
+    def _load_vod_token_options(api_client) -> tuple[list[str], bool]:
+        get_info = getattr(api_client, "get_vod_token_info", None)
+        if callable(get_info):
+            info = get_info()
+            raw_tokens = info.get("tokens", []) if isinstance(info, Mapping) else []
+            tokens = list(
+                dict.fromkeys(
+                    str(token).strip() for token in raw_tokens if str(token).strip()
+                )
+            )
+            role = (
+                str(info.get("role") or "").strip().upper()
+                if isinstance(info, Mapping)
+                else ""
+            )
+            return tokens, role == "ADMIN"
+
+        # Compatibility for integrations and older tests that expose only the
+        # original API method. Such servers had no role information and used
+        # the first token for the administrator account.
+        fetch_token = getattr(api_client, "fetch_vod_token")
+        token = str(fetch_token() or "-").strip() or "-"
+        return [token], True
+
+    def _select_vod_token_after_login(self) -> bool:
+        config = self.repo.load_config()
+        api_client = self._create_api_client(config)
+        try:
+            options, is_admin = self._load_vod_token_options(api_client)
+        finally:
+            close = getattr(api_client, "close", None)
+            if callable(close):
+                close()
+        self._vod_token_options = options
+        self._vod_token_is_admin = is_admin
+        if not is_admin:
+            config.vod_token = config.username
+            self.repo.save_config(config)
+            return True
+        if not options:
+            raise ApiError("服务器未返回可用的 VOD token")
+        current_index = (
+            options.index(config.vod_token) if config.vod_token in options else 0
+        )
+        token, accepted = QInputDialog.getItem(
+            self.login_window,
+            "选择 VOD Token",
+            "请选择要使用的 VOD Token：",
+            options,
+            current_index,
+            False,
+        )
+        if not accepted:
+            return False
+        config.vod_token = str(token)
+        self.repo.save_config(config)
+        return True
+
+    def _apply_vod_token_change(self, vod_token: str) -> None:
+        if self._api_client is not None:
+            self._api_client.set_vod_token(vod_token)
 
     @staticmethod
     def _metadata_has_value(value: object) -> bool:
@@ -2391,6 +2466,9 @@ class AppCoordinator(QObject):
             app_log_service=self._app_log_service,
             save_config=lambda: self._save_shared_config(config),
             apply_theme=lambda: apply_saved_theme(QApplication.instance(), self.repo),
+            vod_token_options=self._vod_token_options,
+            can_select_vod_token=self._vod_token_is_admin,
+            on_vod_token_changed=self._apply_vod_token_change,
             douban_controller=douban_controller,
             global_catalog_controller=global_catalog_controller,
             media_detail_controller=media_detail_controller,
@@ -2633,6 +2711,10 @@ class AppCoordinator(QObject):
     def _handle_login_succeeded(self) -> None:
         logger.info("Login succeeded")
         try:
+            if not self._select_vod_token_after_login():
+                if self.login_window is not None:
+                    self.login_window.set_error_message("请选择 VOD Token 后再继续登录")
+                return
             widget = self._show_main()
         except (ApiError, UnauthorizedError) as exc:
             logger.exception("Failed to initialize after login error=%s", exc)
