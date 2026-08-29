@@ -446,9 +446,9 @@ class ApiClient:
         return data if isinstance(data, dict) else {}
 
     def resolve_msub_episode(self, subscription_id: int, episode: int) -> dict[str, Any]:
-        # /play 无 token 路径会被服务端 checkToken("") 直接 400,必须带路径 token:
-        # 用户名令牌经 resolveUid 精确映射到本人;无用户名时退 vod token(解析到首个管理员)。
-        token = urllib.parse.quote(self._username or self._vod_token or "-", safe="")
+        # /play 无 token 路径会被服务端 checkToken("") 直接 400，必须带路径 token。
+        # 使用当前 VOD Token，与 /media 保持一致；普通用户的当前 token 即用户名。
+        token = urllib.parse.quote(self._vod_token or "-", safe="")
         data = self._request(
             "GET",
             f"/play/{token}",

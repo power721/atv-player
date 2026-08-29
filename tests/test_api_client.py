@@ -1445,7 +1445,7 @@ def test_api_client_gets_media_subscription_detail() -> None:
     assert detail["subscription"]["id"] == 5
 
 
-def test_api_client_resolves_msub_episode_preferring_username_token() -> None:
+def test_api_client_resolves_msub_episode_with_current_vod_token() -> None:
     seen = {"path": "", "query": "", "client": ""}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1456,15 +1456,15 @@ def test_api_client_resolves_msub_episode_preferring_username_token() -> None:
 
     client = ApiClient(
         base_url="http://127.0.0.1:4567",
-        vod_token="vod-token",
+        vod_token="Harold",
         username="harold",
         transport=httpx.MockTransport(handler),
     )
 
     payload = client.resolve_msub_episode(5, 3)
 
-    # 无 token 路径会被 checkToken("") 拒绝;用户名令牌精确映射到本人 uid
-    assert seen["path"] == "/play/harold"
+    # 管理员选择的 VOD Token 必须与 /media 请求使用同一个值。
+    assert seen["path"] == "/play/Harold"
     assert seen["query"] == "id=msubep-5-3"
     assert seen["client"] == "atv-player"
     assert payload["url"] == "http://d/1.mkv"
