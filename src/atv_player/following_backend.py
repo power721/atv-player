@@ -208,7 +208,7 @@ class FollowingBackendSyncService(QObject):
                     subscription_id=_as_int(sub.get("id")),
                     playable_episodes=_as_int(sub.get("currentEpisodes")),
                     source_key=str(getattr(self._api, "base_url", "") or ""),
-                    source_name="服务端追剧",
+                    source_name="追剧",
                     updated_at=now,
                 )
             )

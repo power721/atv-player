@@ -703,7 +703,7 @@ class FollowingRepository:
                     FollowingSourceBinding(
                         source_kind="msub",
                         source_key=str(source_key or ""),
-                        source_name=str(source_name or "服务端追剧"),
+                        source_name=str(source_name or "追剧"),
                         vod_id=vod_id,
                     )
                 )

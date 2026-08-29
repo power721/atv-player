@@ -2422,7 +2422,7 @@ class AppCoordinator(QObject):
                 "msub",
                 vod_id,
                 payload,
-                source_name="服务端追剧",
+                source_name="追剧",
             ),
         )
         smart_search_controller = self._build_smart_search_controller(

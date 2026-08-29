@@ -56,7 +56,7 @@ class MsubController:
         tvbox_name = str(tvbox_vod.get("vod_name") or "").strip()
         playlist = self._build_tvbox_playlist(subscription_id, tvbox_name, tvbox_vod)
         if playlist:
-            name = tvbox_name or f"服务端追剧 {subscription_id}"
+            name = tvbox_name or f"追剧 {subscription_id}"
             vod = self._build_tvbox_vod(subscription_id, name, tvbox_vod)
         else:
             # Old servers do not expose the account-scoped TvBox media endpoint.
@@ -64,7 +64,7 @@ class MsubController:
             payload = self._api_client.get_media_subscription_detail(subscription_id)
             subscription = payload.get("subscription") or {}
             media = payload.get("media") or {}
-            name = str(subscription.get("name") or media.get("name") or "").strip() or f"服务端追剧 {subscription_id}"
+            name = str(subscription.get("name") or media.get("name") or "").strip() or f"追剧 {subscription_id}"
             playlist = self._build_playlist(subscription_id, name, payload.get("episodes") or [])
             vod = self._build_subscription_vod(subscription_id, subscription, media)
         if not playlist:
@@ -124,12 +124,12 @@ class MsubController:
         cover = str(subscription.get("cover") or media.get("cover") or "")
         official_episodes = int(subscription.get("officialEpisodes") or 0)
         official_total = int(subscription.get("officialTotal") or 0)
-        remarks = "服务端追剧"
+        remarks = "追剧"
         if official_episodes > 0:
             remarks = f"已播 {official_episodes}/{official_total or '?'} 集"
         return VodItem(
             vod_id=f"msub:{subscription_id}",
-            vod_name=str(subscription.get("name") or media.get("name") or "").strip() or f"服务端追剧 {subscription_id}",
+            vod_name=str(subscription.get("name") or media.get("name") or "").strip() or f"追剧 {subscription_id}",
             vod_pic=cover,
             vod_remarks=remarks,
             vod_content=str(media.get("overview") or ""),
@@ -143,7 +143,7 @@ class MsubController:
             vod_pic=str(detail.get("vod_pic") or ""),
             vod_tag=str(detail.get("vod_tag") or ""),
             vod_time=str(detail.get("vod_time") or ""),
-            vod_remarks=str(detail.get("vod_remarks") or "").strip() or "服务端追剧",
+            vod_remarks=str(detail.get("vod_remarks") or "").strip() or "追剧",
             vod_play_from=str(detail.get("vod_play_from") or ""),
             vod_play_url=str(detail.get("vod_play_url") or ""),
             type_name=str(detail.get("type_name") or ""),
