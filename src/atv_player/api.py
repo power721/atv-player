@@ -447,7 +447,7 @@ class ApiClient:
 
     def resolve_msub_episode(self, subscription_id: int, episode: int) -> dict[str, Any]:
         # /play 无 token 路径会被服务端 checkToken("") 直接 400，必须带路径 token。
-        # 使用当前 VOD Token，与 /media 保持一致；普通用户的当前 token 即用户名。
+        # 使用当前 VOD Token，与 /media 保持一致；普通用户为 u-{username}。
         token = urllib.parse.quote(self._vod_token or "-", safe="")
         data = self._request(
             "GET",

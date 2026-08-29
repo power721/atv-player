@@ -763,7 +763,7 @@ class AppCoordinator(QObject):
         self._vod_token_options = options
         self._vod_token_is_admin = is_admin
         if not is_admin and config.username:
-            vod_token = config.username
+            vod_token = self._user_vod_token(config.username)
         elif config.vod_token and (not options or config.vod_token in options):
             vod_token = config.vod_token
         else:
@@ -803,6 +803,10 @@ class AppCoordinator(QObject):
         token = str(fetch_token() or "-").strip() or "-"
         return [token], True
 
+    @staticmethod
+    def _user_vod_token(username: str) -> str:
+        return f"u-{username.strip()}"
+
     def _select_vod_token_after_login(self) -> bool:
         config = self.repo.load_config()
         api_client = self._create_api_client(config)
@@ -815,7 +819,7 @@ class AppCoordinator(QObject):
         self._vod_token_options = options
         self._vod_token_is_admin = is_admin
         if not is_admin:
-            config.vod_token = config.username
+            config.vod_token = self._user_vod_token(config.username)
             self.repo.save_config(config)
             return True
         if not options:

@@ -5510,7 +5510,7 @@ def test_app_coordinator_start_does_not_require_vod_root_probe(monkeypatch) -> N
     assert FakeApiClient.list_vod_calls == 0
 
 
-def test_app_coordinator_uses_username_as_vod_token_for_normal_user(monkeypatch) -> None:
+def test_app_coordinator_uses_user_prefixed_vod_token_for_normal_user(monkeypatch) -> None:
     class FakeRepo(_FakeRepoBase):
         def __init__(self) -> None:
             self.config = AppConfig(username="alice", token="auth-123", vod_token="old-token")
@@ -5535,9 +5535,9 @@ def test_app_coordinator_uses_username_as_vod_token_for_normal_user(monkeypatch)
     coordinator = AppCoordinator(repo)
     client = FakeApiClient()
 
-    assert coordinator._ensure_vod_token(client) == "alice"
-    assert client.vod_token == "alice"
-    assert repo.config.vod_token == "alice"
+    assert coordinator._ensure_vod_token(client) == "u-alice"
+    assert client.vod_token == "u-alice"
+    assert repo.config.vod_token == "u-alice"
     assert coordinator._vod_token_is_admin is False
 
 
