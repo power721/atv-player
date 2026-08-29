@@ -434,6 +434,17 @@ class ApiClient:
         data = self._request("GET", f"/api/media-subscriptions/{subscription_id}/detail")
         return data if isinstance(data, dict) else {}
 
+    def get_msub_tvbox_detail(self, vod_id: str) -> dict[str, Any]:
+        """Return the TvBox media detail for a server-following subscription.
+
+        The subscription endpoint only exposes the tracking state.  The vod-token
+        ``/media/{vod_token}`` endpoint carries the full MovieDetail shown by TvBox,
+        including the canonical msub episode names and display metadata.
+        """
+        vod_token = urllib.parse.quote(self._vod_token or "-", safe="")
+        data = self._request("GET", f"/media/{vod_token}", params={"id": vod_id})
+        return data if isinstance(data, dict) else {}
+
     def resolve_msub_episode(self, subscription_id: int, episode: int) -> dict[str, Any]:
         # /play 无 token 路径会被服务端 checkToken("") 直接 400,必须带路径 token:
         # 用户名令牌经 resolveUid 精确映射到本人;无用户名时退 vod token(解析到首个管理员)。

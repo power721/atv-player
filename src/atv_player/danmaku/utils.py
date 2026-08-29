@@ -216,7 +216,16 @@ def extract_episode_number(name: str) -> int | None:
     value = normalize_name(name)
     if _looks_like_numeric_x_suffix_filename(value):
         return None
-    # 分部标记("上集/中部/（下）")是显式词语,优先于结尾裸数字("X 上部 2"的 2
+    # 明确的集号比标题中的分部后缀更可靠。例如“第25集 神魔剑（下）”的“下”
+    # 是剧情标题的一部分，不能把第25集误判为分部 3。
+    for pattern in (*_EPISODE_PATTERNS[:3], *_EPISODE_PATTERNS[4:7]):
+        match = re.search(pattern, value, re.IGNORECASE)
+        if match is None:
+            continue
+        episode = _episode_number_from_match(value, match)
+        if episode is not None:
+            return episode
+    # 分部标记("上集/中部/（下）")优先于结尾裸数字("X 上部 2"的 2
     # 更可能是分段文件序号),且请求侧/候选侧共用本函数,映射自洽。
     part = extract_part_number(value)
     if part is not None:
@@ -225,17 +234,22 @@ def extract_episode_number(name: str) -> int | None:
         match = re.search(pattern, value, re.IGNORECASE)
         if match is None:
             continue
-        if _looks_like_episode_range_part(value, match):
-            continue
-        if _looks_like_complete_series_count_part(value, match):
-            continue
-        if _looks_like_date_fragment_part(value, match):
-            continue
-        raw = match.group(1)
-        episode = int(raw) if raw.isdigit() else _cn_to_int(raw)
-        if episode is not None and 1 <= episode <= 10000:
+        episode = _episode_number_from_match(value, match)
+        if episode is not None:
             return episode
     return None
+
+
+def _episode_number_from_match(value: str, match: re.Match[str]) -> int | None:
+    if _looks_like_episode_range_part(value, match):
+        return None
+    if _looks_like_complete_series_count_part(value, match):
+        return None
+    if _looks_like_date_fragment_part(value, match):
+        return None
+    raw = match.group(1)
+    episode = int(raw) if raw.isdigit() else _cn_to_int(raw)
+    return episode if episode is not None and 1 <= episode <= 10000 else None
 
 
 def _looks_like_episode_range_part(value: str, match: re.Match[str]) -> bool:

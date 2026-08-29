@@ -92,6 +92,10 @@ def test_extract_episode_number_supports_chinese_numerals() -> None:
     assert extract_episode_number("第十二集") == 12
 
 
+def test_extract_episode_number_prefers_explicit_episode_over_part_suffix() -> None:
+    assert extract_episode_number("第25集 神魔剑（下）") == 25
+
+
 def test_extract_episode_number_maps_movie_part_markers() -> None:
     # 电影分上中下:分部标记映射 1/2/3(腾讯真实片源标题, cid mzc00200s0ntzpo)
     assert extract_episode_number("上集：喜迁新居，竟遇“诡”邻") == 1

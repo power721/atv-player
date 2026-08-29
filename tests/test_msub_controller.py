@@ -1,21 +1,28 @@
 # ruff: noqa: E501
 """服务端追剧播放控制器(MsubController)单测:播放列表构建/懒解析/进度约定。"""
 from atv_player.controllers.msub_controller import MsubController, parse_msub_vod_id
-from atv_player.models import PlayItem
+from atv_player.danmaku.generic import GenericDanmakuController
+from atv_player.models import HistoryRecord, PlayItem
 
 
 class FakeApiClient:
     base_url = "http://192.168.50.60:4567"
     username = "harold"
 
-    def __init__(self, detail=None, play_result=None, play_error=None):
+    def __init__(self, detail=None, tvbox_detail=None, play_result=None, play_error=None):
         self.detail = detail or {}
+        self.tvbox_detail = tvbox_detail
         self.play_result = play_result or {}
         self.play_error = play_error
         self.resolve_calls: list[tuple[int, int]] = []
+        self.tvbox_detail_calls: list[str] = []
 
     def get_media_subscription_detail(self, subscription_id):
         return self.detail
+
+    def get_msub_tvbox_detail(self, vod_id):
+        self.tvbox_detail_calls.append(vod_id)
+        return self.tvbox_detail or {}
 
     def resolve_msub_episode(self, subscription_id, episode):
         self.resolve_calls.append((subscription_id, episode))
@@ -61,10 +68,136 @@ def test_build_request_playlist_contains_present_episodes_only() -> None:
     assert request.vod.vod_name == "凡人修仙传"
     assert request.source_key == "http://192.168.50.60:4567"
     assert [item.title for item in request.playlist] == ["第1集 启程", "第2集 入门", "第3集"]
+    assert [item.episode_display_title for item in request.playlist] == ["第1集 启程", "第2集 入门", "第3集"]
     assert all(not item.url for item in request.playlist)
     # 逻辑集 id:进度回传约定(vodId=msub:{id} + episodeUrl 含 msubep-{id}-{ep})
     assert [item.play_id for item in request.playlist] == ["msubep-5-1", "msubep-5-2", "msubep-5-3"]
     assert request.async_playback_loader is True
+
+
+def test_build_request_prefers_tvbox_episode_name_for_playlist_display() -> None:
+    payload = _detail_payload()
+    payload["episodes"] = [
+        {
+            "episode": 25,
+            "title": "神魔剑（下）",
+            "episodeName": "25. 神魔剑（下）(751.64 MB)",
+            "present": True,
+        }
+    ]
+
+    request = MsubController(FakeApiClient(detail=payload)).build_request("msub:5")
+
+    item = request.playlist[0]
+    assert item.title == "第25集 神魔剑（下）(751.64 MB)"
+    assert item.episode_display_title == "第25集 神魔剑（下）(751.64 MB)"
+
+
+def test_build_request_uses_tvbox_media_detail_for_metadata_and_msub_playlist() -> None:
+    api = FakeApiClient(
+        detail=_detail_payload(),
+        tvbox_detail={
+            "list": [
+                {
+                    "vod_id": "msub:38",
+                    "vod_name": "仙剑奇侠传三",
+                    "vod_pic": "http://x/poster.jpg",
+                    "vod_remarks": "26集完结 · 评分7.0",
+                    "vod_play_from": "我的追剧$$$百度网盘",
+                    "vod_play_url": (
+                        "01. 当铺大侠(854.56 MB)$msubep-38-1#"
+                        "25. 神魔剑（下）(751.64 MB)$msubep-38-25$$$"
+                        "25 4K.mp4(651.71 MB)$1@193342"
+                    ),
+                    "type_name": "动画,动作冒险",
+                    "vod_actor": "兰陶倚,橙璃",
+                    "vod_content": "千年前，神将飞蓬与魔尊重楼大战。",
+                    "vod_year": "2025",
+                    "vod_area": "CN",
+                    "vod_lang": "zh",
+                }
+            ]
+        },
+    )
+
+    request = MsubController(api).build_request("msub:38")
+
+    assert api.tvbox_detail_calls == ["msub:38"]
+    assert request.vod.vod_name == "仙剑奇侠传三"
+    assert request.vod.vod_pic == "http://x/poster.jpg"
+    assert request.vod.vod_remarks == "26集完结 · 评分7.0"
+    assert request.vod.type_name == "动画,动作冒险"
+    assert request.vod.vod_actor == "兰陶倚,橙璃"
+    assert request.vod.vod_content == "千年前，神将飞蓬与魔尊重楼大战。"
+    assert request.vod.vod_year == "2025"
+    assert [item.title for item in request.playlist] == [
+        "第1集 当铺大侠(854.56 MB)",
+        "第25集 神魔剑（下）(751.64 MB)",
+    ]
+    assert [item.play_id for item in request.playlist] == ["msubep-38-1", "msubep-38-25"]
+
+
+def test_build_request_uses_tvbox_history_episode_name_for_resumed_episode() -> None:
+    payload = _detail_payload()
+    payload["episodes"] = [
+        {"episode": 25, "title": "神魔剑（下）", "present": True}
+    ]
+    history = HistoryRecord(
+        id=1,
+        key="msub:5",
+        vod_name="仙剑奇侠传三",
+        vod_pic="",
+        vod_remarks="25. 神魔剑（下）(751.64 MB)",
+        episode=0,
+        episode_url="msubep-5-25",
+        position=52560,
+        opening=0,
+        ending=0,
+        speed=1.0,
+        create_time=1,
+        source_kind="msub",
+    )
+
+    request = MsubController(
+        FakeApiClient(detail=payload),
+        playback_history_loader=lambda _vod_id: history,
+    ).build_request("msub:5")
+
+    item = request.playlist[0]
+    assert item.title == "第25集 神魔剑（下）(751.64 MB)"
+    assert item.episode_display_title == "第25集 神魔剑（下）(751.64 MB)"
+
+
+def test_build_request_prefixes_episode_number_when_history_name_has_none() -> None:
+    payload = _detail_payload()
+    payload["episodes"] = [
+        {"episode": 25, "title": "神魔剑（下）", "present": True}
+    ]
+    history = HistoryRecord(
+        id=1,
+        key="msub:5",
+        vod_name="仙剑奇侠传三",
+        vod_pic="",
+        vod_remarks="神魔剑（下）",
+        episode=0,
+        episode_url="msubep-5-25",
+        position=52560,
+        opening=0,
+        ending=0,
+        speed=1.0,
+        create_time=1,
+        source_kind="msub",
+    )
+
+    request = MsubController(
+        FakeApiClient(detail=payload),
+        playback_history_loader=lambda _vod_id: history,
+    ).build_request("msub:5")
+
+    item = request.playlist[0]
+    assert item.title == "第25集 神魔剑（下）"
+    assert item.episode_display_title == "第25集 神魔剑（下）"
+    assert GenericDanmakuController(object())._search_query(item, request.playlist) == "凡人修仙传 25集"
 
 
 def test_build_request_start_episode_picks_next_unwatched() -> None:

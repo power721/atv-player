@@ -6340,6 +6340,17 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         if record.source_kind == "direct_parse":
             self._start_open_request(lambda: self._build_parse_request(record.key))
             return
+        if record.source_kind == "msub":
+            if self.msub_controller is None:
+                self.show_error("服务端追剧不可用")
+                return
+
+            def build_request() -> OpenPlayerRequest:
+                request = self.msub_controller.build_request(record.key)
+                return self._apply_request_playback_history_title(request)
+
+            self._start_open_request(build_request)
+            return
         if record.source_kind == "spider_plugin":
             plugin_id = record.source_key or str(record.source_plugin_id or "")
             controller = self._plugin_controller_by_id(plugin_id)

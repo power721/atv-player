@@ -125,6 +125,27 @@ def test_api_client_uses_vod_token_for_vod_requests() -> None:
     assert seen_path["value"] == "/vod/vod-123"
 
 
+def test_api_client_gets_msub_tvbox_detail_with_vod_token_route() -> None:
+    seen: dict[str, str | None] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["id"] = request.url.params.get("id")
+        return httpx.Response(200, json={"list": [{"vod_id": "msub:38"}]})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="auth-123",
+        vod_token="vod-123",
+        username="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert client.get_msub_tvbox_detail("msub:38") == {"list": [{"vod_id": "msub:38"}]}
+    assert seen == {"method": "GET", "path": "/media/vod-123", "id": "msub:38"}
+
+
 def test_api_client_search_alist_items_uses_vod_token_and_keyword_param() -> None:
     seen: dict[str, object] = {}
 

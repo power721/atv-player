@@ -992,7 +992,7 @@ class AppCoordinator(QObject):
     def _build_danmaku_controller_factory(self):
         def factory(*, request=None, source_kind: str = "", source_key: str = "", vod=None, raw_detail=None):
             del request, source_key, raw_detail
-            if source_kind not in {"browse", "telegram", "telegram_channel", "emby", "jellyfin", "feiniu"}:
+            if source_kind not in {"browse", "telegram", "telegram_channel", "emby", "jellyfin", "feiniu", "msub"}:
                 return None
             if vod is not None and is_short_drama_collection(vod.vod_name, vod.category_name, vod.type_name):
                 return None

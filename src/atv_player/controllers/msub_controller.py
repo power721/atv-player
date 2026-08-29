@@ -51,11 +51,22 @@ class MsubController:
         subscription_id = parse_msub_vod_id(vod_id)
         if subscription_id <= 0:
             raise ValueError(f"无效的服务端追剧标识: {vod_id}")
-        payload = self._api_client.get_media_subscription_detail(subscription_id)
-        subscription = payload.get("subscription") or {}
-        media = payload.get("media") or {}
-        name = str(subscription.get("name") or media.get("name") or "").strip() or f"服务端追剧 {subscription_id}"
-        playlist = self._build_playlist(subscription_id, name, payload.get("episodes") or [])
+        tvbox_detail = self._get_tvbox_detail(vod_id)
+        tvbox_vod = _first_tvbox_vod(tvbox_detail)
+        tvbox_name = str(tvbox_vod.get("vod_name") or "").strip()
+        playlist = self._build_tvbox_playlist(subscription_id, tvbox_name, tvbox_vod)
+        if playlist:
+            name = tvbox_name or f"服务端追剧 {subscription_id}"
+            vod = self._build_tvbox_vod(subscription_id, name, tvbox_vod)
+        else:
+            # Old servers do not expose the account-scoped TvBox media endpoint.
+            # Keep the subscription-detail route as a compatibility fallback.
+            payload = self._api_client.get_media_subscription_detail(subscription_id)
+            subscription = payload.get("subscription") or {}
+            media = payload.get("media") or {}
+            name = str(subscription.get("name") or media.get("name") or "").strip() or f"服务端追剧 {subscription_id}"
+            playlist = self._build_playlist(subscription_id, name, payload.get("episodes") or [])
+            vod = self._build_subscription_vod(subscription_id, subscription, media)
         if not playlist:
             raise ValueError(f"《{name}》暂无可播剧集(服务端资源尚未就绪)")
         clicked_index = 0
@@ -67,25 +78,15 @@ class MsubController:
                     len(playlist) - 1,
                 ),
             )
-        cover = str(subscription.get("cover") or media.get("cover") or "")
-        official_episodes = int(subscription.get("officialEpisodes") or 0)
-        official_total = int(subscription.get("officialTotal") or 0)
-        remarks = "服务端追剧"
-        if official_episodes > 0:
-            remarks = f"已播 {official_episodes}/{official_total or '?'} 集"
-        vod = VodItem(
-            vod_id=f"msub:{subscription_id}",
-            vod_name=name,
-            vod_pic=cover,
-            vod_remarks=remarks,
-            vod_content=str(media.get("overview") or ""),
-            vod_year=str(media.get("year") or ""),
-        )
+        history = None
         history_loader = None
         history_saver = None
         if self._playback_history_loader is not None:
-            def history_loader(source_vod_id=vod.vod_id):
-                return self._playback_history_loader(source_vod_id)
+            history = self._playback_history_loader(vod.vod_id)
+            self._apply_history_episode_name(playlist, history)
+
+            def history_loader(saved_history=history):
+                return saved_history
         if self._playback_history_saver is not None:
             def history_saver(history_payload, source_vod_id=vod.vod_id):
                 return self._playback_history_saver(source_vod_id, history_payload)
@@ -107,6 +108,76 @@ class MsubController:
             initial_log_message="服务端追剧 · 换台/切集时按需解析播放源",
         )
 
+    def _get_tvbox_detail(self, vod_id: str) -> dict:
+        loader = getattr(self._api_client, "get_msub_tvbox_detail", None)
+        if not callable(loader):
+            return {}
+        try:
+            payload = loader(vod_id)
+        except Exception:
+            logger.info("TvBox 追剧详情不可用，回退订阅详情 vod_id=%s", vod_id, exc_info=True)
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _build_subscription_vod(subscription_id: int, subscription: dict, media: dict) -> VodItem:
+        cover = str(subscription.get("cover") or media.get("cover") or "")
+        official_episodes = int(subscription.get("officialEpisodes") or 0)
+        official_total = int(subscription.get("officialTotal") or 0)
+        remarks = "服务端追剧"
+        if official_episodes > 0:
+            remarks = f"已播 {official_episodes}/{official_total or '?'} 集"
+        return VodItem(
+            vod_id=f"msub:{subscription_id}",
+            vod_name=str(subscription.get("name") or media.get("name") or "").strip() or f"服务端追剧 {subscription_id}",
+            vod_pic=cover,
+            vod_remarks=remarks,
+            vod_content=str(media.get("overview") or ""),
+            vod_year=str(media.get("year") or ""),
+        )
+
+    def _build_tvbox_vod(self, subscription_id: int, name: str, detail: dict) -> VodItem:
+        return VodItem(
+            vod_id=f"msub:{subscription_id}",
+            vod_name=name,
+            vod_pic=str(detail.get("vod_pic") or ""),
+            vod_tag=str(detail.get("vod_tag") or ""),
+            vod_time=str(detail.get("vod_time") or ""),
+            vod_remarks=str(detail.get("vod_remarks") or "").strip() or "服务端追剧",
+            vod_play_from=str(detail.get("vod_play_from") or ""),
+            vod_play_url=str(detail.get("vod_play_url") or ""),
+            type_name=str(detail.get("type_name") or ""),
+            vod_content=str(detail.get("vod_content") or ""),
+            vod_year=str(detail.get("vod_year") or ""),
+            vod_area=str(detail.get("vod_area") or ""),
+            vod_lang=str(detail.get("vod_lang") or ""),
+            vod_director=str(detail.get("vod_director") or ""),
+            vod_actor=str(detail.get("vod_actor") or ""),
+            dbid=_as_int(detail.get("dbid")),
+            type=_as_int(detail.get("type")),
+        )
+
+    @staticmethod
+    def _apply_history_episode_name(
+        playlist: list[PlayItem], history: HistoryRecord | None
+    ) -> None:
+        if history is None:
+            return
+        episode_name = str(history.vod_remarks or "").strip()
+        token_match = _MSUBEP_RE.search(str(history.episode_url or ""))
+        if not episode_name or token_match is None:
+            return
+        episode_token = token_match.group(0)
+        episode_number = int(token_match.group(2))
+        for item in playlist:
+            item_match = _MSUBEP_RE.search(str(item.play_id or item.original_url or ""))
+            if item_match is None or item_match.group(0) != episode_token:
+                continue
+            display_name = _with_episode_number(episode_number, episode_name)
+            item.title = display_name
+            item.episode_display_title = display_name
+            return
+
     def _build_playlist(self, subscription_id: int, name: str, episodes: list) -> list[PlayItem]:
         playlist: list[PlayItem] = []
         for entry in episodes:
@@ -116,7 +187,10 @@ class MsubController:
             if episode_number <= 0:
                 continue
             episode_title = str(entry.get("title") or "").strip()
-            display_title = f"第{episode_number}集" + (f" {episode_title}" if episode_title else "")
+            tvbox_episode_name = str(entry.get("episodeName") or "").strip()
+            display_title = _with_episode_number(episode_number, tvbox_episode_name) if tvbox_episode_name else (
+                f"第{episode_number}集" + (f" {episode_title}" if episode_title else "")
+            )
             playlist.append(
                 PlayItem(
                     title=display_title,
@@ -125,10 +199,44 @@ class MsubController:
                     vod_id=f"msub:{subscription_id}",
                     play_id=f"msubep-{subscription_id}-{episode_number}",
                     media_title=name,
-                    episode_display_title=episode_title,
+                    episode_display_title=display_title,
                     video_cover_override=str(entry.get("still") or ""),
                 )
             )
+        return playlist
+
+    def _build_tvbox_playlist(self, subscription_id: int, name: str, detail: dict) -> list[PlayItem]:
+        """Extract only the logical ``msubep`` line from TvBox's multi-line URL."""
+        if not detail:
+            return []
+        playlist: list[PlayItem] = []
+        for group in str(detail.get("vod_play_url") or "").split("$$$"):
+            for chunk in group.split("#"):
+                title, separator, raw_play_id = chunk.partition("$")
+                if not separator:
+                    continue
+                token_match = _MSUBEP_RE.search(raw_play_id)
+                if token_match is None or int(token_match.group(1)) != subscription_id:
+                    continue
+                episode_number = int(token_match.group(2))
+                play_id = token_match.group(0)
+                display_title = _with_episode_number(episode_number, title)
+                playlist.append(
+                    PlayItem(
+                        title=display_title,
+                        url="",
+                        original_url=play_id,
+                        vod_id=f"msub:{subscription_id}",
+                        play_id=play_id,
+                        media_title=name,
+                        episode_display_title=display_title,
+                        index=len(playlist),
+                    )
+                )
+            if playlist:
+                # All msub entries belong to one TvBox source line.  Do not add
+                # same-numbered items from the drive fallback lines that follow it.
+                return playlist
         return playlist
 
     def load_playback_item(self, item: PlayItem) -> None:
@@ -175,6 +283,33 @@ class MsubController:
         return options
 
 
+def _with_episode_number(episode_number: int, title: str) -> str:
+    """保留后端剧集名，但确保它以对应集号开头，供弹幕匹配使用。"""
+    value = str(title or "").strip()
+    if not value:
+        return f"第{episode_number}集"
+    if re.match(rf"第\s*0*{episode_number}\s*[集话]", value):
+        return value
+    numeric_prefix = re.match(rf"0*{episode_number}\s*[.、:：-]\s*(.*)", value)
+    if numeric_prefix is not None:
+        value = numeric_prefix.group(1).strip()
+    return f"第{episode_number}集" + (f" {value}" if value else "")
+
+
 def _episode_number_of(item: PlayItem) -> int:
     match = _MSUBEP_RE.search(str(item.play_id or item.original_url or ""))
     return int(match.group(2)) if match else 0
+
+
+def _first_tvbox_vod(payload: dict) -> dict:
+    entries = payload.get("list") if isinstance(payload, dict) else None
+    if not isinstance(entries, list):
+        return {}
+    return next((entry for entry in entries if isinstance(entry, dict)), {})
+
+
+def _as_int(value: object) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0

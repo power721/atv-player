@@ -6230,10 +6230,10 @@ def test_app_coordinator_show_main_wires_following_controller(monkeypatch) -> No
     assert captured["window_kwargs"]["following_update_service"] is not None
 
 
-def test_app_danmaku_controller_factory_supports_browse_source(monkeypatch) -> None:
+def test_app_danmaku_controller_factory_supports_browse_and_msub_sources(monkeypatch) -> None:
     # 文件浏览（browse）此前不在弹幕控制器工厂的白名单里：会话没有弹幕控制器，
     # 对话框集数无人计算、搜索无法执行。browse 与 telegram 等一样按标题+集数搜索，
-    # 应当获得 GenericDanmakuController。
+    # 应当获得 GenericDanmakuController；服务端追剧同样依赖标题+集数搜索。
     class FakeRepo(_FakeRepoBase):
         def load_config(self) -> AppConfig:
             return AppConfig()
@@ -6248,6 +6248,13 @@ def test_app_danmaku_controller_factory_supports_browse_source(monkeypatch) -> N
     )
 
     assert isinstance(controller, app_module.GenericDanmakuController)
+    assert isinstance(
+        factory(
+            source_kind="msub",
+            vod=VodItem(vod_id="msub:38", vod_name="仙剑奇侠传三"),
+        ),
+        app_module.GenericDanmakuController,
+    )
     assert factory(source_kind="youtube", vod=VodItem(vod_id="yt:1", vod_name="视频")) is None
 
 

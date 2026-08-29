@@ -98,6 +98,7 @@ class HistoryPage(QWidget, AsyncGuardMixin):
         self.source_combo = FlatComboBox()
         for label, value in (
             ("全部来源", ""),
+            ("追剧", "msub"),
             ("远程", "remote"),
             ("AList", "browse"),
             ("电报影视", "telegram"),
@@ -406,6 +407,8 @@ class HistoryPage(QWidget, AsyncGuardMixin):
         self.load_history()
 
     def _source_label(self, record: HistoryRecord) -> str:
+        if record.source_kind == "msub":
+            return "追剧"
         if record.source_kind == "telegram":
             return record.source_name or "电报影视"
         if record.source_kind == "browse":

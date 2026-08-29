@@ -8786,6 +8786,110 @@ def test_history_page_lists_and_labels_telegram_channel_source(qtbot) -> None:
     ) == "电报频道"
 
 
+def test_history_page_lists_and_labels_msub_source(qtbot) -> None:
+    from atv_player.ui.history_page import HistoryPage
+
+    class FakeHistoryController:
+        def load_page(self, **kwargs):
+            del kwargs
+            return [], 0
+
+    page = HistoryPage(controller=FakeHistoryController())
+    qtbot.addWidget(page)
+
+    source_values = [
+        page.source_combo.itemData(index)
+        for index in range(page.source_combo.count())
+    ]
+
+    assert "msub" in source_values
+    assert page._source_label(
+        HistoryRecord(
+            id=1,
+            key="msub:38",
+            vod_name="仙剑奇侠传三",
+            vod_pic="",
+            vod_remarks="我的追剧",
+            episode=0,
+            episode_url="msubep-38-25",
+            position=52560,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+            source_kind="msub",
+            source_name="服务端追剧",
+        )
+    ) == "追剧"
+
+
+def test_main_window_open_history_detail_routes_msub_to_msub_controller(
+    qtbot, monkeypatch
+) -> None:
+    class FakeMsubController:
+        def __init__(self) -> None:
+            self.build_calls: list[str] = []
+
+        def build_request(self, vod_id: str) -> OpenPlayerRequest:
+            self.build_calls.append(vod_id)
+            return OpenPlayerRequest(
+                vod=VodItem(vod_id=vod_id, vod_name="仙剑奇侠传三"),
+                playlist=[PlayItem(title="第25集", url="")],
+                clicked_index=0,
+                source_kind="msub",
+                source_mode="detail",
+                source_vod_id=vod_id,
+                async_playback_loader=True,
+            )
+
+    msub = FakeMsubController()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+        msub_controller=msub,
+    )
+    queued_builders = []
+
+    def queue_builder(build_request) -> None:
+        queued_builders.append(build_request)
+
+    monkeypatch.setattr(window, "_start_open_request", queue_builder)
+    qtbot.addWidget(window)
+
+    window.open_history_detail(
+        HistoryRecord(
+            id=1,
+            key="msub:38",
+            vod_name="仙剑奇侠传三",
+            vod_pic="",
+            vod_remarks="我的追剧",
+            episode=0,
+            episode_url="msubep-38-25",
+            position=52560,
+            opening=0,
+            ending=0,
+            speed=1.0,
+            create_time=1,
+            source_kind="msub",
+            source_name="服务端追剧",
+        )
+    )
+
+    assert len(queued_builders) == 1
+    request = queued_builders[0]()
+    assert msub.build_calls == ["msub:38"]
+    assert request.source_kind == "msub"
+
+
 def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monkeypatch) -> None:
     class FakeSignal:
         def connect(self, _callback) -> None:
