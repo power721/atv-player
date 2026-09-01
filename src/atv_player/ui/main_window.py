@@ -5612,6 +5612,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             "browse": "文件浏览",
             "plugin": "插件",
             "spider_plugin": "插件",
+            "msub": "追剧",
             "telegram": "电报影视",
             "telegram_channel": "电报频道",
             "bilibili": "B站",
@@ -5759,17 +5760,17 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             context={"source_kind": source_kind, "source_key": source_key},
         )
 
-    def _player_following_identity(self, item: PlayItem) -> tuple[str, str, str] | None:
+    def _player_following_identity(self, item: PlayItem) -> tuple[str, str, str, str] | None:
         if self.player_window is None or self.player_window.session is None:
             return None
         session = self.player_window.session
         vod = session.vod
         source_kind = session.source_kind or "browse"
         source_key = session.source_key or ""
-        identity = str(vod.vod_id or item.vod_id or item.media_title or item.title or "").strip()
-        if not identity:
+        vod_id = str(vod.vod_id or item.vod_id or item.media_title or item.title or "").strip()
+        if not vod_id:
             return None
-        return source_kind, source_key, f"{source_kind}:{source_key}:{identity}"
+        return source_kind, source_key, f"{source_kind}:{source_key}:{vod_id}", vod_id
 
     def _player_following_external_ids(self, item: PlayItem) -> dict[str, str]:
         if self.player_window is None or self.player_window.session is None:
@@ -5793,10 +5794,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         identity = self._player_following_identity(item)
         if identity is None:
             return False
-        source_kind, source_key, provider_id = identity
+        # source_key 可能自带冒号(msub=服务器 URL),不能从 provider_id 反解 vod_id
+        source_kind, source_key, provider_id, target_vod_id = identity
         if getattr(record, "provider", "") == "player" and getattr(record, "provider_id", "") == provider_id:
             return True
-        target_vod_id = provider_id.split(":", 2)[-1]
         for binding in list(getattr(record, "source_bindings", []) or []):
             if (
                 getattr(binding, "source_kind", "") == source_kind

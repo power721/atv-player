@@ -806,6 +806,84 @@ def test_main_window_reports_following_progress_only_after_threshold(qtbot) -> N
     assert following.progress_calls == [(7, 24, 20)]
 
 
+def test_main_window_following_progress_matches_msub_binding_with_url_source_key(
+    qtbot,
+) -> None:
+    class MsubProgressFollowingController(FakeFollowingController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.progress_calls: list[tuple[int, int, int]] = []
+
+        def load_page(self, *, page: int, size: int, keyword: str, only_updates: bool):
+            del page, size, keyword, only_updates
+            return [
+                SimpleNamespace(
+                    record=FollowingRecord(
+                        id=11,
+                        title="凡人修仙传",
+                        provider="douban",
+                        provider_id="26924326",
+                        current_season_number=1,
+                        current_episode=45,
+                        season_number=1,
+                        source_bindings=[
+                            FollowingSourceBinding(
+                                source_kind="msub",
+                                source_key="http://192.168.50.60:4567",
+                                vod_id="msub:38",
+                            )
+                        ],
+                    )
+                )
+            ], 1
+
+        def record_playback_progress(
+            self,
+            following_id: int,
+            *,
+            current_season_number: int,
+            current_episode: int,
+            position_seconds: int,
+        ) -> None:
+            del current_season_number
+            self.progress_calls.append(
+                (following_id, current_episode, position_seconds)
+            )
+
+    following = MsubProgressFollowingController()
+    window = MainWindow(
+        FakeStaticController(),
+        DummyHistoryController(),
+        FakePlayerController(),
+        AppConfig(),
+        following_controller=following,
+    )
+    qtbot.addWidget(window)
+
+    playlist = [
+        PlayItem(title=f"第{i}集", url="", vod_id="msub:38") for i in range(1, 61)
+    ]
+    item = playlist[57]
+    window.player_window = SimpleNamespace(
+        session=PlayerSession(
+            vod=VodItem(vod_id="msub:38", vod_name="凡人修仙传"),
+            playlist=playlist,
+            start_index=0,
+            start_position_seconds=0,
+            speed=1.0,
+            source_kind="msub",
+            source_key="http://192.168.50.60:4567",
+        ),
+        current_index=57,
+    )
+
+    window._report_player_item_following_progress(
+        item, position_seconds=20, duration_seconds=100
+    )
+
+    assert following.progress_calls == [(11, 58, 20)]
+
+
 def test_main_window_reports_following_playback_source_after_threshold(qtbot) -> None:
     class SourceTrackingFollowingController(FakeFollowingController):
         def __init__(self) -> None:
@@ -8890,6 +8968,26 @@ def test_main_window_open_history_detail_routes_msub_to_msub_controller(
     request = queued_builders[0]()
     assert msub.build_calls == ["msub:38"]
     assert request.source_kind == "msub"
+    assert window._prepare_request_for_open(request).source_display_name == "追剧"
+
+
+def test_main_window_msub_favorite_source_name_is_zhuiju(qtbot) -> None:
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=SearchableController([]),
+        live_controller=FakeStaticController(),
+        emby_controller=SearchableController([]),
+        jellyfin_controller=SearchableController([]),
+        feiniu_controller=SearchableController([]),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        plugin_manager=FakePluginManager(),
+    )
+    qtbot.addWidget(window)
+
+    assert window._favorite_source_name("msub") == "追剧"
 
 
 def test_main_window_open_player_creates_session_without_blocking_ui(qtbot, monkeypatch) -> None:
