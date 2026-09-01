@@ -214,6 +214,38 @@ def test_push_only_uploads_latest_100_records() -> None:
     assert "vod-1" not in pushed_ids
 
 
+def test_push_keeps_max_version_for_duplicate_sync_identities() -> None:
+    # telegram 的 '' 与 csp_TgDouBan 两行映射同一同步身份 (site, csp_TgDouBan, vod)。
+    # 若旧行把快照版本压回去,新行每轮都判"有变更"而无限重推(服务端持续 skip not newer)。
+    newer = _record(
+        key="vod-1", source_kind="telegram", source_key="csp_TgDouBan", updated_at=200
+    )
+    older = _record(key="vod-1", source_kind="telegram", source_key="", updated_at=100)
+    api = FakeApi()
+    service = PlaybackHistorySyncService(api, FakeRepository([newer, older]))
+
+    service._push()
+    service._push()
+
+    assert len(api.pushed) == 1
+    assert [payload["vodId"] for payload in api.pushed[0]] == ["vod-1"]
+    assert api.pushed[0][0]["updatedAt"] == 200
+    assert service._pushed_versions[("site", "csp_TgDouBan", "vod-1")] == 200
+
+
+def test_push_sends_one_payload_for_equal_version_duplicates() -> None:
+    row_a = _record(
+        key="vod-2", source_kind="telegram", source_key="csp_TgDouBan", updated_at=150
+    )
+    row_b = _record(key="vod-2", source_kind="telegram", source_key="", updated_at=150)
+    api = FakeApi()
+    service = PlaybackHistorySyncService(api, FakeRepository([row_a, row_b]))
+
+    service._push()
+
+    assert [payload["vodId"] for payload in api.pushed[0]] == ["vod-2"]
+
+
 def test_record_aging_out_of_latest_100_is_not_pushed_as_deletion() -> None:
     records = [_record(key=f"vod-{index}", updated_at=index) for index in range(1, 101)]
     repository = FakeRepository(records)

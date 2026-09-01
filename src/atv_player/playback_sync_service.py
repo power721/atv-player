@@ -259,6 +259,12 @@ class PlaybackHistorySyncService(QObject):
                 continue
             payload = self._to_payload(record, record_key[0], record_key[1])
             updated_at = int(payload.get("updatedAt", 0) or 0)
+            # 同一同步身份可能对应多行本地记录(source_key 别名迁移遗留的 ''/csp_* 双行,
+            # 且别名解析后归并为同一 site 身份)。扫描按 create_time 新→旧,后来的行只会
+            # 更旧:快照版本必须只升不降,否则旧行把快照钉回旧版本,新行每个 tick 都被判
+            # "有变更"而无限重推同一进度(2026-08-31 服务端每 30s 重复 skip not newer)。
+            if updated_at <= current_versions.get(record_key, -1):
+                continue
             current_versions[record_key] = updated_at
             if updated_at > self._pushed_versions.get(record_key, -1):
                 changed.append((record_key, updated_at, payload))
