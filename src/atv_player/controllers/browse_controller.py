@@ -3,8 +3,9 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Callable
+from urllib.parse import urlparse
 
-from atv_player.models import OpenPlayerRequest, PlayItem, PlaybackSource, PlaybackSourceGroup, VodItem
+from atv_player.models import ExternalSubtitleOption, OpenPlayerRequest, PlayItem, PlaybackSource, PlaybackSourceGroup, VodItem
 from atv_player.playlist_sorting import parse_size_bytes
 from atv_player.share_types import get_share_type_name
 from atv_player.time_utils import format_local_datetime
@@ -30,6 +31,56 @@ def _safe_rating(value: object) -> float:
     return rating if math.isfinite(rating) and rating > 0 else 0.0
 
 
+_SUBTITLE_URL_SUFFIX_RE = re.compile(r"\.(srt|vtt|ass|ssa)(?:[?#]|$)", re.IGNORECASE)
+
+
+def _external_subtitle_format_hint(entry: dict, url: str) -> str:
+    """播放器按 format 决定缓存文件后缀;网盘直链路径常无扩展名,优先 ext/format。"""
+    url_match = _SUBTITLE_URL_SUFFIX_RE.search(urlparse(url).path)
+    if url_match is not None:
+        return url_match.group(1).lower()
+    ext = str(entry.get("ext") or "").strip().lstrip(".").lower()
+    if ext:
+        return ext
+    format_name = str(entry.get("format") or "").strip().lower()
+    if "subrip" in format_name or format_name == "srt":
+        return "srt"
+    if "vtt" in format_name:
+        return "vtt"
+    if "ass" in format_name:
+        return "ass"
+    if "ssa" in format_name:
+        return "ssa"
+    return ""
+
+
+def _map_play_item_external_subtitles(payload: dict) -> list[ExternalSubtitleOption]:
+    """解析网盘文件详情里的同目录外挂字幕(服务端 gui/web 详情下发,直链带时效)。"""
+    raw_subs = payload.get("subs")
+    if not isinstance(raw_subs, list):
+        return []
+    options: list[ExternalSubtitleOption] = []
+    for entry in raw_subs:
+        if not isinstance(entry, dict):
+            continue
+        url = str(entry.get("url") or "").strip()
+        if not url:
+            continue
+        lang = str(entry.get("lang") or "").strip()
+        label = str(entry.get("name") or "").strip() or lang or "外挂字幕"
+        options.append(
+            ExternalSubtitleOption(
+                name=f"{label} [网盘]",
+                lang=lang,
+                url=url,
+                format=_external_subtitle_format_hint(entry, url),
+                # 复用 spider 语义:内容源自带外挂字幕,播放时自动挂载(可在字幕菜单关闭)。
+                source="spider",
+            )
+        )
+    return options
+
+
 def _map_play_item(payload: dict, index: int) -> PlayItem:
     title = str(payload.get("title") or payload.get("name") or "")
     original_title = str(payload.get("name") or payload.get("title") or "")
@@ -43,6 +94,7 @@ def _map_play_item(payload: dict, index: int) -> PlayItem:
         rating=_safe_rating(payload.get("rating")),
         time=str(payload.get("time") or ""),
         vod_id=str(payload.get("vod_id") or ""),
+        external_subtitles=_map_play_item_external_subtitles(payload),
     )
 
 
@@ -353,6 +405,8 @@ class BrowseController:
         clicked_playlist_item.url = self._first_play_url(resolved_vod)
         if not clicked_playlist_item.url:
             raise ValueError(f"没有可用的播放地址: {clicked_item.vod_name}")
+        if not clicked_playlist_item.external_subtitles and resolved_vod.items and resolved_vod.items[0].external_subtitles:
+            clicked_playlist_item.external_subtitles = list(resolved_vod.items[0].external_subtitles)
         history_loader, history_saver = self._history_callbacks(clicked_item.vod_id)
         return OpenPlayerRequest(
             vod=resolved_vod,

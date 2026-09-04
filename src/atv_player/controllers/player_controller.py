@@ -594,6 +594,9 @@ class PlayerController:
         if not url:
             return None
         play_item.url = url
+        # 浏览/网盘流程:外挂字幕随详情一起解析(直链带时效),跟着播放地址一起落到播放项。
+        if resolved_vod.items and resolved_vod.items[0].external_subtitles and not play_item.external_subtitles:
+            play_item.external_subtitles = list(resolved_vod.items[0].external_subtitles)
         return resolved_vod
 
     def report_progress(

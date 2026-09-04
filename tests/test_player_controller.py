@@ -2,6 +2,7 @@ import logging
 
 from atv_player.controllers.player_controller import PlayerController, PlayerSession
 from atv_player.models import (
+    ExternalSubtitleOption,
     HistoryRecord,
     PlaybackDetailField,
     PlaybackSource,
@@ -385,6 +386,43 @@ def test_player_controller_resolve_play_item_detail_handles_missing_detail() -> 
     assert resolved is None
     assert playlist[0].url == "http://m/existing.m3u8"
     assert session.resolved_vod_by_id == {"1$91483$1": None}
+
+
+def test_player_controller_resolve_play_item_detail_propagates_external_subtitles() -> None:
+    controller = PlayerController(FakeApiClient())
+    vod = VodItem(vod_id="movie-1", vod_name="Movie")
+    playlist = [PlayItem(title="Episode 1", url="", vod_id="1$91483$1")]
+
+    def detail_resolver(item: PlayItem) -> VodItem:
+        return VodItem(
+            vod_id=item.vod_id,
+            vod_name="Resolved Episode",
+            vod_play_url="http://m/1.m3u8",
+            items=[
+                PlayItem(
+                    title="Episode 1",
+                    url="http://m/1.m3u8",
+                    vod_id=item.vod_id,
+                    external_subtitles=[
+                        ExternalSubtitleOption(
+                            name="简体中文 [网盘]",
+                            lang="chs",
+                            url="https://cdn.123295.com/sub.chs.ass",
+                            format="ass",
+                            source="spider",
+                        )
+                    ],
+                )
+            ],
+        )
+
+    session = controller.create_session(vod, playlist, clicked_index=0, detail_resolver=detail_resolver)
+
+    resolved = controller.resolve_play_item_detail(session, playlist[0])
+
+    assert resolved is not None
+    assert playlist[0].url == "http://m/1.m3u8"
+    assert [subtitle.name for subtitle in playlist[0].external_subtitles] == ["简体中文 [网盘]"]
 
 
 def test_player_controller_skips_local_history_when_session_disables_it() -> None:

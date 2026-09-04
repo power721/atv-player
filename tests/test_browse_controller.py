@@ -525,3 +525,93 @@ def test_delete_file_uses_backend_video_id_from_vod_id() -> None:
     controller.delete_file(VodItem(vod_id="1$91483$1", vod_name="旧名.mkv"))
 
     assert api.delete_video_calls == ["91483"]
+
+
+def _drive_file_detail_payload() -> dict:
+    return {
+        "list": [
+            {
+                "vod_id": "1$210816$1",
+                "vod_name": "叶卡捷琳娜大帝.2014.S01E01.1080p.WEB-DL.H.264.mkv",
+                "vod_tag": "file",
+                "vod_play_url": "http://192.168.50.60:4567/p/1/abc",
+                "items": [
+                    {
+                        "title": "叶卡捷琳娜大帝.2014.S01E01.1080p.WEB-DL.H.264.mkv",
+                        "url": "http://192.168.50.60:4567/p/1/abc",
+                        "path": "/我的123分享/叶卡捷琳娜大帝/S01E01.mkv",
+                        "subs": [
+                            {
+                                "name": "简体中文",
+                                "lang": "chs",
+                                "format": "text/x-ssa",
+                                "ext": "ass",
+                                "url": "https://cdn.123295.com/c-m8002?filename=sub.chs.ass",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+
+
+def test_build_request_from_detail_carries_drive_external_subtitles() -> None:
+    api = FakeApiClient()
+    api.detail_payload = _drive_file_detail_payload()
+    controller = BrowseController(api)
+
+    request = controller.build_request_from_detail("1$210816$1")
+
+    subtitle = request.playlist[0].external_subtitles[0]
+    assert subtitle.name == "简体中文 [网盘]"
+    assert subtitle.lang == "chs"
+    assert subtitle.url == "https://cdn.123295.com/c-m8002?filename=sub.chs.ass"
+    assert subtitle.format == "ass"
+    assert subtitle.source == "spider"
+
+
+def test_build_request_from_folder_item_propagates_external_subtitles() -> None:
+    api = FakeApiClient()
+    api.detail_payload = _drive_file_detail_payload()
+    controller = BrowseController(api)
+    clicked = VodItem(
+        vod_id="1$210816$1",
+        vod_name="叶卡捷琳娜大帝.2014.S01E01.1080p.WEB-DL.H.264.mkv",
+        type=2,
+        vod_tag="file",
+        path="/我的123分享/叶卡捷琳娜大帝/叶卡捷琳娜大帝.2014.S01E01.1080p.WEB-DL.H.264.mkv",
+    )
+
+    request = controller.build_request_from_folder_item(clicked, [clicked])
+
+    assert request.playlist[0].url == "http://192.168.50.60:4567/p/1/abc"
+    assert [subtitle.url for subtitle in request.playlist[0].external_subtitles] == [
+        "https://cdn.123295.com/c-m8002?filename=sub.chs.ass"
+    ]
+
+
+def test_drive_external_subtitle_format_prefers_url_suffix() -> None:
+    api = FakeApiClient()
+    api.detail_payload = _drive_file_detail_payload()
+    api.detail_payload["list"][0]["items"][0]["subs"] = [
+        {"name": "English", "lang": "eng", "url": "https://cdn.example.com/sub.en.srt"}
+    ]
+    controller = BrowseController(api)
+
+    request = controller.build_request_from_detail("1$210816$1")
+
+    subtitle = request.playlist[0].external_subtitles[0]
+    assert subtitle.format == "srt"
+    assert subtitle.name == "English [网盘]"
+
+
+def test_drive_external_subtitles_missing_or_invalid_entries_are_ignored() -> None:
+    api = FakeApiClient()
+    api.detail_payload = _drive_file_detail_payload()
+    api.detail_payload["list"][0]["items"][0]["subs"] = ["bad-entry", {"name": "无链接"}, None]
+    controller = BrowseController(api)
+
+    request = controller.build_request_from_detail("1$210816$1")
+
+    assert request.playlist[0].external_subtitles == []
