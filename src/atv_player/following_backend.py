@@ -12,6 +12,7 @@ import re
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -75,19 +76,87 @@ class _SubscriptionIndex:
             index[key] = sub
 
     def match(self, record) -> dict[str, Any] | None:
-        season = int(getattr(record, "season_number", 0) or 0) or 1
-        external_ids = {str(k): str(v) for k, v in dict(getattr(record, "external_ids", {}) or {}).items() if str(v or "").strip()}
-        tmdb_id = _tmdb_series_id(external_ids.get("tmdb"))
-        if tmdb_id:
-            sub = self._by_tmdb.get((tmdb_id, season))
+        indexes = {"tmdb": self._by_tmdb, "douban": self._by_douban, "title": self._by_title}
+        for kind, value, season in _record_match_keys(record):
+            sub = indexes[kind].get((value, season))
             if sub is not None:
                 return sub
-        douban_id = _as_int(external_ids.get("douban"))
-        if douban_id:
-            sub = self._by_douban.get((douban_id, season))
-            if sub is not None:
-                return sub
-        return self._by_title.get((_normalize_title(getattr(record, "title", "")), season))
+        return None
+
+
+def _record_match_keys(record) -> list[tuple[str, object, int]]:
+    """本地记录的可匹配键(tmdb → 豆瓣 → 归一化标题,均带季),正反向匹配共用。
+
+    豆瓣键保持 int、tmdb/标题为 str,与 _SubscriptionIndex 各索引的键型一致。
+    """
+    keys: list[tuple[str, object, int]] = []
+    season = int(getattr(record, "season_number", 0) or 0) or 1
+    external_ids = {str(k): str(v) for k, v in dict(getattr(record, "external_ids", {}) or {}).items() if str(v or "").strip()}
+    tmdb_id = _tmdb_series_id(external_ids.get("tmdb"))
+    if tmdb_id:
+        keys.append(("tmdb", tmdb_id, season))
+    douban_id = _as_int(external_ids.get("douban"))
+    if douban_id:
+        keys.append(("douban", douban_id, season))
+    title = _normalize_title(getattr(record, "title", ""))
+    if title:
+        keys.append(("title", title, season))
+    return keys
+
+
+def find_missing_subscriptions(subscriptions: list[dict[str, Any]], records) -> list[dict[str, Any]]:
+    """筛选没有任何本地追更记录对应的服务端订阅(导入候选)。
+
+    匹配键与 _SubscriptionIndex 相同(tmdb id → 豆瓣 id → 归一化标题,均带季),
+    保证"同步时能匹配上的订阅导入时必然被判为已存在",两条路径不会各说各话。
+    """
+    record_keys: set[tuple[str, object, int]] = set()
+    for record in records:
+        record_keys.update(_record_match_keys(record))
+    missing: list[dict[str, Any]] = []
+    for sub in subscriptions:
+        season = _as_int(sub.get("season")) or 1
+        matched = False
+        tmdb_id = _tmdb_series_id(sub.get("metaId")) if str(sub.get("metaProvider") or "") == "tmdb" else ""
+        if tmdb_id and ("tmdb", tmdb_id, season) in record_keys:
+            matched = True
+        douban_id = _as_int(sub.get("doubanId"))
+        if not matched and douban_id and ("douban", douban_id, season) in record_keys:
+            matched = True
+        if not matched and ("title", _normalize_title(sub.get("name")), season) in record_keys:
+            matched = True
+        if not matched:
+            missing.append(sub)
+    return missing
+
+
+@dataclass(slots=True)
+class BackendSubscriptionImportResult:
+    """从服务端订阅导入本地追更的结果汇总。"""
+
+    total: int = 0
+    imported: int = 0
+    skipped: int = 0
+    cancelled: bool = False
+    failures: list[tuple[str, str]] = field(default_factory=list)
+    skips: list[tuple[str, str]] = field(default_factory=list)
+
+    @property
+    def summary_text(self) -> str:
+        parts = [f"服务端待导入 {self.total} 条", f"新增 {self.imported} 条"]
+        if self.skipped:
+            parts.append(f"跳过 {self.skipped} 条")
+        if self.failures:
+            parts.append(f"失败 {len(self.failures)} 条")
+        text = "，".join(parts)
+        if self.cancelled:
+            text = "已取消 · " + text
+        for name, reason in [*self.skips, *self.failures][:5]:
+            text += f"\n· {name or '未命名订阅'}: {reason}"
+        extra = len(self.skips) + len(self.failures) - 5
+        if extra > 0:
+            text += f"\n· …其余 {extra} 条见日志"
+        return text
 
 
 class FollowingBackendSyncService(QObject):
@@ -202,19 +271,32 @@ class FollowingBackendSyncService(QObject):
 
     def _apply(self, record, sub: dict[str, Any], now: int) -> bool:
         try:
-            return bool(
-                self._repository.apply_backend_signal(
-                    record.id,
-                    subscription_id=_as_int(sub.get("id")),
-                    playable_episodes=_as_int(sub.get("currentEpisodes")),
-                    source_key=str(getattr(self._api, "base_url", "") or ""),
-                    source_name="追剧",
-                    updated_at=now,
-                )
-            )
+            return self.apply_subscription(record.id, sub, now=now)
         except Exception:
             logger.warning("following backend apply failed id=%s", getattr(record, "id", "?"), exc_info=True)
             return False
+
+    # ---- 手动导入支持 ----
+
+    def is_enabled(self) -> bool:
+        return bool(self._settings().get("enabled"))
+
+    def list_subscriptions(self) -> list[dict[str, Any]]:
+        """直连服务端拉订阅列表,供手动导入路径使用(开关由调用方把关)。"""
+        return list(self._api.list_media_subscriptions())
+
+    def apply_subscription(self, following_id: int, subscription: dict[str, Any], *, now: int | None = None) -> bool:
+        """把服务端订阅信号(可播集数 + msub 绑定)并入指定本地追更记录。"""
+        return bool(
+            self._repository.apply_backend_signal(
+                following_id,
+                subscription_id=_as_int(subscription.get("id")),
+                playable_episodes=_as_int(subscription.get("currentEpisodes")),
+                source_key=str(getattr(self._api, "base_url", "") or ""),
+                source_name="追剧",
+                updated_at=now if now is not None else self._now(),
+            )
+        )
 
     def _auto_subscribe(self, record) -> dict[str, Any] | None:
         cache_key = (str(getattr(record, "provider", "") or ""), str(getattr(record, "provider_id", "") or ""))

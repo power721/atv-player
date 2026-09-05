@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import re
 import time
 from dataclasses import dataclass, replace
@@ -11,6 +12,12 @@ from datetime import datetime, timedelta
 from atv_player.ai.enrichment import FollowingDetailSummaryInput
 from atv_player.danmaku.utils import infer_playlist_episode_number
 from atv_player.episode_titles import extract_season_number
+from atv_player.following_backend import (
+    BackendSubscriptionImportResult,
+    _as_int,
+    _tmdb_series_id,
+    find_missing_subscriptions,
+)
 from atv_player.following_metadata import (
     FollowingMetadataGateway,
     _media_kind_category,
@@ -52,6 +59,8 @@ from atv_player.metadata.discovery import (
 from atv_player.metadata.models import MetadataQuery, MetadataRecord
 from atv_player.metadata.scrape import MetadataScrapeCandidate
 from atv_player.models import PlayItem, VodItem
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -1285,6 +1294,95 @@ class FollowingController:
         if self._backend_sync_service is not None:
             self._backend_sync_service.sync_blocking()
         return results
+
+    # ---- 服务端订阅导入 ----
+
+    def backend_sync_available(self) -> bool:
+        return self._backend_sync_service is not None and self._backend_sync_service.is_enabled()
+
+    def import_backend_subscriptions(
+        self,
+        *,
+        progress_callback=None,
+        cancel_callback=None,
+    ) -> BackendSubscriptionImportResult:
+        """把服务端追剧系统中没有本地记录的订阅导入为本地追更记录。
+
+        逐条走 add_candidate 标准链路(元数据水合 + 快照 + upsert),
+        成功后立即 apply_subscription 写入 msub 绑定与服务端可播集数。
+        """
+        if self._backend_sync_service is None:
+            raise RuntimeError("服务端追剧联动不可用")
+        subscriptions = self._backend_sync_service.list_subscriptions()
+        records, _total = self._repository.load_page(page=1, size=5000, keyword="", only_updates=False)
+        pending = find_missing_subscriptions(subscriptions, records)
+        result = BackendSubscriptionImportResult(total=len(pending))
+        seen_identities: set[tuple[str, str]] = set()
+        for position, sub in enumerate(pending):
+            name = str(sub.get("name") or "").strip()
+            if cancel_callback is not None and cancel_callback():
+                result.cancelled = True
+                break
+            if progress_callback is not None:
+                progress_callback(position, len(pending), f"正在导入 {name or '未命名订阅'}...")
+            candidate = self._backend_import_candidate(sub)
+            if candidate is None:
+                result.skipped += 1
+                result.skips.append((name, "缺少可识别的剧集标识,且按标题搜索无结果"))
+                continue
+            identity = (str(candidate.provider or ""), str(candidate.provider_id or ""))
+            if identity in seen_identities:
+                # 同一部剧的多个服务端订阅(如各季分开订阅)只建一条本地记录。
+                result.skipped += 1
+                result.skips.append((name, "与前一订阅指向同一部剧,已合并"))
+                continue
+            seen_identities.add(identity)
+            try:
+                record = self.add_candidate(candidate)
+            except Exception as exc:
+                logger.warning("following backend import failed title=%s: %s", name, exc, exc_info=True)
+                result.failures.append((name, str(exc) or exc.__class__.__name__))
+                continue
+            self._backend_sync_service.apply_subscription(record.id, sub)
+            result.imported += 1
+        if progress_callback is not None:
+            progress_callback(len(pending), len(pending), "导入完成")
+        return result
+
+    def _backend_import_candidate(self, sub):
+        """服务端订阅 → 可加入追更的元数据候选;tmdb/bangumi 直连,其余按标题搜 tmdb 兜底。"""
+        season = _as_int(sub.get("season")) or 1
+        provider = str(sub.get("metaProvider") or "").strip()
+        meta_id = str(sub.get("metaId") or "").strip()
+        name = str(sub.get("name") or "").strip()
+        if provider == "tmdb":
+            tmdb_id = _tmdb_series_id(meta_id)
+            if tmdb_id:
+                return MetadataScrapeCandidate(
+                    provider="tmdb",
+                    provider_label="TMDB",
+                    provider_id=f"tv:{tmdb_id}",
+                    title=name,
+                    raw={"season_number": season},
+                )
+        elif provider == "bangumi" and meta_id:
+            return MetadataScrapeCandidate(
+                provider="bangumi",
+                provider_label="Bangumi",
+                provider_id=f"subject:{meta_id}",
+                title=name,
+            )
+        if not name or self._metadata_search_service is None:
+            return None
+        query = MetadataQuery(title=name, category_name="剧集")
+        groups = self._metadata_search_service.search(query, provider_filter="tmdb")
+        candidates = [item for group in groups for item in list(getattr(group, "items", []) or [])]
+        if not candidates:
+            return None
+        candidate = candidates[0]
+        raw = dict(getattr(candidate, "raw", {}) or {})
+        raw["season_number"] = season
+        return replace(candidate, title=str(getattr(candidate, "title", "") or name), raw=raw)
 
     def delete(self, following_id: int) -> None:
         self._repository.delete(following_id)

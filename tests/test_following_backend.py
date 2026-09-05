@@ -1,14 +1,18 @@
 # ruff: noqa: E501
-"""服务端追剧信号同步(FollowingBackendSyncService)单测:匹配优先级/负缓存/自动订阅/信号并入。"""
+"""服务端追剧信号同步(FollowingBackendSyncService)单测:匹配优先级/负缓存/自动订阅/信号同步/订阅导入。"""
 from pathlib import Path
+
+import pytest
 
 from atv_player.following_backend import (
     FollowingBackendSyncService,
     _SubscriptionIndex,
     _tmdb_series_id,
+    find_missing_subscriptions,
 )
 from atv_player.following_models import FollowingRecord
 from atv_player.following_repository import FollowingRepository
+from atv_player.metadata.scrape import MetadataScrapeCandidate, MetadataScrapeGroup
 
 
 def _record(**overrides):
@@ -253,3 +257,188 @@ def test_sync_soon_respects_interval_and_disabled(tmp_path: Path, monkeypatch) -
     service._sync_lock.acquire()
     service._sync_lock.release()
     assert api.list_calls == 2
+
+
+# ---- find_missing_subscriptions(导入候选筛选) ----
+
+
+def test_find_missing_subscriptions_filters_matched_keys() -> None:
+    records = [_record()]  # tmdb 456 / douban 789 / 标题 凡人修仙传,季 1
+    subs = [
+        _sub(),  # tmdb 匹配
+        _sub(id=8, metaProvider="douban", metaId="", doubanId=789, name="别名"),  # 豆瓣匹配
+        _sub(id=9, metaProvider="", metaId="", doubanId=0, name="凡人修仙传"),  # 标题匹配
+        _sub(id=10, doubanId=0, name="末日地堡", metaId="999"),  # 无任何匹配 → 待导入
+        _sub(id=11, doubanId=0, metaId="456", season=3),  # 同剧不同季 → 待导入
+    ]
+    missing = find_missing_subscriptions(subs, records)
+    assert [sub["id"] for sub in missing] == [10, 11]
+
+
+def test_find_missing_subscriptions_consistent_with_index() -> None:
+    records = [_record(), _record(title="仙剑三", external_ids={"tmdb": "111"}, provider="tmdb", provider_id="tv:111")]
+    subs = [
+        _sub(),
+        _sub(id=10, doubanId=0, name="末日地堡", metaId="999"),
+        _sub(id=11, metaProvider="", metaId="", doubanId=0, name="仙剑三"),
+    ]
+    index = _SubscriptionIndex(subs)
+    matched_ids = set()
+    for record in records:
+        sub = index.match(record)
+        if sub is not None:
+            matched_ids.add(sub["id"])
+    missing_ids = {sub["id"] for sub in find_missing_subscriptions(subs, records)}
+    assert missing_ids == {10}
+    assert matched_ids == {7, 11}
+    assert not matched_ids & missing_ids
+
+
+# ---- service 公开方法(list/apply/is_enabled) ----
+
+
+def test_service_public_methods(tmp_path: Path) -> None:
+    repository = FollowingRepository(tmp_path / "app.db")
+    record_id = repository.upsert(_record())
+    api = FakeApiClient(subscriptions=[_sub()])
+    service = _service(api, repository)
+    assert service.is_enabled() is True
+    assert not _service(api, repository, enabled=False).is_enabled()
+    assert service.list_subscriptions() == [_sub()]
+    assert service.apply_subscription(record_id, _sub()) is True
+    record = repository.get(record_id)
+    bindings = [binding for binding in record.source_bindings if binding.source_kind == "msub"]
+    assert bindings and bindings[0].vod_id == "msub:7" and record.latest_episode == 5
+
+
+# ---- FollowingController.import_backend_subscriptions(导入编排) ----
+
+
+class FakeBackendSyncService:
+    def __init__(self, subscriptions) -> None:
+        self.subscriptions = list(subscriptions)
+        self.applied: list[tuple[int, dict]] = []
+
+    def is_enabled(self) -> bool:
+        return True
+
+    def list_subscriptions(self):
+        return list(self.subscriptions)
+
+    def apply_subscription(self, following_id, subscription, *, now=None):
+        self.applied.append((following_id, dict(subscription)))
+        return True
+
+
+class FakeMetadataSearchService:
+    """按标题返回预置候选;无水合/详情能力,保持 add_candidate 走最短路径。"""
+
+    def __init__(self, results_by_title: dict[str, list] | None = None) -> None:
+        self.results_by_title = results_by_title or {}
+        self.search_queries: list[tuple[str, str]] = []
+
+    def search(self, query, provider_filter: str = "", *, cache_only: bool = False):
+        self.search_queries.append((str(query.title), provider_filter))
+        items = list(self.results_by_title.get(str(query.title), []))
+        return [MetadataScrapeGroup(provider="tmdb", provider_label="TMDB", items=items)]
+
+
+def _controller(tmp_path: Path, *, backend_service, metadata_service=None):
+    from atv_player.controllers.following_controller import FollowingController
+
+    return FollowingController(
+        FollowingRepository(tmp_path / "app.db"),
+        metadata_search_service=metadata_service if metadata_service is not None else FakeMetadataSearchService(),
+        backend_sync_service=backend_service,
+    )
+
+
+def test_import_backend_subscriptions_creates_record_and_binds(tmp_path: Path) -> None:
+    backend = FakeBackendSyncService([_sub(id=21, name="末日地堡", metaId="tv:888", season=3, currentEpisodes=7)])
+    controller = _controller(tmp_path, backend_service=backend)
+    events: list[tuple[int, int, str]] = []
+
+    result = controller.import_backend_subscriptions(progress_callback=lambda *args: events.append(args))
+
+    assert result.total == 1 and result.imported == 1 and result.skipped == 0 and not result.cancelled
+    assert events[-1] == (1, 1, "导入完成")
+    record = controller._repository.get_by_identity("tmdb", "tv:888")
+    assert record is not None
+    assert record.title == "末日地堡" and record.season_number == 3
+    assert record.external_ids.get("tmdb") == "888"
+    assert [item[0] for item in backend.applied] == [record.id]  # 导入即写入 msub 绑定信号
+    # 导入后的订阅在第二轮导入中判为已存在
+    second = controller.import_backend_subscriptions()
+    assert second.total == 0 and second.imported == 0
+
+
+def test_import_backend_subscriptions_dedupes_same_show_and_skips_existing(tmp_path: Path) -> None:
+    controller = _controller(tmp_path, backend_service=FakeBackendSyncService([]))
+    controller._repository.upsert(_record())  # tmdb 456 季 1 已存在
+    backend = FakeBackendSyncService([
+        _sub(),  # 已存在 → 不进入待导入
+        _sub(id=30, doubanId=0, name="末日地堡S3", metaId="888", season=3),
+        _sub(id=31, doubanId=0, name="末日地堡垒", metaId="888", season=3),  # 同一部剧 → 去重合并
+    ])
+    controller._backend_sync_service = backend
+
+    result = controller.import_backend_subscriptions()
+
+    assert result.total == 2 and result.imported == 1 and result.skipped == 1
+    assert result.skips[0][0] == "末日地堡垒"
+    assert len(backend.applied) == 1
+
+
+def test_import_backend_subscriptions_title_search_fallback(tmp_path: Path) -> None:
+    metadata = FakeMetadataSearchService({
+        "凡人修仙传": [MetadataScrapeCandidate(
+            provider="tmdb", provider_label="TMDB", provider_id="tv:999", title="凡人修仙传", year="2020",
+        )],
+    })
+    backend = FakeBackendSyncService([_sub(id=40, metaProvider="", metaId="", doubanId=0, name="凡人修仙传", season=2)])
+    controller = _controller(tmp_path, backend_service=backend, metadata_service=metadata)
+
+    result = controller.import_backend_subscriptions()
+
+    assert result.imported == 1
+    record = controller._repository.get_by_identity("tmdb", "tv:999")
+    assert record is not None and record.season_number == 2
+    assert ("凡人修仙传", "tmdb") in metadata.search_queries
+
+
+def test_import_backend_subscriptions_title_search_no_result_skips(tmp_path: Path) -> None:
+    backend = FakeBackendSyncService([_sub(id=41, metaProvider="", metaId="", doubanId=0, name="查无此剧")])
+    controller = _controller(tmp_path, backend_service=backend)
+
+    result = controller.import_backend_subscriptions()
+
+    assert result.imported == 0 and result.skipped == 1
+    assert result.failures == [] and result.skips[0][0] == "查无此剧"
+
+
+def test_import_backend_subscriptions_cancel_and_failure(tmp_path: Path) -> None:
+    backend = FakeBackendSyncService([
+        _sub(id=50, name="剧甲", metaId="501", currentEpisodes=0),
+        _sub(id=51, name="剧乙", metaId="502", currentEpisodes=0),
+    ])
+    controller = _controller(tmp_path, backend_service=backend)
+
+    cancelled = controller.import_backend_subscriptions(cancel_callback=lambda: True)
+    assert cancelled.cancelled is True and cancelled.imported == 0
+
+    def boom(_candidate, **_kwargs):
+        raise RuntimeError("元数据失败")
+
+    controller.add_candidate = boom
+    failed = controller.import_backend_subscriptions()
+    assert failed.imported == 0 and len(failed.failures) == 2
+    assert failed.summary_text.startswith("服务端待导入 2 条，新增 0 条，失败 2 条")
+
+
+def test_import_requires_backend_service(tmp_path: Path) -> None:
+    from atv_player.controllers.following_controller import FollowingController
+
+    controller = FollowingController(FollowingRepository(tmp_path / "app.db"), metadata_search_service=FakeMetadataSearchService())
+    assert controller.backend_sync_available() is False
+    with pytest.raises(RuntimeError):
+        controller.import_backend_subscriptions()

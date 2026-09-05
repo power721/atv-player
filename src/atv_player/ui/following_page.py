@@ -1,16 +1,19 @@
 # ruff: noqa: E501
 from __future__ import annotations
 
-from collections.abc import Callable
 import threading
+from collections.abc import Callable
 
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QMouseEvent, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
+    QProgressDialog,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -150,6 +153,7 @@ class FollowingPage(QWidget, AsyncGuardMixin):
         self.search_edit.setStyleSheet(build_search_line_edit_qss(current_tokens()))
         self.add_button = QPushButton("添加追更")
         self.check_updates_button = QPushButton("检查更新")
+        self.import_backend_button = QPushButton("从服务端导入")
         self.only_updates_checkbox = QCheckBox("只看有更新")
         self.status_label = QLabel("没有追更记录")
         self.prev_page_button = QPushButton("上一页")
@@ -164,6 +168,7 @@ class FollowingPage(QWidget, AsyncGuardMixin):
         top_row.addWidget(self.only_updates_checkbox)
         top_row.addWidget(self.add_button)
         top_row.addWidget(self.check_updates_button)
+        top_row.addWidget(self.import_backend_button)
 
         self.cards_container = QWidget()
         self.cards_layout = _FlowLayout(self.cards_container, spacing=16)
@@ -198,6 +203,7 @@ class FollowingPage(QWidget, AsyncGuardMixin):
         self.only_updates_checkbox.toggled.connect(lambda _checked: self._apply_search())
         self.add_button.clicked.connect(self._open_add_dialog)
         self.check_updates_button.clicked.connect(self._check_updates)
+        self.import_backend_button.clicked.connect(self._import_backend_subscriptions)
         self.prev_page_button.clicked.connect(self.previous_page)
         self.next_page_button.clicked.connect(self.next_page)
         self.page_size_combo.currentIndexChanged.connect(self._change_page_size)
@@ -312,6 +318,45 @@ class FollowingPage(QWidget, AsyncGuardMixin):
         self.load_page()
         self._update_status_label(prefix="已检查更新")
 
+    def _import_backend_subscriptions(self) -> None:
+        if not self.controller.backend_sync_available():
+            QMessageBox.information(
+                self,
+                "从服务端导入",
+                "请先在 设置 → 高级设置 → 播放设置 中开启「服务端追剧联动」。",
+            )
+            return
+        progress = QProgressDialog("正在获取服务端订阅...", "取消", 0, 0, self)
+        progress.setWindowTitle("从服务端导入")
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self.import_backend_button.setEnabled(False)
+        progress.show()
+        QApplication.processEvents()
+
+        def update_progress(current: int, total: int, message: str) -> None:
+            maximum = max(total, 0)
+            progress.setRange(0, maximum)
+            progress.setValue(current if maximum else 0)
+            progress.setLabelText(message)
+            QApplication.processEvents()
+
+        try:
+            result = self.controller.import_backend_subscriptions(
+                progress_callback=update_progress,
+                cancel_callback=lambda: progress.wasCanceled(),
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "从服务端导入", f"导入失败: {exc}")
+        else:
+            QMessageBox.information(self, "从服务端导入", result.summary_text)
+        finally:
+            progress.close()
+            self.import_backend_button.setEnabled(True)
+        self.load_page()
+
     def _apply_status_style(self) -> None:
         tokens = current_tokens()
         self.status_label.setStyleSheet(
@@ -365,6 +410,7 @@ class FollowingPage(QWidget, AsyncGuardMixin):
         self.search_edit.hide()
         self.add_button.hide()
         self.check_updates_button.hide()
+        self.import_backend_button.hide()
         self.only_updates_checkbox.hide()
         self.status_label.setText(f"搜索到 {total} 条追更" if total > 0 else empty_message)
         self._render_cards(list(items))
@@ -378,6 +424,7 @@ class FollowingPage(QWidget, AsyncGuardMixin):
         self.search_edit.show()
         self.add_button.show()
         self.check_updates_button.show()
+        self.import_backend_button.show()
         self.only_updates_checkbox.show()
         self.current_page = 1
         self.load_page()
