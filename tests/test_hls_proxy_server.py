@@ -1606,6 +1606,286 @@ def test_local_hls_proxy_server_sends_dash_asset_head_response_without_buffering
     ]
 
 
+_DASH_FAILOVER_MANIFEST = """
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+  <Period>
+    <AdaptationSet>
+      <ContentComponent contentType="video"/>
+      <Representation id="v720" bandwidth="1200000" width="1280" height="720" mimeType="video/mp4">
+        <BaseURL>https://edge-a.example/video-720.m4s</BaseURL>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet>
+      <ContentComponent contentType="audio"/>
+      <Representation id="a192" bandwidth="192000" mimeType="audio/mp4">
+        <BaseURL>https://edge-a.example/audio-192.m4s</BaseURL>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet>
+      <ContentComponent contentType="audio"/>
+      <Representation id="a132" bandwidth="132000" mimeType="audio/mp4">
+        <BaseURL>https://edge-b.example/audio-132.m4s</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
+""".strip()
+
+
+def _create_dash_failover_server(stream) -> tuple[LocalHlsProxyServer, str, str]:
+    import base64
+
+    server = LocalHlsProxyServer(stream=stream)
+    payload = (
+        "data:application/dash+xml;base64,"
+        + base64.b64encode(_DASH_FAILOVER_MANIFEST.encode("utf-8")).decode("ascii")
+    )
+    mpd_url = server.create_dash_url(payload, {"Referer": "https://www.bilibili.com/"})
+    token = mpd_url.rsplit("/", 1)[-1].removesuffix(".mpd")
+    server.handle_request("GET", mpd_url.removeprefix(f"http://{server.host}:{server.port}"))
+    video_url, audio_url = server.dash_direct_media_urls(mpd_url)
+    assert video_url == f"http://{server.host}:{server.port}/dash/asset/{token}/0.m4s"
+    assert audio_url == f"http://{server.host}:{server.port}/dash/asset/{token}/1.m4s"
+    return server, token, audio_url
+
+
+class _RefusedStream:
+    """模拟 mcdn PCDN 边缘拒连:进入上下文即抛 httpx.ConnectError。"""
+
+    def __enter__(self):
+        raise httpx.ConnectError("[Errno 111] Connection refused")
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+
+def _ok_stream_response(body: bytes = b"0123456789"):
+    class FakeStreamResponse:
+        status_code = 206
+        headers = {
+            "Content-Type": "audio/mp4",
+            "Content-Length": str(len(body)),
+            "Content-Range": f"bytes 0-{len(body) - 1}/{len(body)}",
+            "Accept-Ranges": "bytes",
+        }
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_bytes(self):
+            yield body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    return FakeStreamResponse()
+
+
+def test_local_hls_proxy_server_fails_over_dash_audio_upstream_when_edge_refuses_connection() -> None:
+    calls: list[str] = []
+
+    def fake_stream(method: str, url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        calls.append(url)
+        if url == "https://edge-a.example/audio-192.m4s":
+            return _RefusedStream()
+        return _ok_stream_response()
+
+    server, token, audio_url = _create_dash_failover_server(fake_stream)
+    handler = _FakeAssetHandler()
+
+    handled = server._stream_dash_asset_response(
+        f"/dash/asset/{token}/1.m4s",
+        {"Range": "bytes=0-9"},
+        handler,
+    )
+
+    assert handled is True
+    assert handler.status_code == 206
+    assert handler.wfile.getvalue() == b"0123456789"
+    # 选中音轨的边缘拒连后立即改用备用表示,并把新地址粘进会话
+    assert calls == [
+        "https://edge-a.example/audio-192.m4s",
+        "https://edge-b.example/audio-132.m4s",
+    ]
+    session = server._registry.get(token)
+    assert session is not None
+    assert session.dash_assets[1] == "https://edge-b.example/audio-132.m4s"
+
+    # 粘住后后续 Range 请求不再碰坏边缘
+    calls.clear()
+    handled = server._stream_dash_asset_response(
+        f"/dash/asset/{token}/1.m4s",
+        {"Range": "bytes=0-9"},
+        _FakeAssetHandler(),
+    )
+    assert handled is True
+    assert calls == ["https://edge-b.example/audio-132.m4s"]
+
+
+def test_local_hls_proxy_server_locks_dash_audio_upstream_after_first_success() -> None:
+    calls: list[str] = []
+    serve_ok = True
+
+    def fake_stream(method: str, url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        calls.append(url)
+        if url == "https://edge-a.example/audio-192.m4s":
+            return _RefusedStream()
+        if serve_ok:
+            return _ok_stream_response()
+        return _RefusedStream()
+
+    server, token, audio_url = _create_dash_failover_server(fake_stream)
+
+    # 第一次请求:a1 拒连 → 转移到 a2 成功,从此锁定
+    handled = server._stream_dash_asset_response(
+        f"/dash/asset/{token}/1.m4s",
+        {"Range": "bytes=0-9"},
+        _FakeAssetHandler(),
+    )
+    assert handled is True
+
+    # 锁定后当前地址失败也不再跨表示转移(不同码率文件不可中途互换)
+    calls.clear()
+    serve_ok = False
+    try:
+        server._stream_dash_asset_response(
+            f"/dash/asset/{token}/1.m4s",
+            {"Range": "bytes=0-9"},
+            _FakeAssetHandler(),
+        )
+    except httpx.ConnectError:
+        pass
+    else:
+        raise AssertionError("expected upstream ConnectError to propagate")
+    assert calls == ["https://edge-b.example/audio-132.m4s"]
+
+    # .mpd 重算不会把粘住地址换回坏边缘
+    session = server._registry.get(token)
+    assert session is not None
+    server.handle_request(
+        "GET", f"/dash/{token}.mpd"
+    )
+    assert session.dash_assets[1] == "https://edge-b.example/audio-132.m4s"
+
+
+def test_local_hls_proxy_server_does_not_fail_over_dash_video_upstream() -> None:
+    calls: list[str] = []
+
+    def fake_stream(method: str, url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        calls.append(url)
+        if url.endswith("video-720.m4s"):
+            return _RefusedStream()
+        return _ok_stream_response()
+
+    server, token, _audio_url = _create_dash_failover_server(fake_stream)
+
+    try:
+        server._stream_dash_asset_response(
+            f"/dash/asset/{token}/0.m4s",
+            {"Range": "bytes=0-9"},
+            _FakeAssetHandler(),
+        )
+    except httpx.ConnectError:
+        pass
+    else:
+        raise AssertionError("expected upstream ConnectError to propagate")
+    # 视频 asset 只有一个候选:换地址等于换清晰度,不做转移
+    assert calls == ["https://edge-a.example/video-720.m4s"]
+
+
+def test_local_hls_proxy_server_fails_over_dash_audio_head_request() -> None:
+    calls: list[str] = []
+
+    def fake_stream(method: str, url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        calls.append((method, url))
+        if url == "https://edge-a.example/audio-192.m4s":
+            return _RefusedStream()
+        return _ok_stream_response()
+
+    server, token, _audio_url = _create_dash_failover_server(fake_stream)
+    handler = _FakeAssetHandler()
+
+    handled = server._send_dash_asset_head_response(
+        f"/dash/asset/{token}/1.m4s",
+        {"Range": "bytes=0-9"},
+        handler,
+    )
+
+    assert handled is True
+    assert handler.status_code == 206
+    assert calls == [
+        ("HEAD", "https://edge-a.example/audio-192.m4s"),
+        ("HEAD", "https://edge-b.example/audio-132.m4s"),
+    ]
+    session = server._registry.get(token)
+    assert session is not None
+    assert session.dash_assets[1] == "https://edge-b.example/audio-132.m4s"
+
+
+class _FakeAssetHandler:
+    def __init__(self) -> None:
+        self.status_code: int | None = None
+        self.headers: list[tuple[str, str]] = []
+        self.wfile = BytesIO()
+        self.ended = False
+
+    def send_response(self, status_code: int) -> None:
+        self.status_code = status_code
+
+    def send_header(self, key: str, value: str) -> None:
+        self.headers.append((key, value))
+
+    def end_headers(self) -> None:
+        self.ended = True
+
+
+def test_local_hls_proxy_server_fails_over_dash_audio_upstream_for_buffered_get() -> None:
+    requests: list[str] = []
+
+    class FakeResponse:
+        content = b"0123456789"
+        status_code = 206
+        headers = {
+            "Content-Type": "audio/mp4",
+            "Content-Range": "bytes 0-9/10",
+            "Accept-Ranges": "bytes",
+        }
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def fake_get(url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        requests.append(url)
+        if url == "https://edge-a.example/audio-192.m4s":
+            raise httpx.ConnectError("[Errno 111] Connection refused")
+        return FakeResponse()
+
+    def unused_stream(*_args, **_kwargs):
+        raise AssertionError("stream must not be used")
+
+    server, token, _audio_url = _create_dash_failover_server(unused_stream)
+    server._get = fake_get
+
+    status, headers, body = server.handle_request(
+        "GET",
+        f"/dash/asset/{token}/1.m4s",
+        {"Range": "bytes=0-9"},
+    )
+
+    assert status == 206
+    assert body == b"0123456789"
+    assert requests == [
+        "https://edge-a.example/audio-192.m4s",
+        "https://edge-b.example/audio-132.m4s",
+    ]
+    session = server._registry.get(token)
+    assert session is not None
+    assert session.dash_assets[1] == "https://edge-b.example/audio-132.m4s"
+
+
 def test_local_hls_proxy_server_streams_iso_response_without_buffering_full_body() -> None:
     requests: list[str] = []
 

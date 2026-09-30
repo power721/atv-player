@@ -349,6 +349,7 @@ class MpvWidget(QWidget):
     pause_state_changed = Signal(bool)
     subtitle_tracks_changed = Signal()
     audio_tracks_changed = Signal()
+    external_audio_attach_failed = Signal(str)
     chapters_changed = Signal()
     context_menu_requested = Signal()
     context_menu_dismiss_requested = Signal()
@@ -1362,6 +1363,7 @@ class MpvWidget(QWidget):
                     self._summarize_media_url(audio_files),
                     exc_info=True,
                 )
+                self.external_audio_attach_failed.emit(audio_files)
 
     def _audio_add_command(self, player: Any, audio_files: str) -> None:
         audio_add = getattr(player, "audio_add", None)

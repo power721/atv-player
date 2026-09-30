@@ -11,6 +11,7 @@ import queue
 import socket
 import re
 import threading
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlparse
 from xml.etree import ElementTree as ET
@@ -294,6 +295,14 @@ def _parse_dash_session_metadata(
 
 def _rewrite_dash_manifest(payload: bytes, session: ProxySession, proxy_base_url: str) -> bytes:
     root = ET.fromstring(payload)
+    # rewrite 会整表重建 dash_assets;.mpd 重算是幂等的,但音频故障转移粘住的
+    # 上游地址必须跨重建保留,否则坏边缘会被换回来。
+    sticky_audio_url = (
+        session.dash_assets[session.dash_audio_asset_index]
+        if session.dash_audio_upstream_locked
+        and 0 <= session.dash_audio_asset_index < len(session.dash_assets)
+        else ""
+    )
     session.dash_assets = []
     session.dash_asset_chunk_sizes = []
     session.dash_video_asset_index = -1
@@ -368,6 +377,8 @@ def _rewrite_dash_manifest(payload: bytes, session: ProxySession, proxy_base_url
 
     if namespace:
         ET.register_namespace("", namespace)
+    if sticky_audio_url and 0 <= session.dash_audio_asset_index < len(session.dash_assets):
+        session.dash_assets[session.dash_audio_asset_index] = sticky_audio_url
     return ET.tostring(root, encoding="utf-8").replace(b" />", b"/>")
 
 
@@ -407,6 +418,23 @@ def _iter_response_bytes(response: Any):
         yield from iter_bytes(chunk_size=_DASH_STREAM_CHUNK_SIZE)
     except TypeError:
         yield from iter_bytes()
+
+
+def _close_context_quietly(context_manager: Any) -> None:
+    closer = getattr(context_manager, "__exit__", None)
+    if closer is None:
+        return
+    try:
+        closer(None, None, None)
+    except Exception:
+        pass
+
+
+def _summarize_upstream_url(url: str) -> str:
+    parsed = urlparse(url or "")
+    if not parsed.scheme or not parsed.netloc:
+        return url
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
 
 
 def _slice_payload_for_byte_range(payload: bytes, range_header: str) -> tuple[bytes, str] | None:
@@ -512,6 +540,7 @@ class LocalHlsProxyServer:
         self._stream = stream
         self._registry = ProxySessionRegistry()
         self._range_registry = RangeProxyRegistry()
+        self._dash_audio_failover_lock = threading.Lock()
         self._ad_filter_mode = ad_filter_mode
         self._segment_proxy = SegmentProxy(self._registry, get=get, segment_prefetch_size=segment_prefetch_size)
         self._server: ThreadingHTTPServer | None = None
@@ -1053,6 +1082,72 @@ class LocalHlsProxyServer:
             f"{quote(session.token)}/{asset_index}.m4s"
         )
 
+    def _dash_asset_upstream_candidates(self, session: ProxySession, asset_index: int) -> list[str]:
+        """asset 上游候选地址。
+
+        后端清单里每个表示各分一个独立的 PCDN 边缘(B站 mcdn 节点),单个边缘会
+        整段拒连,而音频表示(不同码率)互为天然备份;音频 asset 未锁定时按清单
+        顺序带上其余音频表示的直链。视频不转移:跨表示换地址等于换清晰度/编码。
+        """
+        current_url = session.dash_assets[asset_index]
+        if asset_index != session.dash_audio_asset_index or session.dash_audio_upstream_locked:
+            return [current_url]
+        candidates: list[str] = []
+        for url in [current_url] + [
+            representation.base_url for representation in session.dash_audio_representations
+        ]:
+            if url.startswith(("http://", "https://")) and url not in candidates:
+                candidates.append(url)
+        return candidates
+
+    def _commit_dash_asset_upstream(self, session: ProxySession, asset_index: int, url: str) -> None:
+        with self._dash_audio_failover_lock:
+            if url != session.dash_assets[asset_index]:
+                logger.warning(
+                    "DASH 音频上游故障转移 old=%s new=%s",
+                    _summarize_upstream_url(session.dash_assets[asset_index]),
+                    _summarize_upstream_url(url),
+                    extra={"log_category": "network", "log_source": "app"},
+                )
+                session.dash_assets[asset_index] = url
+            session.dash_audio_upstream_locked = True
+
+    def _open_dash_asset_response(
+        self,
+        session: ProxySession,
+        asset_index: int,
+        method: str,
+        upstream_headers: dict[str, str],
+    ) -> tuple[Any, Callable[[], None]]:
+        """打开 asset 上游响应,返回 (response, closer)。
+
+        音频地址未锁定时按候选顺序故障转移;仅"连接/响应头阶段"的 httpx 错误
+        触发转移,首个成功响应立即提交粘住并锁定。所有候选失败抛最后一个异常。
+        """
+        last_exc: Exception | None = None
+        for url in self._dash_asset_upstream_candidates(session, asset_index):
+            response_cm = self._stream(
+                method,
+                url,
+                headers=upstream_headers,
+                timeout=10.0,
+                follow_redirects=True,
+            )
+            try:
+                response = response_cm.__enter__()
+                response.raise_for_status()
+            except httpx.HTTPError as exc:
+                _close_context_quietly(response_cm)
+                last_exc = exc
+                continue
+            except Exception:
+                _close_context_quietly(response_cm)
+                raise
+            self._commit_dash_asset_upstream(session, asset_index, url)
+            return response, lambda: _close_context_quietly(response_cm)
+        assert last_exc is not None
+        raise last_exc
+
     @staticmethod
     def _query_token(query: dict[str, list[str]]) -> str:
         values = query.get("token") or query.get("v")
@@ -1152,13 +1247,26 @@ class LocalHlsProxyServer:
                 chunk_size=_dash_asset_chunk_size(session, asset_index),
             )
             upstream_headers["Range"] = effective_range_header
-        response = self._get(
-            session.dash_assets[asset_index],
-            headers=upstream_headers,
-            timeout=10.0,
-            follow_redirects=True,
-        )
-        response.raise_for_status()
+        response = None
+        last_exc: Exception | None = None
+        for url in self._dash_asset_upstream_candidates(session, asset_index):
+            try:
+                response = self._get(
+                    url,
+                    headers=upstream_headers,
+                    timeout=10.0,
+                    follow_redirects=True,
+                )
+                response.raise_for_status()
+            except httpx.HTTPError as exc:
+                response = None
+                last_exc = exc
+                continue
+            self._commit_dash_asset_upstream(session, asset_index, url)
+            break
+        if response is None:
+            assert last_exc is not None
+            raise last_exc
         status_code = int(getattr(response, "status_code", 200) or 200)
         body = bytes(response.content)
         content_range = response.headers.get("Content-Range")
@@ -1213,14 +1321,10 @@ class LocalHlsProxyServer:
                 chunk_size=_dash_asset_chunk_size(session, asset_index),
             )
             upstream_headers["Range"] = effective_range_header
-        with self._stream(
-            "GET",
-            session.dash_assets[asset_index],
-            headers=upstream_headers,
-            timeout=10.0,
-            follow_redirects=True,
-        ) as response:
-            response.raise_for_status()
+        response, close_upstream = self._open_dash_asset_response(
+            session, asset_index, "GET", upstream_headers
+        )
+        try:
             status_code = int(getattr(response, "status_code", 200) or 200)
             content_range = response.headers.get("Content-Range")
             if effective_range_header and status_code == 200 and not content_range:
@@ -1267,6 +1371,8 @@ class LocalHlsProxyServer:
             for chunk in _iter_response_bytes(response):
                 if chunk:
                     handler.wfile.write(chunk)
+        finally:
+            close_upstream()
         return True
 
     def _send_dash_asset_head_response(
@@ -1300,20 +1406,18 @@ class LocalHlsProxyServer:
                 chunk_size=_dash_asset_chunk_size(session, asset_index),
             )
             upstream_headers["Range"] = effective_range_header
-        with self._stream(
-            "HEAD",
-            session.dash_assets[asset_index],
-            headers=upstream_headers,
-            timeout=10.0,
-            follow_redirects=True,
-        ) as response:
-            response.raise_for_status()
+        response, close_upstream = self._open_dash_asset_response(
+            session, asset_index, "HEAD", upstream_headers
+        )
+        try:
             handler.send_response(int(getattr(response, "status_code", 200) or 200))
             for header_name in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"):
                 header_value = response.headers.get(header_name)
                 if header_value:
                     handler.send_header(header_name, header_value)
             handler.end_headers()
+        finally:
+            close_upstream()
         return True
 
     def _stream_iso_response(

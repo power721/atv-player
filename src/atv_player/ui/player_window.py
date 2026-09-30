@@ -1407,6 +1407,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.video_widget.context_menu_dismiss_requested.connect(self._dismiss_video_context_menu_at_cursor)
         self.video_widget.left_clicked.connect(self._release_focus_for_video_press)
         self.video_widget.playback_failed.connect(self._handle_playback_failed)
+        self.video_widget.external_audio_attach_failed.connect(self._handle_external_audio_attach_failed)
         self.video_widget.file_loaded.connect(self._handle_video_file_loaded)
         self.video_widget.video_picture_state_changed.connect(self._handle_video_picture_state_changed)
         self.video_widget.pause_state_changed.connect(self._handle_pause_state_changed)
@@ -5966,6 +5967,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         pixmap = self.video_poster_overlay.pixmap()
         if pixmap is not None and not pixmap.isNull():
             self._show_video_poster_overlay(pixmap)
+
+    def _handle_external_audio_attach_failed(self, audio_url: str) -> None:
+        # DASH 直连模式的音轨两次挂载都失败:画面正常但没有声音,必须显性提示。
+        self._append_log(f"外挂音轨挂载失败,当前无声音: {_summarize_media_url(audio_url)}")
 
     def _handle_playback_failed(self, message: str) -> None:
         if self._should_recover_recent_seek_failure():

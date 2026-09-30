@@ -45,6 +45,9 @@ class ProxySession:
     # 直连分发用:rewrite 后选中视频/音频表示对应的 dash_assets 下标(-1 = 不存在)。
     dash_video_asset_index: int = -1
     dash_audio_asset_index: int = -1
+    # 音频 asset 首次成功响应后锁定上游:不同码率的音频文件字节布局不同,
+    # 已开始服务后不能再跨表示换地址,故障转移只在锁定前发生。
+    dash_audio_upstream_locked: bool = False
     cached_playlist_text: str | None = None
     media_encrypted: bool = False
     cenc_reader: object | None = None
