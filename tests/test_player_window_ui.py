@@ -20945,6 +20945,48 @@ def test_player_window_build_danmaku_subtitle_file_passes_current_episode_label(
     assert captured["time_offset_seconds"] == -3.0
 
 
+def test_player_window_build_danmaku_subtitle_file_skips_episode_label_for_bilibili(qtbot, monkeypatch, tmp_path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_load_or_create_danmaku_ass_cache(xml_text: str, line_count: int, **kwargs) -> Path | None:
+        captured.update(kwargs)
+        return tmp_path / "demo.ass"
+
+    monkeypatch.setattr(player_window_module, "load_or_create_danmaku_ass_cache", fake_load_or_create_danmaku_ass_cache)
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="凡人修仙传"),
+        playlist=[
+            PlayItem(
+                title="随便起名",
+                original_title="第1集",
+                url="https://media.example/1.mp4",
+            )
+        ],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        source_kind="bilibili",
+    )
+    window.current_index = 0
+
+    path = window._build_danmaku_subtitle_file(
+        '<?xml version="1.0" encoding="UTF-8"?><i><d p="0.0,1,25,16777215">第一条</d></i>',
+        2,
+        render_mode="static",
+        color_mode="uniform",
+        uniform_color="#FFFFFF",
+        position_preset="top",
+        scroll_speed=1.0,
+        font_size=32,
+    )
+
+    assert path == tmp_path / "demo.ass"
+    assert captured["intro_episode_label"] == ""
+
+
 def test_player_window_build_danmaku_subtitle_file_passes_readability_settings(qtbot, monkeypatch, tmp_path) -> None:
     captured: dict[str, object] = {}
 

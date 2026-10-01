@@ -9027,7 +9027,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     ) -> Path | None:
         intro_episode_label = ""
         current_item = self._current_play_item()
-        if current_item is not None:
+        # B站分组树播放列表跨线路摊平,扁平下标带着前面线路的偏移,推不出真实集数,
+        # 开场提示直接不带"第X集"前缀
+        if current_item is not None and str(
+            getattr(self.session, "source_kind", "") or ""
+        ).strip().lower() != "bilibili":
             episode_number = infer_playlist_episode_number(current_item, self.session.playlist if self.session else None)
             if episode_number is not None and episode_number > 0:
                 intro_episode_label = f"第{episode_number}集"
