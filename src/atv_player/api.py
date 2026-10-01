@@ -373,6 +373,15 @@ class ApiClient:
         params: dict[str, Any] = {"ids": vod_id, "root": root, "pn": page}
         return self._request("GET", f"/bilibili/{self._vod_token}/comments", params=params, headers={"X-CLIENT": "gui"})
 
+    def run_bilibili_comment_action(self, vod_id: str, rpid: str, on: bool) -> dict[str, Any]:
+        """B站评论点赞(on=点赞/False=取消),返回 {"liked": bool}。"""
+        return self._request(
+            "POST",
+            f"/bilibili/{self._vod_token}/comment-action",
+            json={"id": vod_id, "rpid": rpid, "action": 1 if on else 0},
+            headers={"X-CLIENT": "gui"},
+        )
+
     def list_emby_items(
         self,
         category_id: str,

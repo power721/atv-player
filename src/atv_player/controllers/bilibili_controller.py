@@ -303,6 +303,10 @@ class BilibiliController:
         """楼中楼:根评论(rpid)的子回复分页。"""
         return self._api_client.list_bilibili_comment_replies(vod_id, root, page=page)
 
+    def run_comment_action(self, vod_id: str, rpid: str, on: bool) -> dict[str, object]:
+        """评论点赞/取消;由评论对话框在后台线程调用。"""
+        return self._api_client.run_bilibili_comment_action(vod_id, rpid, on)
+
     def _decorate_card_subtitle(self, item: VodItem) -> VodItem:
         subtitle_parts = [item.vod_year.strip(), item.vod_remarks.strip()]
         item.vod_remarks = " - ".join(part for part in subtitle_parts if part)

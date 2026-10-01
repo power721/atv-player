@@ -6827,6 +6827,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                         return controller.load_comment_replies(
                             vod_id, str(query.get("root") or "").strip(), int(query.get("page") or 1)
                         )
+                    if query.get("kind") == "like":
+                        return controller.run_comment_action(
+                            vod_id, str(query.get("rpid") or "").strip(), bool(query.get("on"))
+                        )
                     return controller.load_comments(
                         vod_id, mode=int(query.get("mode") or 3), next_offset=str(query.get("next") or "")
                     )

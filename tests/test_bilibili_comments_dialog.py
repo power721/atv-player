@@ -75,7 +75,7 @@ def test_dialog_loads_main_comments_with_count_and_pagination(qtbot) -> None:
     assert card.message_label.text() == "内容"
     card2 = dialog.card_by_rpid("1002")
     assert card2 is not None
-    assert card2.like_label.text() == "👍 2.5万"
+    assert card2.like_button.text() == "👍 2.5万"
 
 
 def test_dialog_mode_switch_resets_list_and_requests_new_mode(qtbot) -> None:
@@ -250,3 +250,72 @@ def test_format_stat_value_formats_wan(raw, expected) -> None:
     from atv_player.ui.bilibili_comments_dialog import _format_stat_value
 
     assert _format_stat_value(raw) == expected
+
+
+def test_card_like_button_round_trips_on_and_off(qtbot) -> None:
+    loader = FakeLoader(
+        payloads=[
+            _main_payload([_comment("1001", "小明", like=10, liked=False)]),
+            {"liked": True},
+            {"liked": False},
+        ]
+    )
+    dialog = _make_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog, 1)
+
+    card = dialog.card_by_rpid("1001")
+    assert card.like_button.text() == "👍 10"
+    card.like_button.click()
+    qtbot.waitUntil(lambda: card.like_button.text() == "已赞 11", timeout=5000)
+
+    assert loader.requests[1] == {"kind": "like", "bvid": "BV1xx411c7mD", "rpid": "1001", "on": True}
+    assert card.comment.like == 11 and card.comment.liked is True
+
+    card.like_button.click()
+    qtbot.waitUntil(lambda: card.like_button.text() == "👍 10", timeout=5000)
+    assert loader.requests[2]["on"] is False
+    assert card.comment.like == 10 and card.comment.liked is False
+
+
+def test_reply_row_like_button_requests_like(qtbot) -> None:
+    preview = [_comment("1003", "小刚", like=5)]
+    loader = FakeLoader(
+        payloads=[
+            _main_payload([_comment("1001", "小明", rcount=1, preview=preview)]),
+            {"liked": True},
+        ]
+    )
+    dialog = _make_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog, 1)
+
+    card = dialog.card_by_rpid("1001")
+    card.toggle_reply_button.click()
+    qtbot.waitUntil(lambda: bool(card.floor_rows()), timeout=5000)
+    row = card.floor_rows()[0]
+    row.like_button.click()
+    qtbot.waitUntil(lambda: row.like_button.text() == "已赞 6", timeout=5000)
+
+    assert loader.requests[1] == {"kind": "like", "bvid": "BV1xx411c7mD", "rpid": "1003", "on": True}
+
+
+def test_like_failure_restores_button_and_surfaces_error(qtbot) -> None:
+    payloads = [_main_payload([_comment("1001", "小明", like=10)])]
+
+    def failing_like(request: dict) -> dict:
+        if request.get("kind") == "like":
+            raise RuntimeError("未登录 B站,请先在设置中配置 Cookie")
+        return payloads.pop(0)
+
+    dialog = BilibiliCommentsDialog("BV1xx411c7mD", failing_like)
+    qtbot.addWidget(dialog)
+    _wait_until_cards(qtbot, dialog, 1)
+
+    card = dialog.card_by_rpid("1001")
+    card.like_button.click()
+    qtbot.waitUntil(lambda: not card.like_button.isEnabled() or "点赞失败" in dialog.status_label.text(), timeout=5000)
+    qtbot.waitUntil(lambda: card.like_button.isEnabled(), timeout=5000)
+
+    assert "点赞失败" in dialog.status_label.text()
+    assert "未登录" in dialog.status_label.text()
+    assert card.like_button.text() == "👍 10"
+    assert card.like_button.isEnabled()

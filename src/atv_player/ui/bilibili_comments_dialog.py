@@ -23,12 +23,13 @@ from atv_player.ui.theme import current_tokens
 from atv_player.ui.window_chrome import ThemedDialogBase
 
 # loader 请求/响应协议(由 main_window 用 ApiClient 实现,对话框只认可调用对象):
-#   {"kind": "main", "mode": 3, "next": ""} ->
+#   {"kind": "main", "bvid": str, "mode": 3, "next": ""} ->
 #       {"count": int, "is_end": bool, "next_offset": str, "comments": [评论dict]}
-#   {"kind": "replies", "root": "rpid", "page": 1} ->
+#   {"kind": "replies", "bvid": str, "root": "rpid", "page": 1} ->
 #       {"count": int, "page": int, "replies": [评论dict]}
+#   {"kind": "like", "bvid": str, "rpid": str, "on": bool} -> {"liked": bool}
 # 评论dict字段(后端 /bilibili/{token}/comments 精简输出):
-#   rpid/uname/avatar/level/message/like/rcount/ctime/time_desc/location/top/is_up/parent_uname/preview
+#   rpid/uname/avatar/level/message/like/rcount/ctime/time_desc/location/top/is_up/liked/parent_uname/preview
 CommentsLoader = Callable[[dict[str, object]], dict[str, object]]
 
 _AVATAR_SIZE = 36
@@ -47,6 +48,7 @@ class BilibiliComment:
     location: str = ""
     top: bool = False
     is_up: bool = False
+    liked: bool = False
     parent_uname: str = ""
     preview: list[BilibiliComment] = field(default_factory=list)
 
@@ -68,6 +70,7 @@ def parse_bilibili_comment(payload: object) -> BilibiliComment:
         location=str(payload.get("location") or "").strip(),
         top=bool(payload.get("top")),
         is_up=bool(payload.get("is_up")),
+        liked=bool(payload.get("liked")),
         parent_uname=str(payload.get("parent_uname") or "").strip(),
         preview=preview,
     )
@@ -121,17 +124,37 @@ def _meta_html(comment: BilibiliComment) -> str:
 
 class _LoaderSignals(QObject):
     succeeded = Signal(int, object, object)  # epoch, payload, context
-    failed = Signal(int, str)  # epoch, error message
+    failed = Signal(int, str, object)  # epoch, error message, context
 
 
 class _AvatarSignals(QObject):
     loaded = Signal(object, object)  # QLabel, QImage
 
 
-class _ReplyRow(QWidget):
-    """楼中楼单行:昵称行 + 「回复 @xxx：内容」正文。"""
+class _LikeButton(QPushButton):
+    """评论点赞按钮(主评论与楼中楼行共用):点赞中禁用防连点,状态文案由 dialog 回填。"""
 
-    def __init__(self, comment: BilibiliComment, parent: QWidget | None = None) -> None:
+    def __init__(self, comment: BilibiliComment, dialog: BilibiliCommentsDialog, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.comment = comment
+        self.setObjectName("bilibiliCommentLikeButton")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFlat(True)
+        self.setCheckable(True)
+        self.clicked.connect(lambda _checked=False: dialog.request_like(self))
+        self.refresh_state()
+
+    def refresh_state(self) -> None:
+        count_text = _format_stat_value(self.comment.like) if self.comment.like else "赞"
+        self.setText(f"已赞 {count_text}" if self.comment.liked else f"👍 {count_text}")
+        self.setChecked(self.comment.liked)
+        self.setEnabled(True)
+
+
+class _ReplyRow(QWidget):
+    """楼中楼单行:昵称行 + 「回复 @xxx：内容」正文 + 点赞。"""
+
+    def __init__(self, comment: BilibiliComment, dialog: BilibiliCommentsDialog, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.comment = comment
         layout = QVBoxLayout(self)
@@ -149,6 +172,8 @@ class _ReplyRow(QWidget):
         self.message_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.meta_label)
         layout.addWidget(self.message_label)
+        self.like_button = _LikeButton(comment, dialog, self)
+        layout.addWidget(self.like_button)
 
 
 class _CommentCard(QFrame):
@@ -157,6 +182,7 @@ class _CommentCard(QFrame):
     def __init__(self, comment: BilibiliComment, dialog: BilibiliCommentsDialog, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.comment = comment
+        self._dialog = dialog
         self._floor_widget: QWidget | None = None
         self._floor_expanded = False
         self._floor_rows: list[_ReplyRow] = []
@@ -193,8 +219,8 @@ class _CommentCard(QFrame):
         footer = QHBoxLayout()
         footer.setContentsMargins(0, 0, 0, 0)
         footer.setSpacing(16)
-        self.like_label = QLabel(f"👍 {_format_stat_value(comment.like) if comment.like else '赞'}")
-        footer.addWidget(self.like_label)
+        self.like_button = _LikeButton(comment, dialog, self)
+        footer.addWidget(self.like_button)
         self.toggle_reply_button = QPushButton(self._toggle_button_text())
         self.toggle_reply_button.setObjectName("bilibiliCommentRepliesButton")
         self.toggle_reply_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -263,7 +289,7 @@ class _CommentCard(QFrame):
         floor = self._floor_widget
         if floor is None:
             return
-        row = _ReplyRow(reply, floor)
+        row = _ReplyRow(reply, self._dialog, floor)
         self._floor_rows.append(row)
         floor.layout().addWidget(row)
 
@@ -439,6 +465,13 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
         request = {"kind": "replies", "bvid": self.bvid, "root": card.comment.rpid, "page": page}
         self._start_load(request, {"kind": "replies", "card": card, "page": page})
 
+    def request_like(self, button: _LikeButton) -> None:
+        """评论点赞/取消(主评论与楼中楼行共用);响应后回填按钮状态,防连点。"""
+        button.setEnabled(False)
+        turn_on = not button.comment.liked
+        request = {"kind": "like", "bvid": self.bvid, "rpid": button.comment.rpid, "on": turn_on}
+        self._start_load(request, {"kind": "like", "button": button, "turn_on": turn_on})
+
     def _start_load(self, request: dict[str, object], context: dict[str, object]) -> None:
         epoch = self._epoch
 
@@ -447,7 +480,7 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
                 payload = self._loader(request)
                 self._signals.succeeded.emit(epoch, payload, context)
             except Exception as exc:  # noqa: BLE001 - loader 网络错误统一转文案
-                self._signals.failed.emit(epoch, str(exc) or type(exc).__name__)
+                self._signals.failed.emit(epoch, str(exc) or type(exc).__name__, context)
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -461,10 +494,28 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
             replies = [parse_bilibili_comment(entry) for entry in payload.get("replies") or []]
             card.apply_replies(replies, int(context.get("page") or 1), int(payload.get("count") or 0))
             return
+        if isinstance(context, dict) and context.get("kind") == "like":
+            button = context.get("button")
+            if not isinstance(button, _LikeButton) or not shiboken6.isValid(button):
+                return
+            liked = bool(payload.get("liked"))
+            comment = button.comment
+            if liked != comment.liked:
+                comment.like += 1 if liked else -1
+                comment.like = max(0, comment.like)
+            comment.liked = liked
+            button.refresh_state()
+            return
         self._apply_main_payload(payload)
 
-    def _handle_failed(self, epoch: int, message: str) -> None:
+    def _handle_failed(self, epoch: int, message: str, context: object) -> None:
         if epoch != self._epoch:
+            return
+        if isinstance(context, dict) and context.get("kind") == "like":
+            button = context.get("button")
+            if isinstance(button, _LikeButton) and shiboken6.isValid(button):
+                button.refresh_state()
+            self.status_label.setText(f"点赞失败:{message}")
             return
         if not self._cards:
             self.status_label.setText(f"加载失败:{message}")
@@ -550,6 +601,24 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
             }}
             QPushButton#bilibiliCommentRepliesButton:hover, QPushButton#bilibiliCommentMoreButton:hover {{
                 color: {tokens.accent_hover};
+            }}
+            QPushButton#bilibiliCommentLikeButton {{
+                color: {tokens.text_secondary};
+                background: transparent;
+                border: none;
+                padding: 2px 4px;
+                font-size: 12px;
+                text-align: left;
+            }}
+            QPushButton#bilibiliCommentLikeButton:hover {{
+                color: {tokens.text_primary};
+            }}
+            QPushButton#bilibiliCommentLikeButton:checked {{
+                color: {tokens.accent};
+                font-weight: 600;
+            }}
+            QPushButton#bilibiliCommentLikeButton:disabled {{
+                color: {tokens.text_secondary};
             }}
             QPushButton#bilibiliCommentsLoadMore {{
                 color: {tokens.text_primary};
