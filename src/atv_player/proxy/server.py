@@ -11,6 +11,7 @@ import queue
 import socket
 import re
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlparse
@@ -53,6 +54,14 @@ _DASH_STREAM_CHUNK_SIZE = 256 * 1024
 _CENC_STREAM_CHUNK_SIZE = 256 * 1024
 _RANGE_PROXY_STREAM_CHUNK_SIZE = 256 * 1024
 _DASH_HTTP_CHUNK_SIZE_SCHEME = "urn:atv-player:http-chunk-size"
+# 音频上游吞吐门:未锁定的音频候选除连接/响应头检查外,还必须在限时内
+# 交出首块字节。B站 PCDN 边缘存在"能连上、响应头正常、体数据断断续续"
+# 的劣化形态(2026-10-01 无声事故),头部检查拦不住,粘住锁定后外挂音轨
+# 会被饿死(画面正常、无声、无报错)。计时从发起连接开始,连头部阶段的
+# 高延迟劣化一起拦。
+_DASH_AUDIO_PROBE_BYTES = 128 * 1024
+_DASH_AUDIO_PROBE_SECONDS = 2.5
+_DASH_AUDIO_PROBE_READ_CHUNK = 16 * 1024
 _TLS_PROTOCOL_MISMATCH_MARKERS = (
     "wrong version number",
     "record layer failure",
@@ -418,6 +427,25 @@ def _iter_response_bytes(response: Any):
         yield from iter_bytes(chunk_size=_DASH_STREAM_CHUNK_SIZE)
     except TypeError:
         yield from iter_bytes()
+
+
+def _dash_audio_probe_iterator(response: Any):
+    """吞吐门用的小 chunk 响应体迭代器(探针要按字节到达节奏计时)。"""
+    iter_bytes = getattr(response, "iter_bytes")
+    try:
+        return iter_bytes(chunk_size=_DASH_AUDIO_PROBE_READ_CHUNK)
+    except TypeError:
+        return iter_bytes()
+
+
+def _dash_asset_range_starts_at_zero(range_header: str | None) -> bool:
+    """该请求是否从文件头读取(新开 demuxer,如 audio-add/audio-reload)。"""
+    if not range_header:
+        return True
+    parsed = _parse_byte_range_header(range_header)
+    if parsed is None:
+        return False
+    return parsed[0] == 0
 
 
 def _close_context_quietly(context_manager: Any) -> None:
@@ -1074,6 +1102,27 @@ class LocalHlsProxyServer:
             return ("", "")
         return video_url, audio_url
 
+    def reset_dash_audio_upstream(self, media_url: str) -> bool:
+        """外挂音轨断粮后解锁音频上游粘住锁定,让下一次零起点请求重走候选
+        故障转移(含吞吐门)。只清锁、不动 dash_assets:非零起点 Range 续读
+        仍会落在同一表示上,字节布局不会错乱;audio-reload 重开 demuxer 从
+        零读,才能换到健康表示。"""
+        try:
+            token, _asset_index = self._dash_asset_path(urlparse(media_url or "").path)
+        except (KeyError, ValueError):
+            return False
+        session = self._registry.get(token)
+        if session is None:
+            return False
+        if session.dash_audio_upstream_locked:
+            session.dash_audio_upstream_locked = False
+            logger.info(
+                "DASH 音频上游解锁(外挂音轨断粮,重挂时按候选+吞吐门转移): %s",
+                _summarize_upstream_url(media_url or ""),
+                extra={"log_category": "network", "log_source": "app"},
+            )
+        return True
+
     def _dash_asset_proxy_url(self, session: ProxySession, asset_index: int) -> str:
         if asset_index < 0 or asset_index >= len(session.dash_assets):
             return ""
@@ -1082,15 +1131,25 @@ class LocalHlsProxyServer:
             f"{quote(session.token)}/{asset_index}.m4s"
         )
 
-    def _dash_asset_upstream_candidates(self, session: ProxySession, asset_index: int) -> list[str]:
+    def _dash_asset_upstream_candidates(
+        self,
+        session: ProxySession,
+        asset_index: int,
+        range_header: str | None = None,
+    ) -> list[str]:
         """asset 上游候选地址。
 
         后端清单里每个表示各分一个独立的 PCDN 边缘(B站 mcdn 节点),单个边缘会
         整段拒连,而音频表示(不同码率)互为天然备份;音频 asset 未锁定时按清单
         顺序带上其余音频表示的直链。视频不转移:跨表示换地址等于换清晰度/编码。
+        非零起点的 Range 是同一 demuxer 的续读,跨表示换地址会字节错位,即使
+        未锁定(断粮解锁后)也只回当前地址;零起点/无 Range 的新开 demuxer
+        (audio-reload 重挂)才允许跨表示转移。
         """
         current_url = session.dash_assets[asset_index]
         if asset_index != session.dash_audio_asset_index or session.dash_audio_upstream_locked:
+            return [current_url]
+        if not _dash_asset_range_starts_at_zero(range_header):
             return [current_url]
         candidates: list[str] = []
         for url in [current_url] + [
@@ -1118,14 +1177,28 @@ class LocalHlsProxyServer:
         asset_index: int,
         method: str,
         upstream_headers: dict[str, str],
-    ) -> tuple[Any, Callable[[], None]]:
-        """打开 asset 上游响应,返回 (response, closer)。
+        *,
+        range_header: str | None = None,
+    ) -> tuple[Any, Callable[[], None], bytes, Any]:
+        """打开 asset 上游响应,返回 (response, closer, 首块字节, 响应体迭代器)。
 
         音频地址未锁定时按候选顺序故障转移;仅"连接/响应头阶段"的 httpx 错误
         触发转移,首个成功响应立即提交粘住并锁定。所有候选失败抛最后一个异常。
+        零起点的音频 GET 还要过吞吐门:限时读完首块字节,交不出就换下一个
+        候选——劣化边缘(头部正常、体数据断粮)会穿过头部检查并在锁定后饿死
+        外挂音轨。探针已消费的字节经 (首块字节, 迭代器) 无缝续交给调用方
+        (httpx 的 iter_bytes 不允许二次迭代)。
         """
+        candidates = self._dash_asset_upstream_candidates(session, asset_index, range_header)
+        probe_required = (
+            method == "GET"
+            and asset_index == session.dash_audio_asset_index
+            and not session.dash_audio_upstream_locked
+            and _dash_asset_range_starts_at_zero(range_header)
+        )
         last_exc: Exception | None = None
-        for url in self._dash_asset_upstream_candidates(session, asset_index):
+        for url in candidates:
+            started_at = time.monotonic()
             response_cm = self._stream(
                 method,
                 url,
@@ -1143,10 +1216,50 @@ class LocalHlsProxyServer:
             except Exception:
                 _close_context_quietly(response_cm)
                 raise
+            probed: tuple[bytes, Any] | None = None
+            if probe_required:
+                probed = self._probe_dash_asset_upstream(response, started_at)
+                if probed is None:
+                    _close_context_quietly(response_cm)
+                    last_exc = httpx.HTTPError(
+                        "dash audio upstream first-chunk gate timed out after "
+                        f"{_DASH_AUDIO_PROBE_SECONDS:.1f}s"
+                    )
+                    logger.warning(
+                        "DASH 音频上游吞吐门未通过(%.1fs 内未交出 %dKB 首块),换下一候选: %s",
+                        _DASH_AUDIO_PROBE_SECONDS,
+                        _DASH_AUDIO_PROBE_BYTES // 1024,
+                        _summarize_upstream_url(url),
+                        extra={"log_category": "network", "log_source": "app"},
+                    )
+                    continue
+            prefix, body_iterator = probed if probed is not None else (b"", None)
             self._commit_dash_asset_upstream(session, asset_index, url)
-            return response, lambda: _close_context_quietly(response_cm)
+            return response, lambda: _close_context_quietly(response_cm), prefix, body_iterator
         assert last_exc is not None
         raise last_exc
+
+    def _probe_dash_asset_upstream(self, response: Any, started_at: float) -> tuple[bytes, Any] | None:
+        """限时读取上游首块,返回 (首块字节, 已部分消费的响应体迭代器)。
+
+        迭代器必须回传给调用方续用——httpx 的 iter_bytes 只允许迭代一次,
+        所以探针用小 chunk 建迭代器,后续流式写直接接着消费它。响应体在
+        限时内自然结束(短 Range 尾巴)视为通过;超时未凑够字节返回 None。
+        """
+        deadline = started_at + _DASH_AUDIO_PROBE_SECONDS
+        body_iterator = _dash_audio_probe_iterator(response)
+        buffer = bytearray()
+        try:
+            for chunk in body_iterator:
+                if chunk:
+                    buffer += chunk
+                if len(buffer) >= _DASH_AUDIO_PROBE_BYTES or time.monotonic() >= deadline:
+                    break
+        except httpx.HTTPError:
+            return None
+        if len(buffer) < _DASH_AUDIO_PROBE_BYTES and time.monotonic() >= deadline:
+            return None
+        return bytes(buffer), body_iterator
 
     @staticmethod
     def _query_token(query: dict[str, list[str]]) -> str:
@@ -1249,7 +1362,7 @@ class LocalHlsProxyServer:
             upstream_headers["Range"] = effective_range_header
         response = None
         last_exc: Exception | None = None
-        for url in self._dash_asset_upstream_candidates(session, asset_index):
+        for url in self._dash_asset_upstream_candidates(session, asset_index, effective_range_header):
             try:
                 response = self._get(
                     url,
@@ -1321,8 +1434,8 @@ class LocalHlsProxyServer:
                 chunk_size=_dash_asset_chunk_size(session, asset_index),
             )
             upstream_headers["Range"] = effective_range_header
-        response, close_upstream = self._open_dash_asset_response(
-            session, asset_index, "GET", upstream_headers
+        response, close_upstream, probe_prefix, body_iterator = self._open_dash_asset_response(
+            session, asset_index, "GET", upstream_headers, range_header=effective_range_header
         )
         try:
             status_code = int(getattr(response, "status_code", 200) or 200)
@@ -1347,7 +1460,7 @@ class LocalHlsProxyServer:
                         handler.send_header("Accept-Ranges", "bytes")
                         handler.end_headers()
                         cursor = 0
-                        for chunk in _iter_response_bytes(response):
+                        for chunk in self._dash_asset_response_body(response, body_iterator, probe_prefix):
                             if not chunk:
                                 continue
                             next_cursor = cursor + len(chunk)
@@ -1368,12 +1481,21 @@ class LocalHlsProxyServer:
                 if header_value:
                     handler.send_header(header_name, header_value)
             handler.end_headers()
-            for chunk in _iter_response_bytes(response):
+            for chunk in self._dash_asset_response_body(response, body_iterator, probe_prefix):
                 if chunk:
                     handler.wfile.write(chunk)
         finally:
             close_upstream()
         return True
+
+    def _dash_asset_response_body(self, response: Any, body_iterator: Any, probe_prefix: bytes):
+        """上游响应体字节流:探针前缀先行,再续接探针留下的迭代器。"""
+        if probe_prefix:
+            yield probe_prefix
+        if body_iterator is not None:
+            yield from body_iterator
+        else:
+            yield from _iter_response_bytes(response)
 
     def _send_dash_asset_head_response(
         self,
@@ -1406,8 +1528,8 @@ class LocalHlsProxyServer:
                 chunk_size=_dash_asset_chunk_size(session, asset_index),
             )
             upstream_headers["Range"] = effective_range_header
-        response, close_upstream = self._open_dash_asset_response(
-            session, asset_index, "HEAD", upstream_headers
+        response, close_upstream, _probe_prefix, _body_iterator = self._open_dash_asset_response(
+            session, asset_index, "HEAD", upstream_headers, range_header=effective_range_header
         )
         try:
             handler.send_response(int(getattr(response, "status_code", 200) or 200))

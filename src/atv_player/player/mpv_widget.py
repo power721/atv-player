@@ -100,6 +100,15 @@ _YTDL_STREAM_PROFILE: dict[str, object] = {
 logger = logging.getLogger(__name__)
 # 直播弹幕专用的 osd-overlay id(避免与其它 OSD 覆盖层冲突)
 _LIVE_DANMAKU_OSD_ID = 4242
+
+# 外挂音轨断粮看门狗:DASH 直连的音频走独立上游,劣化边缘会"挂着轨但不
+# 出声"(audio-pts 冻结)。周期采样,窗口内 audio-pts 全程无变化才判死;
+# 音频是 A/V 同步主,上游硬断时播放时间会一起冻结,同样要触发重挂。
+_AUDIO_STARVATION_POLL_MILLISECONDS = 2000
+_AUDIO_STARVATION_WINDOW_SECONDS = 10.0
+_AUDIO_STARVATION_MIN_SAMPLES = 5
+_AUDIO_STARVATION_COOLDOWN_SECONDS = 30.0
+_AUDIO_STARVATION_MAX_RELOADS = 3
 # mpv_terminate_destroy 会同步等待全部内部线程退出;ffmpeg demuxer 卡死时永不返回。
 # shutdown() 在 GUI 线程被调用,terminate 挪到后台线程执行,
 # 超过该时长仍未返回则放弃等待(泄漏实例)。
@@ -350,6 +359,7 @@ class MpvWidget(QWidget):
     subtitle_tracks_changed = Signal()
     audio_tracks_changed = Signal()
     external_audio_attach_failed = Signal(str)
+    external_audio_starved = Signal(str)
     chapters_changed = Signal()
     context_menu_requested = Signal()
     context_menu_dismiss_requested = Signal()
@@ -371,6 +381,14 @@ class MpvWidget(QWidget):
         # loadfile 刚发出就 audio-add(select)会撞上 AO 初始化竞态,mpv 返回 -12
         # 但音轨往往实际已挂上;失败时记录,待 file-loaded 后校验补挂。
         self._pending_external_audio_files = ""
+        self._external_audio_files = ""
+        self._audio_starvation_timer = QTimer(self)
+        self._audio_starvation_timer.setInterval(_AUDIO_STARVATION_POLL_MILLISECONDS)
+        self._audio_starvation_timer.timeout.connect(self._check_external_audio_starvation)
+        self._audio_starvation_samples: list[tuple[float, tuple[object, object]]] = []
+        self._audio_starvation_last_fire = 0.0
+        self._audio_starvation_reloads = 0
+        self._audio_pts_supported: bool | None = None
         self._placeholder = QLabel("")
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._placeholder.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -682,6 +700,7 @@ class MpvWidget(QWidget):
             self._run_on_widget_thread(self.shutdown)
             return
         self._windows_file_loaded_timer.stop()
+        self._audio_starvation_timer.stop()
         if self._player is None:
             return
         player, self._player = self._player, None
@@ -758,6 +777,8 @@ class MpvWidget(QWidget):
             error_text = self._format_mpv_error(getattr(event_data, "error", ""))
 
             def emit_event() -> None:
+                self._audio_starvation_timer.stop()
+                self._audio_starvation_samples.clear()
                 if reason == eof_reason:
                     self._emit_playback_finished_once()
                     return
@@ -1179,6 +1200,7 @@ class MpvWidget(QWidget):
         self._windows_file_loaded_timer.stop()
         self._player_property_cache.clear()
         self._pending_external_audio_files = ""
+        self._reset_audio_starvation_state(audio_files or "")
         ensure_started_at = time.monotonic()
         self._ensure_player()
         ensure_elapsed = time.monotonic() - ensure_started_at
@@ -1323,7 +1345,11 @@ class MpvWidget(QWidget):
 
     def _attach_external_audio(self, player: Any, audio_files: str) -> None:
         if not audio_files:
+            self._external_audio_files = ""
             return
+        self._external_audio_files = audio_files
+        self._audio_starvation_samples.clear()
+        self._audio_starvation_reloads = 0
         try:
             self._audio_add_command(player, audio_files)
         except Exception:
@@ -1376,6 +1402,123 @@ class MpvWidget(QWidget):
             return
         if hasattr(player, "loadfile"):
             player.loadfile(audio_files, "append")
+
+    def _reset_audio_starvation_state(self, audio_files: str) -> None:
+        if not self._on_widget_thread():
+            self._post_to_widget_thread(lambda: self._reset_audio_starvation_state(audio_files))
+            return
+        self._external_audio_files = audio_files
+        self._audio_starvation_samples.clear()
+        self._audio_starvation_last_fire = 0.0
+        self._audio_starvation_reloads = 0
+        if audio_files:
+            self._audio_starvation_timer.start()
+        else:
+            self._audio_starvation_timer.stop()
+
+    def _probe_audio_pts_property(self, player: Any) -> bool:
+        try:
+            getattr(player, "audio_pts")
+        except Exception as exc:
+            if self._is_missing_mpv_property_error(exc):
+                logger.info("当前 libmpv 不支持 audio-pts 属性,禁用外挂音轨断粮看门狗")
+                return False
+            # 暂态读取失败:先当作支持,后续采样再实际读
+        return True
+
+    def _check_external_audio_starvation(self) -> None:
+        audio_files = self._external_audio_files
+        if not audio_files or self._pending_external_audio_files:
+            self._audio_starvation_samples.clear()
+            return
+        player = self._player
+        if player is None or getattr(player, "core_shutdown", False):
+            return
+        if self._audio_pts_supported is None:
+            self._audio_pts_supported = self._probe_audio_pts_property(player)
+        if not self._audio_pts_supported:
+            self._audio_starvation_timer.stop()
+            return
+        # 运行时属性必须走 getattr(_player_property 的回退路径):
+        # python-mpv 的 player["x"] 走 options/ 前缀,对 playback-time 等
+        # 运行时属性会直接抛 "property does not exist"。
+        paused = self._player_property("pause")
+        if paused is None:
+            return
+        playback_time = self._player_property("playback-time")
+        audio_pts = self._player_property("audio-pts")
+        tracks = self._player_property("track-list") or []
+        if paused:
+            self._audio_starvation_samples.clear()
+            return
+        if not any(
+            isinstance(track, dict)
+            and track.get("type") == "audio"
+            and track.get("external")
+            and track.get("selected")
+            for track in tracks
+        ):
+            self._audio_starvation_samples.clear()
+            return
+        now = time.monotonic()
+        samples = self._audio_starvation_samples
+        samples.append((now, (playback_time, audio_pts)))
+        while samples and now - samples[0][0] > _AUDIO_STARVATION_WINDOW_SECONDS:
+            samples.pop(0)
+        if len(samples) < _AUDIO_STARVATION_MIN_SAMPLES:
+            return
+        # 音频是 A/V 同步主:上游硬断时 playback-time 会连同 audio-pts 一起
+        # 冻结(端到端实测),劣化渗透时 audio-pts 冻结而画面继续。两种形态
+        # 都按"外挂音轨断粮"处理,重挂上限兜底误报。
+        if len({repr(sample[1][1]) for sample in samples}) > 1:
+            return  # audio-pts 在动 = 仍在出声
+        self._fire_external_audio_starvation(audio_files)
+
+    def _fire_external_audio_starvation(self, audio_files: str) -> None:
+        now = time.monotonic()
+        if now - self._audio_starvation_last_fire < _AUDIO_STARVATION_COOLDOWN_SECONDS:
+            return
+        if self._audio_starvation_reloads >= _AUDIO_STARVATION_MAX_RELOADS:
+            self._audio_starvation_timer.stop()
+            logger.warning(
+                "外挂音轨断粮重挂已达上限(%d 次),停止看门狗: %s",
+                self._audio_starvation_reloads,
+                self._summarize_media_url(audio_files),
+            )
+            self.external_audio_attach_failed.emit(audio_files)
+            return
+        self._audio_starvation_last_fire = now
+        self._audio_starvation_reloads += 1
+        self._audio_starvation_samples.clear()
+        logger.warning(
+            "外挂音轨断粮(audio-pts 冻结而播放在走),第 %d 次触发重挂: %s",
+            self._audio_starvation_reloads,
+            self._summarize_media_url(audio_files),
+        )
+        self.external_audio_starved.emit(audio_files)
+
+    def reload_external_audio(self) -> bool:
+        """audio-reload:重新打开当前外挂音轨(重读其 URL,代理可借机换上游)。"""
+        if not self._on_widget_thread():
+            return bool(self._run_on_widget_thread(self.reload_external_audio))
+        player = self._player
+        if player is None or getattr(player, "core_shutdown", False):
+            return False
+        try:
+            command = getattr(player, "command", None)
+            if callable(command):
+                # 不带 track id = 重载当前音轨;python-mpv 的 audio_reload()
+                # 无参调用会把 None 传给 mpv 报 -4,不能用
+                command("audio-reload")
+                return True
+            audio_reload = getattr(player, "audio_reload", None)
+            if callable(audio_reload):
+                audio_reload()
+                return True
+        except Exception:
+            if not getattr(player, "core_shutdown", False):
+                logger.warning("audio-reload 失败", exc_info=True)
+        return False
 
     # ── 直播弹幕 OSD(ass-events 由 live_danmaku 渲染器产出) ───────────
 

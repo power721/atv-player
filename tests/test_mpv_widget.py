@@ -3422,3 +3422,181 @@ def test_mpv_widget_shutdown_returns_promptly_when_terminate_hangs(
         assert "leaking the player instance" in caplog.text
     finally:
         release.set()
+
+
+class _StarvationFakePlayer:
+    core_shutdown = False
+
+    def __init__(self) -> None:
+        self.state: dict[str, object] = {
+            "pause": False,
+            "playback-time": 100.0,
+            "audio-pts": 50.0,
+            "track-list": [
+                {"id": 1, "type": "video"},
+                {"id": 2, "type": "audio", "external": True, "selected": True},
+            ],
+        }
+        self.audio_reload_calls = 0
+
+    def __getitem__(self, key: str):
+        return self.state.get(key)
+
+    def __setitem__(self, key: str, value: object) -> None:
+        self.state[key] = value
+
+    def audio_reload(self) -> None:
+        self.audio_reload_calls += 1
+
+
+_STARVATION_AUDIO_URL = "http://127.0.0.1:2323/dash/asset/tok/1.m4s"
+_MPV_WIDGET_MAX_STARVATION_ROUNDS = mpv_widget_module._AUDIO_STARVATION_MAX_RELOADS
+
+
+def _tick_starvation(widget, player, clock, *, playback_delta=2.0, audio_pts_delta=0.0) -> None:
+    player.state["playback-time"] = float(player.state["playback-time"]) + playback_delta
+    player.state["audio-pts"] = float(player.state["audio-pts"]) + audio_pts_delta
+    widget._check_external_audio_starvation()
+    clock["now"] += 2.0
+
+
+def test_mpv_widget_audio_starvation_watchdog_fires_when_audio_pts_freezes(qtbot, monkeypatch) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = _StarvationFakePlayer()
+    widget._player = player
+    widget._external_audio_files = _STARVATION_AUDIO_URL
+    widget._audio_pts_supported = True
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(mpv_widget_module.time, "monotonic", lambda: clock["now"])
+
+    starved: list[str] = []
+    widget.external_audio_starved.connect(starved.append)
+
+    for _ in range(4):
+        _tick_starvation(widget, player, clock)
+    assert starved == []  # 样本数不足
+
+    _tick_starvation(widget, player, clock)
+    assert starved == [_STARVATION_AUDIO_URL]
+    assert widget._audio_starvation_reloads == 1
+    # 触发后样本清空,不会连发
+    _tick_starvation(widget, player, clock)
+    assert starved == [_STARVATION_AUDIO_URL]
+
+
+def test_mpv_widget_audio_starvation_watchdog_stays_silent_while_audio_advances(qtbot, monkeypatch) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = _StarvationFakePlayer()
+    widget._player = player
+    widget._external_audio_files = _STARVATION_AUDIO_URL
+    widget._audio_pts_supported = True
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(mpv_widget_module.time, "monotonic", lambda: clock["now"])
+
+    starved: list[str] = []
+    widget.external_audio_starved.connect(starved.append)
+
+    for _ in range(8):
+        _tick_starvation(widget, player, clock, audio_pts_delta=2.0)
+    assert starved == []
+    assert widget._audio_starvation_reloads == 0
+
+
+def test_mpv_widget_audio_starvation_watchdog_ignores_pause_and_missing_track(qtbot, monkeypatch) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = _StarvationFakePlayer()
+    widget._player = player
+    widget._external_audio_files = _STARVATION_AUDIO_URL
+    widget._audio_pts_supported = True
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(mpv_widget_module.time, "monotonic", lambda: clock["now"])
+
+    starved: list[str] = []
+    widget.external_audio_starved.connect(starved.append)
+
+    player.state["pause"] = True
+    for _ in range(6):
+        _tick_starvation(widget, player, clock)
+    assert starved == []
+
+    player.state["pause"] = False
+    player.state["track-list"] = [{"id": 1, "type": "video"}]
+    for _ in range(6):
+        _tick_starvation(widget, player, clock)
+    assert starved == []
+
+
+def test_mpv_widget_audio_starvation_watchdog_respects_cooldown_and_gives_up(qtbot, monkeypatch) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = _StarvationFakePlayer()
+    widget._player = player
+    widget._external_audio_files = _STARVATION_AUDIO_URL
+    widget._audio_pts_supported = True
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(mpv_widget_module.time, "monotonic", lambda: clock["now"])
+
+    starved: list[str] = []
+    attach_failed: list[str] = []
+    widget.external_audio_starved.connect(starved.append)
+    widget.external_audio_attach_failed.connect(attach_failed.append)
+
+    for round_index in range(_MPV_WIDGET_MAX_STARVATION_ROUNDS):
+        for _ in range(5):
+            _tick_starvation(widget, player, clock)
+        if round_index == 0:
+            assert starved == [_STARVATION_AUDIO_URL]
+        # 冷却期内的持续断粮不触发
+        assert len(starved) == round_index + 1
+        clock["now"] += 31.0
+
+    # 达到重挂上限:停止看门狗并显性提示无声音
+    for _ in range(5):
+        _tick_starvation(widget, player, clock)
+    assert len(starved) == _MPV_WIDGET_MAX_STARVATION_ROUNDS
+    assert attach_failed == [_STARVATION_AUDIO_URL]
+    assert widget._audio_starvation_timer.isActive() is False
+
+
+def test_mpv_widget_reload_external_audio_uses_audio_reload_command(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = _StarvationFakePlayer()
+    widget._player = player
+
+    assert widget.reload_external_audio() is True
+    assert player.audio_reload_calls == 1
+
+
+def test_mpv_widget_audio_starvation_watchdog_disables_without_audio_pts_support(qtbot) -> None:
+    class LegacyPlayer(_StarvationFakePlayer):
+        @property
+        def audio_pts(self):
+            raise AttributeError(
+                "('mpv property does not exist', -8, (<MpvHandle object at 0x1>, b'audio-pts'))"
+            )
+
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = LegacyPlayer()
+    widget._player = player
+    widget._external_audio_files = _STARVATION_AUDIO_URL
+
+    starved: list[str] = []
+    widget.external_audio_starved.connect(starved.append)
+
+    widget._check_external_audio_starvation()
+    # 首轮即探测到属性缺失:禁用看门狗,不采样也不崩溃
+    assert widget._audio_pts_supported is False
+    assert widget._audio_starvation_timer.isActive() is False
+
+    for _ in range(6):
+        _tick_starvation(widget, player, {"now": time.monotonic()})
+    assert starved == []

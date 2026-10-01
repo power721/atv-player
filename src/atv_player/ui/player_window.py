@@ -1408,6 +1408,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.video_widget.left_clicked.connect(self._release_focus_for_video_press)
         self.video_widget.playback_failed.connect(self._handle_playback_failed)
         self.video_widget.external_audio_attach_failed.connect(self._handle_external_audio_attach_failed)
+        self.video_widget.external_audio_starved.connect(self._handle_external_audio_starved)
         self.video_widget.file_loaded.connect(self._handle_video_file_loaded)
         self.video_widget.video_picture_state_changed.connect(self._handle_video_picture_state_changed)
         self.video_widget.pause_state_changed.connect(self._handle_pause_state_changed)
@@ -5971,6 +5972,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _handle_external_audio_attach_failed(self, audio_url: str) -> None:
         # DASH 直连模式的音轨两次挂载都失败:画面正常但没有声音,必须显性提示。
         self._append_log(f"外挂音轨挂载失败,当前无声音: {_summarize_media_url(audio_url)}")
+
+    def _handle_external_audio_starved(self, audio_url: str) -> None:
+        # DASH 直连音频上游劣化(音轨挂着但 audio-pts 冻结):解锁代理粘住地址
+        # 并 audio-reload 重挂,零起点重开会让代理按候选+吞吐门换到健康边缘。
+        proxy_server = getattr(self._m3u8_ad_filter, "proxy_server", None)
+        reset = getattr(proxy_server, "reset_dash_audio_upstream", None)
+        unlocked = bool(callable(reset) and reset(audio_url))
+        reloaded = self.video_widget.reload_external_audio()
+        if reloaded:
+            self._append_log(
+                f"外挂音轨断流,已{'解锁音频上游并' if unlocked else ''}重挂: {_summarize_media_url(audio_url)}"
+            )
+        else:
+            self._append_log(f"外挂音轨断流且重挂失败,当前无声音: {_summarize_media_url(audio_url)}")
 
     def _handle_playback_failed(self, message: str) -> None:
         if self._should_recover_recent_seek_failure():

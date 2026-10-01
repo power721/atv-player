@@ -27940,3 +27940,32 @@ def test_player_window_retries_danmaku_attach_while_player_track_pending(qtbot) 
 
     window._danmaku_retry_attempts = 3
     assert window._should_retry_danmaku_load(RuntimeError("播放器未返回弹幕轨道")) is False
+
+
+def test_player_window_external_audio_starved_unlocks_proxy_and_reloads_audio(qtbot) -> None:
+    from types import SimpleNamespace
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    reset_calls: list[str] = []
+    reload_calls: list[bool] = []
+
+    def fake_reset(media_url: str) -> bool:
+        reset_calls.append(media_url)
+        return True
+
+    def fake_reload() -> bool:
+        reload_calls.append(True)
+        return True
+
+    window._m3u8_ad_filter = SimpleNamespace(
+        proxy_server=SimpleNamespace(reset_dash_audio_upstream=fake_reset)
+    )
+    window.video_widget.reload_external_audio = fake_reload
+
+    window._handle_external_audio_starved("http://127.0.0.1:2323/dash/asset/tok/1.m4s")
+
+    assert reset_calls == ["http://127.0.0.1:2323/dash/asset/tok/1.m4s"]
+    assert reload_calls == [True]
+    assert "外挂音轨断流,已解锁音频上游并重挂" in window.log_view.toPlainText()

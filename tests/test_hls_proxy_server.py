@@ -12,6 +12,7 @@ from atv_player.player.m3u8_ad_filter import M3U8AdFilter
 from atv_player.proxy.server import LocalHlsProxyServer
 from atv_player.proxy.session import PlaylistSegment
 import httpx
+import pytest
 
 
 def test_m3u8_ad_filter_returns_proxy_url_for_remote_m3u8() -> None:
@@ -1884,6 +1885,176 @@ def test_local_hls_proxy_server_fails_over_dash_audio_upstream_for_buffered_get(
     session = server._registry.get(token)
     assert session is not None
     assert session.dash_assets[1] == "https://edge-b.example/audio-132.m4s"
+
+
+class _SlowBodyStream:
+    """模拟劣化边缘:连接/响应头正常,但体数据迟迟不来(2026-10-01 无声事故形态)。"""
+
+    def __init__(self, delay: float, body: bytes = b"0123456789") -> None:
+        self.delay = delay
+        self.body = body
+        self.status_code = 206
+        self.headers = {
+            "Content-Type": "audio/mp4",
+            "Content-Length": str(len(body)),
+            "Content-Range": f"bytes 0-{len(body) - 1}/{len(body)}",
+            "Accept-Ranges": "bytes",
+        }
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def iter_bytes(self, chunk_size=None):
+        import time
+
+        time.sleep(self.delay)
+        yield self.body
+
+
+def test_local_hls_proxy_server_gates_slow_dash_audio_upstream_and_fails_over(monkeypatch) -> None:
+    from atv_player.proxy import server as proxy_server_module
+
+    monkeypatch.setattr(proxy_server_module, "_DASH_AUDIO_PROBE_SECONDS", 0.2)
+    calls: list[str] = []
+
+    def fake_stream(method: str, url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        calls.append(url)
+        if url == "https://edge-a.example/audio-192.m4s":
+            return _SlowBodyStream(0.5)
+        return _ok_stream_response()
+
+    server, token, _audio_url = _create_dash_failover_server(fake_stream)
+    handler = _FakeAssetHandler()
+
+    handled = server._stream_dash_asset_response(
+        f"/dash/asset/{token}/1.m4s",
+        {"Range": "bytes=0-9"},
+        handler,
+    )
+
+    # 劣化边缘头部正常但首块超时:吞吐门拦下,转移并粘住健康表示
+    assert handled is True
+    assert handler.wfile.getvalue() == b"0123456789"
+    assert calls == [
+        "https://edge-a.example/audio-192.m4s",
+        "https://edge-b.example/audio-132.m4s",
+    ]
+    session = server._registry.get(token)
+    assert session is not None
+    assert session.dash_assets[1] == "https://edge-b.example/audio-132.m4s"
+
+
+def test_local_hls_proxy_server_raises_when_all_dash_audio_candidates_starve(monkeypatch) -> None:
+    from atv_player.proxy import server as proxy_server_module
+
+    monkeypatch.setattr(proxy_server_module, "_DASH_AUDIO_PROBE_SECONDS", 0.2)
+
+    def fake_stream(method: str, url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        return _SlowBodyStream(0.5)
+
+    server, token, _audio_url = _create_dash_failover_server(fake_stream)
+
+    # 全部候选都交不出首块:最后一个门超时异常上抛(本地表现为 502)
+    with pytest.raises(httpx.HTTPError, match="first-chunk"):
+        server._stream_dash_asset_response(
+            f"/dash/asset/{token}/1.m4s",
+            {"Range": "bytes=0-9"},
+            _FakeAssetHandler(),
+        )
+    session = server._registry.get(token)
+    assert session is not None
+    # 未通过门的候选不得提交粘住
+    assert session.dash_assets[1] == "https://edge-a.example/audio-192.m4s"
+    assert session.dash_audio_upstream_locked is False
+
+
+def test_local_hls_proxy_server_reset_dash_audio_upstream_allows_fresh_failover(monkeypatch) -> None:
+    from atv_player.proxy import server as proxy_server_module
+
+    monkeypatch.setattr(proxy_server_module, "_DASH_AUDIO_PROBE_SECONDS", 0.2)
+    calls: list[str] = []
+    slow_first_audio = False
+
+    def fake_stream(method: str, url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        calls.append(url)
+        if url == "https://edge-a.example/audio-192.m4s" and slow_first_audio:
+            return _SlowBodyStream(0.5)
+        return _ok_stream_response()
+
+    server, token, audio_url = _create_dash_failover_server(fake_stream)
+    session = server._registry.get(token)
+    assert session is not None
+
+    # 先正常锁定 edge-a
+    server._stream_dash_asset_response(
+        f"/dash/asset/{token}/1.m4s",
+        {"Range": "bytes=0-9"},
+        _FakeAssetHandler(),
+    )
+    assert session.dash_audio_upstream_locked is True
+
+    # 音轨断粮:解锁成功;非 dash asset 地址与未知 token 均返回 False
+    assert server.reset_dash_audio_upstream(audio_url) is True
+    assert session.dash_audio_upstream_locked is False
+    assert server.reset_dash_audio_upstream("http://media.example/video.mp4") is False
+    assert server.reset_dash_audio_upstream(
+        f"http://{server.host}:{server.port}/dash/asset/missing-token/1.m4s"
+    ) is False
+
+    # 零起点(audio-reload 重挂形态):跳过劣化 edge-a,转移到 edge-b 并重新锁定
+    calls.clear()
+    slow_first_audio = True
+    server._stream_dash_asset_response(
+        f"/dash/asset/{token}/1.m4s",
+        {"Range": "bytes=0-9"},
+        _FakeAssetHandler(),
+    )
+    assert calls == [
+        "https://edge-a.example/audio-192.m4s",
+        "https://edge-b.example/audio-132.m4s",
+    ]
+    assert session.dash_assets[1] == "https://edge-b.example/audio-132.m4s"
+    assert session.dash_audio_upstream_locked is True
+
+
+def test_local_hls_proxy_server_keeps_dash_audio_representation_for_midfile_range_after_unlock(monkeypatch) -> None:
+    from atv_player.proxy import server as proxy_server_module
+
+    monkeypatch.setattr(proxy_server_module, "_DASH_AUDIO_PROBE_SECONDS", 0.2)
+    calls: list[str] = []
+
+    def fake_stream(method: str, url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        calls.append(url)
+        if url == "https://edge-a.example/audio-192.m4s":
+            return _SlowBodyStream(0.05)
+        return _ok_stream_response()
+
+    server, token, audio_url = _create_dash_failover_server(fake_stream)
+    session = server._registry.get(token)
+    assert session is not None
+    server._stream_dash_asset_response(
+        f"/dash/asset/{token}/1.m4s",
+        {"Range": "bytes=0-9"},
+        _FakeAssetHandler(),
+    )
+    assert server.reset_dash_audio_upstream(audio_url) is True
+
+    # 解锁后非零起点续读仍锁定在同一表示:跨表示换地址会字节错位
+    calls.clear()
+    handled = server._stream_dash_asset_response(
+        f"/dash/asset/{token}/1.m4s",
+        {"Range": "bytes=5-9"},
+        _FakeAssetHandler(),
+    )
+    assert handled is True
+    assert calls == ["https://edge-a.example/audio-192.m4s"]
+    assert session.dash_assets[1] == "https://edge-a.example/audio-192.m4s"
 
 
 def test_local_hls_proxy_server_streams_iso_response_without_buffering_full_body() -> None:
