@@ -121,9 +121,11 @@ def _map_detail_actions(payload: object) -> list[PlaybackDetailAction]:
     return actions
 
 
-def _map_bilibili_detail_fields(payload: object) -> list[PlaybackDetailField]:
+def _map_bilibili_detail_fields(payload: object, vod_id: object | None = None) -> list[PlaybackDetailField]:
     if not isinstance(payload, dict):
         return []
+    normalized_vod_id = str(vod_id or "").strip()
+    comments_bvid = normalized_vod_id if _BILIBILI_BVID_RE.match(normalized_vod_id) else ""
     fields: list[PlaybackDetailField] = []
     for key, label in _BILIBILI_DETAIL_FIELD_SPECS:
         raw_value = payload.get(key)
@@ -131,6 +133,20 @@ def _map_bilibili_detail_fields(payload: object) -> list[PlaybackDetailField]:
             continue
         value = _format_bilibili_stat_value(raw_value)
         if not value:
+            continue
+        if key == "reply" and comments_bvid:
+            # BV 视频的评论总数可点开评论对话框;ss 番剧评论区类型不同,保持纯文本
+            fields.append(
+                PlaybackDetailField(
+                    label=label,
+                    value_parts=[
+                        PlaybackDetailValuePart(
+                            label=value,
+                            action=PlaybackDetailFieldAction(type="comments", value=comments_bvid, target="bilibili"),
+                        )
+                    ],
+                )
+            )
             continue
         fields.append(PlaybackDetailField(label=label, value=value))
     return fields
@@ -279,6 +295,14 @@ class BilibiliController:
         payload = self._api_client.list_bilibili_categories()
         return _map_categories(payload)
 
+    def load_comments(self, vod_id: str, mode: int = 3, next_offset: str = "") -> dict[str, object]:
+        """评论主列表(mode 3=热门/2=最新);由播放窗口评论对话框在后台线程调用。"""
+        return self._api_client.list_bilibili_comments(vod_id, mode=mode, next_offset=next_offset)
+
+    def load_comment_replies(self, vod_id: str, root: str, page: int = 1) -> dict[str, object]:
+        """楼中楼:根评论(rpid)的子回复分页。"""
+        return self._api_client.list_bilibili_comment_replies(vod_id, root, page=page)
+
     def _decorate_card_subtitle(self, item: VodItem) -> VodItem:
         subtitle_parts = [item.vod_year.strip(), item.vod_remarks.strip()]
         item.vod_remarks = " - ".join(part for part in subtitle_parts if part)
@@ -291,7 +315,7 @@ class BilibiliController:
         detail = _map_vod_item(payload)
         ext_payload = payload.get("ext")
         detail.detail_fields = _map_bilibili_web_id_fields(payload.get("vod_id"), ext_payload)
-        detail.detail_fields.extend(_map_bilibili_detail_fields(ext_payload))
+        detail.detail_fields.extend(_map_bilibili_detail_fields(ext_payload, payload.get("vod_id")))
         detail.detail_style = "bilibili"
         return detail
 

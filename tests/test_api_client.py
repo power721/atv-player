@@ -1250,6 +1250,49 @@ def test_api_client_gets_bilibili_playback_source() -> None:
     assert seen == {"path": "/play/Harold", "query": "bvid=BV1xx411c7mD&dash=true"}
 
 
+def test_api_client_lists_bilibili_comments_with_mode_and_cursor() -> None:
+    seen_queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_queries.append(f"{request.url.path}?{request.url.query.decode()}")
+        return httpx.Response(200, json={"count": 0, "comments": []})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.list_bilibili_comments("BV1xx411c7mD")
+    client.list_bilibili_comments("BV1xx411c7mD", mode=2, next_offset='{"type":3}')
+
+    assert seen_queries == [
+        "/bilibili/Harold/comments?ids=BV1xx411c7mD&mode=3",
+        "/bilibili/Harold/comments?ids=BV1xx411c7mD&mode=2&next=%7B%22type%22%3A3%7D",
+    ]
+
+
+def test_api_client_lists_bilibili_comment_replies_by_root_and_page() -> None:
+    seen = {"path": "", "query": ""}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["query"] = request.url.query.decode()
+        return httpx.Response(200, json={"count": 0, "replies": []})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.list_bilibili_comment_replies("BV1xx411c7mD", "1002", page=2)
+
+    assert seen == {"path": "/bilibili/Harold/comments", "query": "ids=BV1xx411c7mD&root=1002&pn=2"}
+
+
 def test_api_client_gets_feiniu_playback_source() -> None:
     seen = {"path": "", "query": ""}
 

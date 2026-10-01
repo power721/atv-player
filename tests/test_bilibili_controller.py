@@ -453,8 +453,46 @@ def test_build_request_maps_bilibili_stat_ext_into_vod_detail_fields() -> None:
         PlaybackDetailField(label="投币", value="1.1万"),
         PlaybackDetailField(label="点赞", value="4.1万"),
         PlaybackDetailField(label="收藏", value="2.3万"),
-        PlaybackDetailField(label="回复", value="962"),
+        PlaybackDetailField(
+            label="回复",
+            value_parts=[
+                PlaybackDetailValuePart(
+                    label="962",
+                    action=PlaybackDetailFieldAction(type="comments", value="BV14rd3BJEDV", target="bilibili"),
+                )
+            ],
+        ),
         PlaybackDetailField(label="弹幕", value="774"),
+    ]
+
+
+def test_build_request_keeps_ss_reply_stat_plain_without_comments_action() -> None:
+    api = FakeApiClient()
+    api.detail_payload = {
+        "list": [
+            {
+                "vod_id": "ss142986",
+                "vod_name": "番剧详情",
+                "vod_play_url": "正片$ss142986",
+                "ext": {"reply": 333402},
+            }
+        ]
+    }
+    controller = BilibiliController(api)
+
+    request = controller.build_request("ss142986")
+
+    assert request.vod.detail_fields == [
+        PlaybackDetailField(
+            label="Season ID",
+            value_parts=[
+                PlaybackDetailValuePart(
+                    label="142986",
+                    action=PlaybackDetailFieldAction(type="link", value="ss142986", target="bilibili"),
+                )
+            ],
+        ),
+        PlaybackDetailField(label="回复", value="33.3万"),
     ]
 
 

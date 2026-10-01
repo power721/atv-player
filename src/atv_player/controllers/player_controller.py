@@ -79,6 +79,7 @@ class PlayerSession:
     async_playback_loader: bool = False
     detail_action_runner: Callable[[PlayItem, str], list[PlaybackDetailAction]] | None = None
     detail_field_runner: Callable[[PlayItem, PlaybackDetailFieldAction], None] | None = None
+    bilibili_comments_loader: Callable[[dict[str, object]], dict[str, object]] | None = None
     metadata_hydrator: Callable[[object], VodItem | None] | None = None
     metadata_scrape_service: object | None = None
     subtitle_search_service: object | None = None
@@ -471,6 +472,7 @@ class PlayerController:
         async_playback_loader: bool = False,
         detail_action_runner: Callable[[PlayItem, str], list[PlaybackDetailAction]] | None = None,
         detail_field_runner: Callable[[PlayItem, PlaybackDetailFieldAction], None] | None = None,
+        bilibili_comments_loader: Callable[[dict[str, object]], dict[str, object]] | None = None,
         metadata_hydrator: Callable[[object], VodItem | None] | None = None,
         metadata_scrape_service: object | None = None,
         subtitle_search_service: object | None = None,
@@ -563,6 +565,7 @@ class PlayerController:
             async_playback_loader=async_playback_loader,
             detail_action_runner=detail_action_runner,
             detail_field_runner=detail_field_runner,
+            bilibili_comments_loader=bilibili_comments_loader,
             metadata_hydrator=metadata_hydrator,
             metadata_scrape_service=metadata_scrape_service,
             subtitle_search_service=subtitle_search_service,

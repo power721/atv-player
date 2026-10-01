@@ -27969,3 +27969,81 @@ def test_player_window_external_audio_starved_unlocks_proxy_and_reloads_audio(qt
     assert reset_calls == ["http://127.0.0.1:2323/dash/asset/tok/1.m4s"]
     assert reload_calls == [True]
     assert "外挂音轨断流,已解锁音频上游并重挂" in window.log_view.toPlainText()
+
+
+def test_player_window_comments_action_opens_dialog_without_returning_to_main(qtbot, monkeypatch) -> None:
+    created: dict[str, object] = {}
+
+    class StubCommentsDialog:
+        def __init__(self, bvid, loader, parent=None) -> None:
+            created["bvid"] = bvid
+            created["loader"] = loader
+            created["parent"] = parent
+            created["exec_called"] = False
+
+        def exec(self):
+            created["exec_called"] = True
+            return 0
+
+    monkeypatch.setattr(player_window_module, "BilibiliCommentsDialog", StubCommentsDialog)
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    session = make_player_session()
+    session.bilibili_comments_loader = lambda query: {"count": 0, "comments": []}
+    window.open_session(session)
+    returned: list[bool] = []
+    window._return_to_main = lambda: returned.append(True)
+
+    window._run_detail_field_action(
+        PlaybackDetailFieldAction(type="comments", value="BV1xx411c7mD", target="bilibili")
+    )
+
+    assert created["bvid"] == "BV1xx411c7mD"
+    assert created["exec_called"] is True
+    assert created["parent"] is window
+    assert returned == []
+
+
+def test_player_window_comments_action_without_loader_logs_and_skips_dialog(qtbot, monkeypatch) -> None:
+    dialog_created: list[bool] = []
+
+    class ExplodingDialog:
+        def __init__(self, *args, **kwargs) -> None:
+            dialog_created.append(True)
+
+    monkeypatch.setattr(player_window_module, "BilibiliCommentsDialog", ExplodingDialog)
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(make_player_session())  # 不设 bilibili_comments_loader
+
+    window._run_detail_field_action(
+        PlaybackDetailFieldAction(type="comments", value="BV1xx411c7mD", target="bilibili")
+    )
+
+    assert dialog_created == []
+    assert "当前来源不支持评论" in window.log_view.toPlainText()
+
+
+def test_player_window_comments_action_field_renders_external_link_style(qtbot) -> None:
+    """「回复」评论入口渲染须与 BVID 同款样式(accent/加粗/无下划线),不吃 QTextBrowser 默认链接样式。"""
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(make_player_session())
+
+    field = PlaybackDetailField(
+        label="回复",
+        value_parts=[
+            PlaybackDetailValuePart(
+                label="962",
+                action=PlaybackDetailFieldAction(type="comments", value="BV1xx411c7mD", target="bilibili"),
+            )
+        ],
+    )
+
+    rendered = window._detail_field_html(field)
+
+    assert 'href="atv-player://detail-field?' in rendered
+    assert "text-decoration:none" in rendered
+    assert "font-weight:600" in rendered

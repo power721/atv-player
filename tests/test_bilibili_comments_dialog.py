@@ -1,0 +1,252 @@
+from __future__ import annotations
+
+import threading
+
+import pytest
+
+from atv_player.ui.bilibili_comments_dialog import BilibiliCommentsDialog
+
+
+def _comment(rpid: str, uname: str, message: str = "内容", **extra) -> dict:
+    payload = {
+        "rpid": rpid,
+        "uname": uname,
+        "avatar": "",
+        "level": 4,
+        "message": message,
+        "like": 12,
+        "rcount": 0,
+        "time_desc": "3天前发布",
+        "location": "IP属地：河北",
+        "top": False,
+        "is_up": False,
+    }
+    payload.update(extra)
+    return payload
+
+
+def _main_payload(comments: list[dict], count: int = 962, is_end: bool = False, next_offset: str = "cursor-2") -> dict:
+    return {"count": count, "is_end": is_end, "next_offset": next_offset if not is_end else "", "comments": comments}
+
+
+class FakeLoader:
+    """同步假 loader:记录请求,按 kind 返回预设载荷;可切换为抛错。"""
+
+    def __init__(self, payloads: list[dict] | None = None, error: Exception | None = None) -> None:
+        self.requests: list[dict] = []
+        self.payloads = list(payloads or [])
+        self.error = error
+        self.lock = threading.Lock()
+
+    def __call__(self, request: dict) -> dict:
+        with self.lock:
+            self.requests.append(dict(request))
+        if self.error is not None:
+            raise self.error
+        with self.lock:
+            if not self.payloads:
+                raise AssertionError(f"unexpected loader request: {request}")
+            return self.payloads.pop(0)
+
+
+def _make_dialog(qtbot, loader) -> BilibiliCommentsDialog:
+    dialog = BilibiliCommentsDialog("BV1xx411c7mD", loader)
+    qtbot.addWidget(dialog)
+    return dialog
+
+
+def _wait_until_cards(qtbot, dialog: BilibiliCommentsDialog, count: int = 1) -> None:
+    qtbot.waitUntil(lambda: len(dialog.cards()) >= count, timeout=5000)
+
+
+def test_dialog_loads_main_comments_with_count_and_pagination(qtbot) -> None:
+    loader = FakeLoader(payloads=[_main_payload([_comment("1001", "小明"), _comment("1002", "小红", like=25000)])])
+    dialog = _make_dialog(qtbot, loader)
+
+    _wait_until_cards(qtbot, dialog, 2)
+
+    assert loader.requests[0] == {"kind": "main", "bvid": "BV1xx411c7mD", "mode": 3, "next": ""}
+    assert dialog.title_label.text() == "评论 · 962条"
+    assert dialog.status_label.text() == ""
+    assert dialog.load_more_button.isVisibleTo(dialog)
+    assert dialog.mode_hot_button.isChecked()
+    card = dialog.card_by_rpid("1001")
+    assert card is not None
+    assert card.message_label.text() == "内容"
+    card2 = dialog.card_by_rpid("1002")
+    assert card2 is not None
+    assert card2.like_label.text() == "👍 2.5万"
+
+
+def test_dialog_mode_switch_resets_list_and_requests_new_mode(qtbot) -> None:
+    loader = FakeLoader(
+        payloads=[
+            _main_payload([_comment("1001", "小明")]),
+            _main_payload([_comment("2001", "最新小明")], count=100, is_end=True),
+        ]
+    )
+    dialog = _make_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog, 1)
+
+    dialog.mode_latest_button.click()
+    _wait_until_cards(qtbot, dialog, 1)
+    qtbot.waitUntil(lambda: dialog.card_by_rpid("2001") is not None, timeout=5000)
+
+    assert loader.requests[1] == {"kind": "main", "bvid": "BV1xx411c7mD", "mode": 2, "next": ""}
+    assert dialog.card_by_rpid("1001") is None
+    assert not dialog.load_more_button.isVisibleTo(dialog)
+    assert dialog.mode_latest_button.isChecked()
+    assert not dialog.mode_hot_button.isChecked()
+
+
+def test_dialog_load_more_appends_next_page_with_cursor(qtbot) -> None:
+    loader = FakeLoader(
+        payloads=[
+            _main_payload([_comment("1001", "小明")]),
+            _main_payload([_comment("1002", "小红")], is_end=True),
+        ]
+    )
+    dialog = _make_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog, 1)
+
+    dialog.load_more_button.click()
+    qtbot.waitUntil(lambda: dialog.card_by_rpid("1002") is not None, timeout=5000)
+
+    assert loader.requests[1]["next"] == "cursor-2"
+    assert len(dialog.cards()) == 2
+    assert not dialog.load_more_button.isVisibleTo(dialog)
+
+
+def test_card_expands_floor_from_preview_without_request(qtbot) -> None:
+    preview = [_comment("1003", "小刚"), _comment("1004", "UP主", is_up=True)]
+    loader = FakeLoader(payloads=[_main_payload([_comment("1001", "小明", rcount=2, preview=preview)])])
+    dialog = _make_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog, 1)
+
+    card = dialog.card_by_rpid("1001")
+    card.toggle_reply_button.click()
+    qtbot.waitUntil(lambda: len(card.floor_rows()) == 2, timeout=5000)
+
+    assert card.floor_expanded()
+    assert card.toggle_reply_button.text() == "收起 ▴"
+    assert [row.comment.uname for row in card.floor_rows()] == ["小刚", "UP主"]
+    # 行必须真正挂进楼中楼布局(仅 parent 构造不自动入布局,曾致展开空白)
+    floor_layout = card._floor_widget.layout()
+    assert all(floor_layout.indexOf(row) >= 0 for row in card.floor_rows())
+    assert card.more_replies_button() is None
+    assert all(request.get("kind") == "main" for request in loader.requests)
+
+    card.toggle_reply_button.click()
+    assert not card.floor_expanded()
+    assert card.toggle_reply_button.text() == "共2条回复 ▾"
+
+
+def test_card_expands_floor_by_fetching_replies_with_pagination(qtbot) -> None:
+    preview = [_comment("1003", "小刚")]
+    replies_page1 = [_comment("1003", "小刚")] + [
+        _comment(f"200{n}", f"层内{n}", parent_uname="小刚") for n in range(1, 3)
+    ]
+    loader = FakeLoader(
+        payloads=[
+            _main_payload([_comment("1001", "小明", rcount=32, preview=preview)]),
+            {"count": 32, "page": 1, "replies": replies_page1},
+            {"count": 32, "page": 2, "replies": [_comment("3001", "第三页回复")]},
+        ]
+    )
+    dialog = _make_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog, 1)
+
+    card = dialog.card_by_rpid("1001")
+    card.toggle_reply_button.click()
+    qtbot.waitUntil(lambda: card.more_replies_button() is not None, timeout=5000)
+
+    assert loader.requests[1] == {"kind": "replies", "bvid": "BV1xx411c7mD", "root": "1001", "page": 1}
+    rows = card.floor_rows()
+    assert len(rows) == 3
+    assert rows[0].message_label.text() == "内容"
+    assert rows[1].message_label.text() == "回复 @小刚：内容"
+    floor_layout = card._floor_widget.layout()
+    assert all(floor_layout.indexOf(row) >= 0 for row in rows)
+
+    card.more_replies_button().click()
+    qtbot.waitUntil(lambda: len(card.floor_rows()) == 4, timeout=5000)
+    assert loader.requests[2]["page"] == 2
+
+
+def test_dialog_surfaces_loader_error_and_recovers_on_mode_switch(qtbot) -> None:
+    loader = FakeLoader(error=RuntimeError("评论区已关闭"))
+    dialog = _make_dialog(qtbot, loader)
+    qtbot.waitUntil(lambda: dialog.status_label.text() != "加载中...", timeout=5000)
+
+    assert dialog.status_label.text() == "加载失败:评论区已关闭"
+    assert not dialog.cards()
+
+    loader.error = None
+    loader.payloads = [_main_payload([_comment("1001", "小明")], is_end=True)]
+    dialog.mode_latest_button.click()
+    _wait_until_cards(qtbot, dialog, 1)
+    assert dialog.status_label.text() == ""
+
+
+def test_dialog_shows_empty_state_without_comments(qtbot) -> None:
+    loader = FakeLoader(payloads=[_main_payload([], count=0, is_end=True)])
+    dialog = _make_dialog(qtbot, loader)
+    qtbot.waitUntil(lambda: dialog.status_label.text() != "加载中...", timeout=5000)
+
+    assert dialog.status_label.text() == "暂无评论"
+    assert not dialog.load_more_button.isVisibleTo(dialog)
+
+
+def test_dialog_marks_top_and_up_comments(qtbot) -> None:
+    loader = FakeLoader(
+        payloads=[_main_payload([_comment("1001", "UP主", top=True, is_up=True), _comment("1002", "小明")])]
+    )
+    dialog = _make_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog, 2)
+
+    top_card = dialog.card_by_rpid("1001")
+    assert "[置顶]" in top_card.meta_label.text()
+    assert "[作者]" in top_card.meta_label.text()
+    assert "[置顶]" not in dialog.card_by_rpid("1002").meta_label.text()
+
+
+def test_dialog_ignores_stale_replies_response_after_mode_reset(qtbot) -> None:
+    release_first = threading.Event()
+    started_first = threading.Event()
+
+    def slow_loader(request: dict) -> dict:
+        if request.get("kind") == "replies" and request.get("root") == "1001":
+            started_first.set()
+            release_first.wait(timeout=5)
+            return {"count": 1, "page": 1, "replies": [_comment("9001", "迟到回复")]}
+        if request.get("kind") == "replies":
+            return {"count": 1, "page": 1, "replies": [_comment("8001", "新楼回复")]}
+        if request.get("mode") == 2:
+            return _main_payload([_comment("2001", "最新小明", rcount=1)], is_end=True)
+        return _main_payload([_comment("1001", "小明", rcount=1)], is_end=True)
+
+    dialog = BilibiliCommentsDialog("BV1xx411c7mD", slow_loader)
+    qtbot.addWidget(dialog)
+    _wait_until_cards(qtbot, dialog, 1)
+
+    old_card = dialog.card_by_rpid("1001")
+    old_card.toggle_reply_button.click()
+    assert started_first.wait(timeout=5000)
+    dialog.mode_latest_button.click()
+    qtbot.waitUntil(lambda: dialog.card_by_rpid("2001") is not None, timeout=5000)
+    release_first.set()
+
+    new_card = dialog.card_by_rpid("2001")
+    new_card.toggle_reply_button.click()
+    qtbot.waitUntil(
+        lambda: bool(new_card.floor_rows()) and new_card.floor_rows()[0].comment.uname == "新楼回复", timeout=5000
+    )
+    # 旧 card 已随重置销毁:迟到响应仅被丢弃,不炸不串楼
+    assert new_card.floor_rows()[0].comment.rpid == "8001"
+
+
+@pytest.mark.parametrize("raw,expected", [("962", "962"), (12000, "1.2万"), (0, "0")])
+def test_format_stat_value_formats_wan(raw, expected) -> None:
+    from atv_player.ui.bilibili_comments_dialog import _format_stat_value
+
+    assert _format_stat_value(raw) == expected

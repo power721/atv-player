@@ -361,6 +361,18 @@ class ApiClient:
             headers={"X-CLIENT": "gui"},
         )
 
+    def list_bilibili_comments(self, vod_id: str, mode: int = 3, next_offset: str = "") -> dict[str, Any]:
+        """B站评论主列表(mode 3=热门/2=最新,next_offset 游标翻页),每条带子回复预览。"""
+        params: dict[str, Any] = {"ids": vod_id, "mode": mode}
+        if next_offset:
+            params["next"] = next_offset
+        return self._request("GET", f"/bilibili/{self._vod_token}/comments", params=params, headers={"X-CLIENT": "gui"})
+
+    def list_bilibili_comment_replies(self, vod_id: str, root: str, page: int = 1) -> dict[str, Any]:
+        """B站楼中楼:指定根评论(rpid)的子回复,pn/ps 翻页。"""
+        params: dict[str, Any] = {"ids": vod_id, "root": root, "pn": page}
+        return self._request("GET", f"/bilibili/{self._vod_token}/comments", params=params, headers={"X-CLIENT": "gui"})
+
     def list_emby_items(
         self,
         category_id: str,

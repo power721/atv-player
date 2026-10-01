@@ -6699,6 +6699,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             async_playback_loader=request.async_playback_loader,
             detail_action_runner=request.detail_action_runner,
             detail_field_runner=request.detail_field_runner,
+            bilibili_comments_loader=request.bilibili_comments_loader,
             metadata_hydrator=request.metadata_hydrator,
             metadata_scrape_service=request.metadata_scrape_service,
             subtitle_search_service=self._subtitle_search_service,
@@ -6815,6 +6816,22 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             request.detail_field_runner = (
                 lambda item, action, page=self.bilibili_page: self._run_bilibili_detail_field_action(page, item, action)
             )
+            if request.bilibili_comments_loader is None:
+                controller = self.bilibili_controller
+
+                def load_bilibili_comments(query: dict) -> dict:
+                    vod_id = str(query.get("bvid") or "").strip()
+                    if not vod_id:
+                        raise ValueError("缺少视频 ID")
+                    if query.get("kind") == "replies":
+                        return controller.load_comment_replies(
+                            vod_id, str(query.get("root") or "").strip(), int(query.get("page") or 1)
+                        )
+                    return controller.load_comments(
+                        vod_id, mode=int(query.get("mode") or 3), next_offset=str(query.get("next") or "")
+                    )
+
+                request.bilibili_comments_loader = load_bilibili_comments
         return request
 
     def _run_browse_detail_field_action(

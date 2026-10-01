@@ -158,6 +158,7 @@ from atv_player.playlist_sorting import (
 )
 from atv_player.request_headers import normalize_media_request_headers
 from atv_player.ui.async_guard import AsyncGuardMixin
+from atv_player.ui.bilibili_comments_dialog import BilibiliCommentsDialog
 from atv_player.ui.external_links import external_link_html
 from atv_player.ui.help_dialog import ShortcutHelpDialog, show_shortcut_help_dialog
 from atv_player.ui.icon_cache import load_icon, tint_icon
@@ -3975,6 +3976,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.parse_combo.setCurrentIndex(next_index)
 
     def _run_detail_field_action(self, action: PlaybackDetailFieldAction) -> None:
+        # 评论对话框属于播放器内 UI:不回主窗口,直接以播放器为父弹出
+        if action.type == "comments":
+            self._open_bilibili_comments(action.value)
+            return
         if self.session is None or self.session.detail_field_runner is None:
             return
         if not (0 <= self.current_index < len(self.session.playlist)):
@@ -3987,6 +3992,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             runner(current_item, action)
         except Exception as exc:
             self._append_log(f"详情跳转失败[{action.type}]: {exc}")
+
+    def _open_bilibili_comments(self, bvid: str) -> None:
+        loader = self.session.bilibili_comments_loader if self.session is not None else None
+        if loader is None or not bvid.strip():
+            self._append_log("评论加载失败[comments]: 当前来源不支持评论")
+            return
+        dialog = BilibiliCommentsDialog(bvid.strip(), loader, parent=self)
+        dialog.exec()
 
     def _detail_field_plain_text(self, field: PlaybackDetailField) -> str:
         values = " / ".join(part.label for part in field.value_parts)
@@ -4154,9 +4167,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             if action_url.startswith(("http://", "https://")):
                 parts.append(self._external_metadata_link_html(action_url, part.label))
                 continue
-            href = html.escape(action_url)
-            label = html.escape(part.label)
-            parts.append(f'<a href="{href}">{label}</a>')
+            # 站内动作链接(comments 等)与 BVID 等外部链接同款样式,走 external_link_html
+            parts.append(external_link_html(action_url, part.label))
         return f"{html.escape(field.label)}: {' / '.join(parts)}".rstrip()
 
     def _handle_metadata_link(self, url: QUrl) -> None:
