@@ -1919,3 +1919,84 @@ def test_player_controller_share_key_mismatch_falls_back_to_coordinates() -> Non
 
     # 分享 ID 匹配不上时退回坐标逻辑
     assert session.source_group_index == 1
+
+
+def test_report_progress_saves_group_local_episode_for_bilibili_tree() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="BV1tree", vod_name="创造101")
+    route_parts = [
+        PlayItem(title=f"P{n}", url=f"http://m/a{n}.m4s") for n in range(3)
+    ]
+    route_collection = [
+        PlayItem(title=f"合集{n}", url=f"http://m/b{n}.m4s") for n in range(4)
+    ]
+    session = controller.create_session(
+        vod,
+        route_collection[2],
+        clicked_index=2,
+        playlists=[route_parts, route_collection],
+        playlist_index=1,
+        source_kind="bilibili",
+    )
+    # 分组树模式:session.playlist 摊平为跨线路列表,current_index 是扁平下标
+    session.playlist = route_parts + route_collection
+    session.source_group_index = 1
+    session.playlist_index = 1
+
+    saved: list[dict] = []
+    session.playback_history_saver = lambda payload: saved.append(payload)
+    controller.report_progress(
+        session,
+        current_index=3 + 2,
+        position_seconds=60,
+        speed=1.0,
+        opening_seconds=0,
+        ending_seconds=0,
+        paused=False,
+    )
+
+    assert saved[0]["episode"] == 2
+    assert saved[0]["sourceGroupIndex"] == 1
+
+
+def test_restore_resumes_group_local_episode_in_selected_bilibili_route() -> None:
+    api = FakeApiClient()
+    controller = PlayerController(api)
+    vod = VodItem(vod_id="BV1tree", vod_name="创造101")
+    route_parts = [
+        PlayItem(title=f"P{n}", url=f"http://m/a{n}.m4s") for n in range(3)
+    ]
+    route_collection = [
+        PlayItem(title=f"合集{n}", url=f"http://m/b{n}.m4s") for n in range(4)
+    ]
+    history = HistoryRecord(
+        id=1,
+        key="BV1tree",
+        vod_name="创造101",
+        vod_pic="pic",
+        vod_remarks="合集2",
+        episode=2,
+        episode_url="",
+        position=120000,
+        opening=0,
+        ending=0,
+        speed=1.0,
+        create_time=1,
+        playlist_index=1,
+        source_group_index=1,
+        source_index=0,
+    )
+
+    session = controller.create_session(
+        vod,
+        route_collection[0],
+        clicked_index=0,
+        playlists=[route_parts, route_collection],
+        playlist_index=0,
+        playback_history_loader=lambda: history,
+    )
+
+    assert session.playlist == route_collection
+    assert session.start_index == 2
+    assert session.start_position_seconds == 120

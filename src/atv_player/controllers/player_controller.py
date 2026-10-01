@@ -608,6 +608,25 @@ class PlayerController:
             play_item.external_subtitles = list(resolved_vod.items[0].external_subtitles)
         return resolved_vod
 
+    @staticmethod
+    def _history_episode_index(session: PlayerSession, current_index: int) -> int:
+        # B站分组树模式下 session.playlist 是跨线路摊平列表,current_index 为扁平下标
+        # (合集线路第 i 项 = 前面线路长度 + i);恢复侧把 episode 当"所在线路组内下标"
+        # 使用,必须在这里换算回去,否则重启恢复整体后移前面线路的条数。
+        playlists = list(getattr(session, "playlists", None) or [])
+        if len(playlists) <= 1 or not (0 <= current_index < len(session.playlist)):
+            return current_index
+        current_item = session.playlist[current_index]
+        preferred_group = int(getattr(session, "source_group_index", 0) or 0)
+        group_order = [preferred_group] + [
+            group for group in range(len(playlists)) if group != preferred_group
+        ]
+        for group_index in group_order:
+            for item_index, item in enumerate(playlists[group_index]):
+                if item is current_item:
+                    return item_index
+        return current_index
+
     def report_progress(
         self,
         session: PlayerSession,
@@ -634,10 +653,13 @@ class PlayerController:
                 position_ms,
             )
             return
+        history_episode = self._history_episode_index(session, current_index)
         logger.info(
-            "Report playback progress vod_id=%s index=%s position_ms=%s paused=%s",
+            "Report playback progress vod_id=%s index=%s history_episode=%s "
+            "position_ms=%s paused=%s",
             session.vod.vod_id,
             current_index,
+            history_episode,
             position_ms,
             paused,
         )
@@ -648,7 +670,7 @@ class PlayerController:
             "vodName": self._history_vod_name(session, current_item),
             "vodPic": session.vod.vod_pic,
             "vodRemarks": playlist_item_display_title(current_item, "episode"),
-            "episode": current_index,
+            "episode": history_episode,
             "episodeUrl": self._history_episode_url(current_item, session),
             "position": position_ms,
             "duration": duration_seconds * 1000,
