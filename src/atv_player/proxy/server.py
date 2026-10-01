@@ -314,26 +314,47 @@ def _rewrite_dash_manifest(payload: bytes, session: ProxySession, proxy_base_url
     )
     session.dash_assets = []
     session.dash_asset_chunk_sizes = []
+    session.dash_asset_alternate_urls = []
     session.dash_video_asset_index = -1
     session.dash_audio_asset_index = -1
     prefix = _dash_namespace_prefix(root)
     namespace = prefix[1:-1] if prefix else ""
 
-    # 选中且非多分段表示的 BaseURL 即完整媒体文件,可走直连分发;按原始 URL 对账。
-    selected_rep_base_urls: dict[str, str] = {}
-    for role, representations, selected_id in (
-        ("video", session.dash_video_representations, session.selected_dash_video_id),
-        ("audio", session.dash_audio_representations, session.selected_dash_audio_id),
-    ):
+    def selected_role(content_type: str) -> str:
+        # 直连分发只认非多分段表示;segmented 判定沿用解析结果。
+        if content_type == "video":
+            representations, selected_id = session.dash_video_representations, session.selected_dash_video_id
+        elif content_type == "audio":
+            representations, selected_id = session.dash_audio_representations, session.selected_dash_audio_id
+        else:
+            return ""
         for representation in representations:
-            if representation.id != selected_id or representation.segmented:
-                continue
-            base_url = representation.base_url
-            if base_url.startswith(("http://", "https://")) and base_url not in selected_rep_base_urls:
-                selected_rep_base_urls[base_url] = role
-            break
+            if representation.id == selected_id:
+                return "" if representation.segmented else content_type
+        return ""
 
     periods = [element for element in root.iter() if element.tag == f"{prefix}Period"]
+    processed_base_urls: set[int] = set()
+
+    def rewrite_base_url(
+        base_url: ET.Element,
+        *,
+        chunk_size: int = 0,
+        role: str = "",
+        alternates: list[str] | None = None,
+    ) -> None:
+        raw_url = unescape((base_url.text or "").strip())
+        asset_index = len(session.dash_assets)
+        session.dash_assets.append(raw_url)
+        session.dash_asset_chunk_sizes.append(chunk_size if chunk_size > 0 else 0)
+        session.dash_asset_alternate_urls.append(list(alternates or []))
+        base_url.text = f"{proxy_base_url}/dash/asset/{quote(session.token)}/{asset_index}.m4s"
+        processed_base_urls.add(id(base_url))
+        if role == "video" and session.dash_video_asset_index < 0:
+            session.dash_video_asset_index = asset_index
+        elif role == "audio" and session.dash_audio_asset_index < 0:
+            session.dash_audio_asset_index = asset_index
+
     for period in periods:
         for adaptation_set in list(_dash_child_elements(period, prefix, "AdaptationSet")):
             content_type = _dash_adaptation_content_type(adaptation_set, prefix)
@@ -358,26 +379,19 @@ def _rewrite_dash_manifest(payload: bytes, session: ProxySession, proxy_base_url
             for extra_representation in list(representations):
                 if extra_representation is not selected_representation:
                     adaptation_set.remove(extra_representation)
-
-    processed_base_urls: set[int] = set()
-
-    def rewrite_base_url(base_url: ET.Element, *, chunk_size: int = 0) -> None:
-        raw_url = unescape((base_url.text or "").strip())
-        asset_index = len(session.dash_assets)
-        session.dash_assets.append(raw_url)
-        session.dash_asset_chunk_sizes.append(chunk_size if chunk_size > 0 else 0)
-        base_url.text = f"{proxy_base_url}/dash/asset/{quote(session.token)}/{asset_index}.m4s"
-        processed_base_urls.add(id(base_url))
-        role = selected_rep_base_urls.get(raw_url)
-        if role == "video" and session.dash_video_asset_index < 0:
-            session.dash_video_asset_index = asset_index
-        elif role == "audio" and session.dash_audio_asset_index < 0:
-            session.dash_audio_asset_index = asset_index
-
-    for representation in [element for element in root.iter() if element.tag == f"{prefix}Representation"]:
-        chunk_size = _dash_representation_http_chunk_size(representation, prefix)
-        for base_url in _dash_child_elements(representation, prefix, "BaseURL"):
-            rewrite_base_url(base_url, chunk_size=chunk_size)
+            # 角色按结构传给每条 BaseURL:多线路清单里视频/音频表示的首线可能是
+            # 同一个 host,按 URL 建角色映射会撞键导致音频 asset 下标丢失。
+            chunk_size = _dash_representation_http_chunk_size(selected_representation, prefix)
+            base_url_elements = _dash_child_elements(selected_representation, prefix, "BaseURL")
+            ordered_lines = _prioritize_regular_cdn_lines(_unique_http_lines(base_url_elements))
+            for base_url in base_url_elements:
+                raw_url = unescape((base_url.text or "").strip())
+                rewrite_base_url(
+                    base_url,
+                    chunk_size=chunk_size,
+                    role=selected_role(content_type),
+                    alternates=[line for line in ordered_lines if line != raw_url],
+                )
 
     for base_url in [element for element in root.iter() if element.tag == f"{prefix}BaseURL"]:
         if id(base_url) in processed_base_urls:
@@ -446,6 +460,30 @@ def _dash_asset_range_starts_at_zero(range_header: str | None) -> bool:
     if parsed is None:
         return False
     return parsed[0] == 0
+
+
+def _unique_http_lines(base_url_elements: list[ET.Element]) -> list[str]:
+    """一个表示的全部线路(去重、仅 http/https),即同表示备线池。"""
+    lines: list[str] = []
+    for element in base_url_elements:
+        raw = unescape((element.text or "").strip())
+        if raw.startswith(("http://", "https://")) and raw not in lines:
+            lines.append(raw)
+    return lines
+
+
+# PCDN 线路特征与后端 DashUtils.isPcdn 对齐:劣化形态集中在这类边缘上,
+# 同表示候选排序时垫底(后端 backupUrl 里常混有 mcdn 线)。
+_PCDN_LINE_HOST_MARKERS = ("mcdn.bilivideo.cn", "szbdyd.com", "p2p")
+
+
+def _looks_like_pcdn_line(url: str) -> bool:
+    host = urlparse(url).netloc.lower()
+    return any(marker in host for marker in _PCDN_LINE_HOST_MARKERS)
+
+
+def _prioritize_regular_cdn_lines(lines: list[str]) -> list[str]:
+    return sorted(lines, key=_looks_like_pcdn_line)
 
 
 def _close_context_quietly(context_manager: Any) -> None:
@@ -1131,6 +1169,13 @@ class LocalHlsProxyServer:
             f"{quote(session.token)}/{asset_index}.m4s"
         )
 
+    def _asset_alternate_urls(self, session: ProxySession, asset_index: int) -> list[str]:
+        try:
+            alternates = session.dash_asset_alternate_urls[asset_index]
+        except (AttributeError, IndexError, TypeError):
+            return []
+        return list(alternates) if alternates else []
+
     def _dash_asset_upstream_candidates(
         self,
         session: ProxySession,
@@ -1139,22 +1184,22 @@ class LocalHlsProxyServer:
     ) -> list[str]:
         """asset 上游候选地址。
 
-        后端清单里每个表示各分一个独立的 PCDN 边缘(B站 mcdn 节点),单个边缘会
-        整段拒连,而音频表示(不同码率)互为天然备份;音频 asset 未锁定时按清单
-        顺序带上其余音频表示的直链。视频不转移:跨表示换地址等于换清晰度/编码。
-        非零起点的 Range 是同一 demuxer 的续读,跨表示换地址会字节错位,即使
-        未锁定(断粮解锁后)也只回当前地址;零起点/无 Range 的新开 demuxer
-        (audio-reload 重挂)才允许跨表示转移。
+        后端多线路清单给每个表示带回多条 BaseURL(主线路+backupUrl 镜像,
+        同一条流,字节相同):同表示备线随时可换——锁定后、非零起点续读都
+        安全。跨表示则不同:视频跨表示=换清晰度,永不转移;音频跨表示仅
+        未锁定且零起点(重开 demuxer,如 audio-reload)时作为兜底候选。
         """
         current_url = session.dash_assets[asset_index]
-        if asset_index != session.dash_audio_asset_index or session.dash_audio_upstream_locked:
-            return [current_url]
-        if not _dash_asset_range_starts_at_zero(range_header):
-            return [current_url]
-        candidates: list[str] = []
-        for url in [current_url] + [
-            representation.base_url for representation in session.dash_audio_representations
-        ]:
+        candidates = [current_url]
+        for url in self._asset_alternate_urls(session, asset_index):
+            if url.startswith(("http://", "https://")) and url not in candidates:
+                candidates.append(url)
+        if asset_index != session.dash_audio_asset_index:
+            return candidates
+        if session.dash_audio_upstream_locked or not _dash_asset_range_starts_at_zero(range_header):
+            return candidates
+        for representation in session.dash_audio_representations:
+            url = representation.base_url
             if url.startswith(("http://", "https://")) and url not in candidates:
                 candidates.append(url)
         return candidates
@@ -1190,11 +1235,16 @@ class LocalHlsProxyServer:
         (httpx 的 iter_bytes 不允许二次迭代)。
         """
         candidates = self._dash_asset_upstream_candidates(session, asset_index, range_header)
+        # 零起点(新开 demuxer)且不止一条路的 GET 都过吞吐门:未锁定音频、
+        # 或带同表示备线的资产(锁定音频/视频首开)——劣化边缘过头部检查后
+        # 粘住就麻烦了,有备线可换时必须先验首块。
         probe_required = (
             method == "GET"
-            and asset_index == session.dash_audio_asset_index
-            and not session.dash_audio_upstream_locked
             and _dash_asset_range_starts_at_zero(range_header)
+            and (
+                (asset_index == session.dash_audio_asset_index and not session.dash_audio_upstream_locked)
+                or len(self._asset_alternate_urls(session, asset_index)) > 0
+            )
         )
         last_exc: Exception | None = None
         for url in candidates:

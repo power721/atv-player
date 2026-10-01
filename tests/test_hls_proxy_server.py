@@ -2476,3 +2476,254 @@ def test_local_hls_proxy_server_falls_back_to_ephemeral_port_when_default_port_i
 
     assert bind_attempts == [("127.0.0.1", 2323), ("127.0.0.1", 0)]
     assert prepared.startswith("http://127.0.0.1:45123/m3u/")
+
+
+_DASH_MULTILINE_FAILOVER_MANIFEST = """
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+  <Period>
+    <AdaptationSet>
+      <ContentComponent contentType="video"/>
+      <Representation id="v240" bandwidth="400000" width="320" height="240" mimeType="video/mp4">
+        <BaseURL>https://edge-a.example/video-240.m4s</BaseURL>
+        <BaseURL>https://edge-b.example/video-240.m4s</BaseURL>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet>
+      <ContentComponent contentType="audio"/>
+      <Representation id="a192" bandwidth="192000" mimeType="audio/mp4">
+        <BaseURL>https://edge-a.example/audio-192.m4s</BaseURL>
+        <BaseURL>https://edge-b.example/audio-192.m4s</BaseURL>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet>
+      <ContentComponent contentType="audio"/>
+      <Representation id="a132" bandwidth="132000" mimeType="audio/mp4">
+        <BaseURL>https://edge-c.example/audio-132.m4s</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
+""".strip()
+
+
+def _create_dash_multiline_server(stream) -> tuple[LocalHlsProxyServer, str, str, str]:
+    import base64
+
+    server = LocalHlsProxyServer(stream=stream)
+    payload = (
+        "data:application/dash+xml;base64,"
+        + base64.b64encode(_DASH_MULTILINE_FAILOVER_MANIFEST.encode("utf-8")).decode("ascii")
+    )
+    mpd_url = server.create_dash_url(payload, {"Referer": "https://www.bilibili.com/"})
+    token = mpd_url.rsplit("/", 1)[-1].removesuffix(".mpd")
+    server.handle_request("GET", mpd_url.removeprefix(f"http://{server.host}:{server.port}"))
+    video_url, audio_url = server.dash_direct_media_urls(mpd_url)
+    # 多线路清单:视频两线=asset 0/1,选中音频(a192)两线=asset 2/3
+    assert video_url == f"http://{server.host}:{server.port}/dash/asset/{token}/0.m4s"
+    assert audio_url == f"http://{server.host}:{server.port}/dash/asset/{token}/2.m4s"
+    return server, token, video_url, audio_url
+
+
+def test_local_hls_proxy_server_assigns_roles_when_video_and_audio_share_first_line() -> None:
+    # 后端多线路上线后,视频/音频表示的首条线常是同一个 host:按 URL 建角色
+    # 映射会撞键,音频 asset 下标丢失→直连音频失效。角色必须按结构判定。
+    import base64
+
+    manifest = """
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+  <Period>
+    <AdaptationSet>
+      <ContentComponent contentType="video"/>
+      <Representation id="v240" bandwidth="400000" mimeType="video/mp4">
+        <BaseURL>https://shared.example/first.m4s</BaseURL>
+        <BaseURL>https://edge-b.example/video-240.m4s</BaseURL>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet>
+      <ContentComponent contentType="audio"/>
+      <Representation id="a192" bandwidth="192000" mimeType="audio/mp4">
+        <BaseURL>https://shared.example/first.m4s</BaseURL>
+        <BaseURL>https://edge-b.example/audio-192.m4s</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
+""".strip()
+    server = LocalHlsProxyServer(stream=lambda *args, **kwargs: _ok_stream_response())
+    payload = (
+        "data:application/dash+xml;base64,"
+        + base64.b64encode(manifest.encode("utf-8")).decode("ascii")
+    )
+    mpd_url = server.create_dash_url(payload, {})
+    token = mpd_url.rsplit("/", 1)[-1].removesuffix(".mpd")
+    server.handle_request("GET", mpd_url.removeprefix(f"http://{server.host}:{server.port}"))
+
+    session = server._registry.get(token)
+    assert session is not None
+    assert session.dash_video_asset_index == 0
+    assert session.dash_audio_asset_index == 2
+    video_url, audio_url = server.dash_direct_media_urls(mpd_url)
+    assert video_url.endswith("/0.m4s")
+    assert audio_url.endswith("/2.m4s")
+
+
+def test_local_hls_proxy_server_fails_over_within_same_audio_representation_midfile() -> None:
+    calls: list[str] = []
+    audio_first_dead = False
+
+    def fake_stream(method: str, url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        calls.append(url)
+        if url == "https://edge-a.example/audio-192.m4s" and audio_first_dead:
+            return _RefusedStream()
+        if url == "https://edge-c.example/audio-132.m4s":
+            return _RefusedStream()
+        return _ok_stream_response()
+
+    server, token, _video_url, audio_url = _create_dash_multiline_server(fake_stream)
+    session = server._registry.get(token)
+    assert session is not None
+
+    handler = _FakeAssetHandler()
+    handled = server._stream_dash_asset_response(
+        f"/dash/asset/{token}/2.m4s",
+        {"Range": "bytes=0-9"},
+        handler,
+    )
+    assert handled is True
+    assert handler.wfile.getvalue() == b"0123456789"
+    assert session.dash_assets[2] == "https://edge-a.example/audio-192.m4s"
+    assert session.dash_audio_upstream_locked is True
+
+    # 锁定后、非零起点续读:同表示备线(字节相同)仍可转移,不跨表示
+    calls.clear()
+    audio_first_dead = True
+    handled = server._stream_dash_asset_response(
+        f"/dash/asset/{token}/2.m4s",
+        {"Range": "bytes=5-9"},
+        _FakeAssetHandler(),
+    )
+    assert handled is True
+    assert calls == [
+        "https://edge-a.example/audio-192.m4s",
+        "https://edge-b.example/audio-192.m4s",
+    ]
+    assert session.dash_assets[2] == "https://edge-b.example/audio-192.m4s"
+
+
+def test_local_hls_proxy_server_fails_over_dash_video_within_same_representation() -> None:
+    calls: list[str] = []
+
+    def fake_stream(method: str, url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        calls.append(url)
+        if url == "https://edge-a.example/video-240.m4s":
+            return _RefusedStream()
+        return _ok_stream_response()
+
+    server, token, _video_url, _audio_url = _create_dash_multiline_server(fake_stream)
+    handler = _FakeAssetHandler()
+
+    handled = server._stream_dash_asset_response(
+        f"/dash/asset/{token}/0.m4s",
+        {"Range": "bytes=0-9"},
+        handler,
+    )
+
+    # 视频同表示备线(非跨表示=非换清晰度)允许转移
+    assert handled is True
+    assert handler.wfile.getvalue() == b"0123456789"
+    assert calls == [
+        "https://edge-a.example/video-240.m4s",
+        "https://edge-b.example/video-240.m4s",
+    ]
+    session = server._registry.get(token)
+    assert session is not None
+    assert session.dash_assets[0] == "https://edge-b.example/video-240.m4s"
+
+
+def test_local_hls_proxy_server_gates_degraded_video_alternate(monkeypatch) -> None:
+    from atv_player.proxy import server as proxy_server_module
+
+    monkeypatch.setattr(proxy_server_module, "_DASH_AUDIO_PROBE_SECONDS", 0.2)
+    calls: list[str] = []
+
+    def fake_stream(method: str, url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        calls.append(url)
+        if url == "https://edge-a.example/video-240.m4s":
+            return _SlowBodyStream(0.5)
+        return _ok_stream_response()
+
+    server, token, _video_url, _audio_url = _create_dash_multiline_server(fake_stream)
+    handler = _FakeAssetHandler()
+
+    handled = server._stream_dash_asset_response(
+        f"/dash/asset/{token}/0.m4s",
+        {"Range": "bytes=0-9"},
+        handler,
+    )
+
+    # 带同表示备线的资产首开也过吞吐门:劣化首线被拦,换线并提交
+    assert handled is True
+    assert handler.wfile.getvalue() == b"0123456789"
+    assert calls == [
+        "https://edge-a.example/video-240.m4s",
+        "https://edge-b.example/video-240.m4s",
+    ]
+    session = server._registry.get(token)
+    assert session is not None
+    assert session.dash_assets[0] == "https://edge-b.example/video-240.m4s"
+
+
+def test_local_hls_proxy_server_puts_pcdn_alternates_last(monkeypatch) -> None:
+    import base64
+
+    from atv_player.proxy import server as proxy_server_module
+
+    monkeypatch.setattr(proxy_server_module, "_DASH_AUDIO_PROBE_SECONDS", 0.2)
+    calls: list[str] = []
+    manifest = """
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+  <Period>
+    <AdaptationSet>
+      <ContentComponent contentType="video"/>
+      <Representation id="v240" bandwidth="400000" mimeType="video/mp4">
+        <BaseURL>https://edge-a.example/video-240.m4s</BaseURL>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet>
+      <ContentComponent contentType="audio"/>
+      <Representation id="a192" bandwidth="192000" mimeType="audio/mp4">
+        <BaseURL>https://edge-a.example/audio-192.m4s</BaseURL>
+        <BaseURL>https://xy1x2x3x4xy.mcdn.bilivideo.cn:8082/audio.m4s</BaseURL>
+        <BaseURL>https://upos-sz-mirrorcos.bilivideo.com/audio.m4s</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
+""".strip()
+
+    def fake_stream(method: str, url: str, *, headers: dict[str, str], timeout: float, follow_redirects: bool):
+        calls.append(url)
+        if url == "https://edge-a.example/audio-192.m4s":
+            return _RefusedStream()
+        return _ok_stream_response()
+
+    server = LocalHlsProxyServer(stream=fake_stream)
+    payload = (
+        "data:application/dash+xml;base64,"
+        + base64.b64encode(manifest.encode("utf-8")).decode("ascii")
+    )
+    mpd_url = server.create_dash_url(payload, {})
+    token = mpd_url.rsplit("/", 1)[-1].removesuffix(".mpd")
+    server.handle_request("GET", mpd_url.removeprefix(f"http://{server.host}:{server.port}"))
+
+    handled = server._stream_dash_asset_response(
+        f"/dash/asset/{token}/1.m4s",
+        {"Range": "bytes=0-9"},
+        _FakeAssetHandler(),
+    )
+    assert handled is True
+    # 主线拒连后先试常规 upos 镜像,PCDN(mcdn)垫底
+    assert calls == [
+        "https://edge-a.example/audio-192.m4s",
+        "https://upos-sz-mirrorcos.bilivideo.com/audio.m4s",
+    ]

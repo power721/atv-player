@@ -37,6 +37,9 @@ class ProxySession:
     iso_stream_range_cache: object | None = None
     dash_assets: list[str] = field(default_factory=list)
     dash_asset_chunk_sizes: list[int] = field(default_factory=list)
+    # 与 dash_assets 平行:该 asset 同表示的其余线路(后端 backupUrl,字节相同)。
+    # 同表示换线随时安全;跨表示(不同码率)仍受 dash_audio_upstream_locked 约束。
+    dash_asset_alternate_urls: list[list[str]] = field(default_factory=list)
     dash_manifest_payload: bytes | None = None
     dash_video_representations: list[DashRepresentation] = field(default_factory=list)
     dash_audio_representations: list[DashRepresentation] = field(default_factory=list)
