@@ -1662,3 +1662,55 @@ def test_api_client_posts_bilibili_top_level_comment() -> None:
     assert seen["method"] == "POST"
     assert seen["path"] == "/bilibili/Harold/comment-reply"
     assert seen["body"] == {"id": "BV1xx411c7mD", "root": "", "parent": "", "message": "我评视频"}
+
+
+def test_api_client_posts_bilibili_danmaku() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as json_mod
+
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["body"] = json_mod.loads(request.content.decode())
+        return httpx.Response(200, json={"dmid": "32161968826613767"})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = client.post_bilibili_danmaku(
+        "170001-62131", "前来考古", progress_ms=5000, mode=1
+    )
+
+    assert result == {"dmid": "32161968826613767"}
+    assert seen["method"] == "POST"
+    assert seen["path"] == "/bilibili/Harold/danmaku-post"
+    assert seen["body"] == {
+        "id": "170001-62131",
+        "message": "前来考古",
+        "progress": 5000,
+        "mode": 1,
+        "color": 16777215,
+        "fontsize": 25,
+    }
+
+
+def test_api_client_posts_bilibili_danmaku_surfaces_failure_message() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        message = "B站返回 36703: 弹幕发送频率过快"
+        return httpx.Response(400, json={"message": message, "status": 400})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(ApiError) as excinfo:
+        client.post_bilibili_danmaku("BV1xx411c7mD", "太快了")
+    assert "频率过快" in str(excinfo.value)

@@ -100,6 +100,8 @@ _YTDL_STREAM_PROFILE: dict[str, object] = {
 logger = logging.getLogger(__name__)
 # 直播弹幕专用的 osd-overlay id(避免与其它 OSD 覆盖层冲突)
 _LIVE_DANMAKU_OSD_ID = 4242
+# 刚发出的弹幕乐观回显专用 osd-overlay id(与直播弹幕画布互不影响)
+_SELF_DANMAKU_OSD_ID = 4243
 
 # 外挂音轨断粮看门狗:DASH 直连的音频走独立上游,劣化边缘会"挂着轨但不
 # 出声"(audio-pts 冻结)。周期采样,窗口内 audio-pts 全程无变化才判死;
@@ -1560,6 +1562,38 @@ class MpvWidget(QWidget):
 
     def clear_live_danmaku(self) -> None:
         self.present_live_danmaku(None, 0, 0)
+
+    def present_self_danmaku(self, data: str, res_w: int, res_h: int) -> None:
+        """刚发出的弹幕回显(发送成功的乐观显示);data 为空串表示清除。
+
+        与直播弹幕同样的 osd-overlay ass-events 通道,但用独立 id:
+        坐标空间 res_w/res_h 即视频窗口像素,由播放层按帧推进坐标。
+        """
+        player = self._player
+        if player is None or getattr(player, "core_shutdown", False):
+            return
+        try:
+            if data:
+                player.command(
+                    "osd-overlay",
+                    id=_SELF_DANMAKU_OSD_ID,
+                    format="ass-events",
+                    data=data,
+                    res_x=max(1, res_w),
+                    res_y=max(1, res_h),
+                )
+            else:
+                player.command(
+                    "osd-overlay",
+                    id=_SELF_DANMAKU_OSD_ID,
+                    format="ass-events",
+                    data="",
+                    res_x=16,
+                    res_y=16,
+                )
+        except Exception:
+            if not getattr(player, "core_shutdown", False):
+                logger.debug("self danmaku osd update failed", exc_info=True)
 
     def attach_audio_cover(self, poster_image_path: str) -> None:
         if not self._on_widget_thread():

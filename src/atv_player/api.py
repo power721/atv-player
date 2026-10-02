@@ -400,6 +400,30 @@ class ApiClient:
             headers={"X-CLIENT": "gui"},
         )
 
+    def post_bilibili_danmaku(
+        self,
+        vod_id: str,
+        message: str,
+        progress_ms: int = 0,
+        mode: int = 1,
+        color: int = 16777215,
+        fontsize: int = 25,
+    ) -> dict[str, Any]:
+        """B站发送弹幕(progress=进度毫秒,mode 1=滚动/4=底/5=顶),返回 {"dmid": str}。"""
+        return self._request(
+            "POST",
+            f"/bilibili/{self._vod_token}/danmaku-post",
+            json={
+                "id": vod_id,
+                "message": message,
+                "progress": progress_ms,
+                "mode": mode,
+                "color": color,
+                "fontsize": fontsize,
+            },
+            headers={"X-CLIENT": "gui"},
+        )
+
     def list_emby_items(
         self,
         category_id: str,

@@ -315,6 +315,28 @@ class BilibiliController:
         """发表顶层评论(直接评论视频);返回新评论对象。"""
         return self._api_client.post_bilibili_comment(vod_id, message)
 
+    def post_danmaku(
+        self,
+        vod_id: str,
+        message: str,
+        progress_ms: int = 0,
+        mode: int = 1,
+        color: int = 16777215,
+        fontsize: int = 25,
+    ) -> dict[str, object]:
+        """发送弹幕(progress=进度毫秒,mode 1=滚动/4=底/5=顶)。
+
+        由播放窗口输入条在后台线程调用。
+        """
+        return self._api_client.post_bilibili_danmaku(
+            vod_id,
+            message,
+            progress_ms=progress_ms,
+            mode=mode,
+            color=color,
+            fontsize=fontsize,
+        )
+
     def _decorate_card_subtitle(self, item: VodItem) -> VodItem:
         subtitle_parts = [item.vod_year.strip(), item.vod_remarks.strip()]
         item.vod_remarks = " - ".join(part for part in subtitle_parts if part)

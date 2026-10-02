@@ -6840,6 +6840,13 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                         )
                     if query.get("kind") == "post":
                         return controller.post_comment(vod_id, str(query.get("message") or "").strip())
+                    if query.get("kind") == "danmaku":
+                        return controller.post_danmaku(
+                            vod_id,
+                            str(query.get("message") or "").strip(),
+                            int(query.get("progress") or 0),
+                            mode=int(query.get("mode") or 1),
+                        )
                     return controller.load_comments(
                         vod_id, mode=int(query.get("mode") or 3), next_offset=str(query.get("next") or "")
                     )

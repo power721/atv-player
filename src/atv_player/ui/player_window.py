@@ -120,6 +120,7 @@ from atv_player.live_danmaku import (
     LiveDanmakuPoller,
     LiveDanmakuRenderer,
     LiveDanmakuSink,
+    _ass_escape,
     resolve_live_room,
 )
 from atv_player.playlist_sorting import format_size_bytes, parse_size_bytes
@@ -733,6 +734,11 @@ class _DanmakuPlaybackLogSignals(QObject):
 class _DanmakuRenderSignals(QObject):
     succeeded = Signal(int, str, int)
     failed = Signal(int, str)
+
+
+class _DanmakuSendSignals(QObject):
+    # 发送线程 → 主线程:ok=True 时 message=刚发出的弹幕文本,否则 error=失败原因
+    finished = Signal(bool, str, str)
 
 
 class _LiveDanmakuSignals(QObject):
@@ -1351,6 +1357,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._danmaku_render_signals = _DanmakuRenderSignals()
         self._connect_async_signal(self._danmaku_render_signals.succeeded, self._handle_danmaku_render_succeeded)
         self._connect_async_signal(self._danmaku_render_signals.failed, self._handle_danmaku_render_failed)
+        self._danmaku_send_signals = _DanmakuSendSignals()
+        self._connect_async_signal(self._danmaku_send_signals.finished, self._handle_danmaku_send_finished)
+        self._danmaku_sending = False
         self._live_danmaku_signals = _LiveDanmakuSignals()
         signals = self._live_danmaku_signals
         self._connect_async_signal(signals.config, self._handle_live_danmaku_config)
@@ -1869,6 +1878,36 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.telemetry_label.setObjectName("telemetryBadge")
         self.telemetry_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.telemetry_label.hide()
+        # B站发送弹幕输入条:快捷键 B 唤出,悬浮在视频区底部中央(skip banner 同款挂法),
+        # 不进底部控制栏(全屏时控制栏整体隐藏,发弹幕恰恰多发生在全屏观影时)。
+        self.danmaku_input_bar = QWidget(self.video_stack)
+        self.danmaku_input_bar.setObjectName("danmakuInputBar")
+        self.danmaku_input_bar.setAttribute(
+            Qt.WidgetAttribute.WA_StyledBackground, True
+        )
+        danmaku_input_layout = QHBoxLayout(self.danmaku_input_bar)
+        danmaku_input_layout.setContentsMargins(14, 8, 8, 8)
+        danmaku_input_layout.setSpacing(8)
+        self.danmaku_input_edit = QLineEdit()
+        self.danmaku_input_edit.setPlaceholderText("发个弹幕 (Enter 发送,Esc 取消)")
+        self.danmaku_input_edit.setClearButtonEnabled(True)
+        self.danmaku_input_edit.setMaxLength(100)
+        self.danmaku_input_edit.returnPressed.connect(self._submit_danmaku_input)
+        self.danmaku_input_send_button = QPushButton("发送")
+        self.danmaku_input_send_button.setObjectName("danmakuInputSendButton")
+        self.danmaku_input_send_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.danmaku_input_send_button.clicked.connect(self._submit_danmaku_input)
+        self.danmaku_input_status_label = QLabel("")
+        self.danmaku_input_status_label.setObjectName("danmakuInputStatus")
+        danmaku_input_layout.addWidget(self.danmaku_input_edit, 1)
+        danmaku_input_layout.addWidget(self.danmaku_input_send_button)
+        danmaku_input_layout.addWidget(self.danmaku_input_status_label)
+        self.danmaku_input_bar.hide()
+        # 刚发出的弹幕乐观回显:osd-overlay 逐帧推进(与直播弹幕同通道、独立 id)
+        self._self_danmaku_preview: dict[str, object] | None = None
+        self._self_danmaku_preview_timer = QTimer(self)
+        self._self_danmaku_preview_timer.setInterval(50)
+        self._self_danmaku_preview_timer.timeout.connect(self._tick_self_danmaku_preview)
         self.video_stack.installEventFilter(self)
 
         self.playlist_panel = QWidget()
@@ -2235,6 +2274,32 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             }}
             """
         )
+        # 发弹幕输入条:底色必须不透明(同 skipConfirmBanner,5214b540 教训)
+        self.danmaku_input_bar.setStyleSheet(
+            f"""
+            QWidget#danmakuInputBar {{
+                background-color: {player_tokens.player_overlay_bg};
+                border: 1px solid {player_tokens.player_button_border};
+                border-radius: 18px;
+            }}
+            QWidget#danmakuInputBar QLineEdit {{
+                background-color: transparent;
+                border: none;
+                color: {player_tokens.player_text_on_dark};
+                font-size: 14px;
+            }}
+            QLabel#danmakuInputStatus {{
+                background-color: transparent;
+                color: rgba(245, 247, 251, 190);
+                font-size: 12px;
+            }}
+            """
+        )
+        self.danmaku_input_send_button.setStyleSheet(
+            build_player_control_button_qss(player_tokens, border_radius=14)
+            + "\nQPushButton { padding-left: 16px; padding-right: 16px; }"
+        )
+        self.danmaku_input_send_button.setFixedHeight(30)
         self.progress.setProperty("track_height", 4)
         self.progress.setProperty("handle_diameter", 12)
         self.volume_slider.setProperty("track_height", 4)
@@ -12881,6 +12946,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             (QKeySequence(Qt.Key.Key_Enter), self.toggle_fullscreen),
             (QKeySequence("W"), self.wide_button.click),
             (QKeySequence("D"), self._open_danmaku_source_dialog),
+            (QKeySequence("B"), self._toggle_danmaku_input),
             (QKeySequence("S"), self._open_metadata_scrape_dialog),
             (QKeySequence("C"), self._open_subtitle_search_dialog),
             (QKeySequence("Ctrl+D"), self._open_danmaku_settings_dialog),
@@ -13032,6 +13098,179 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if parent_rect.width() <= 0 or parent_rect.height() <= 0:
             return
         self.telemetry_label.setGeometry(0, 0, badge_size.width(), badge_size.height())
+
+    # ── B站发送弹幕(快捷键 B 唤出悬浮输入条) ──────────────────────────
+
+    def _set_player_shortcuts_enabled(self, enabled: bool) -> None:
+        # 输入条打开时整体禁用应用级快捷键:ApplicationShortcut 会先于控件拿走
+        # Enter/空格/方向键,中文输入会四处触发播放器动作
+        # (Esc 在 _handle_escape 单独路由到关闭输入条)
+        for shortcut in self._shortcut_bindings:
+            shortcut.setEnabled(enabled)
+
+    def _toggle_danmaku_input(self) -> None:
+        if not self.danmaku_input_bar.isHidden():
+            self._close_danmaku_input()
+            return
+        loader = getattr(self.session, "bilibili_comments_loader", None)
+        if self.session is None or loader is None:
+            self._append_log("发送弹幕不可用[danmaku]: 当前来源不是 B站")
+            return
+        current_item = self._current_play_item()
+        if current_item is None or not str(current_item.vod_id or "").strip():
+            self._append_log("发送弹幕失败[danmaku]: 缺少视频 ID")
+            return
+        self._set_player_shortcuts_enabled(False)
+        self.danmaku_input_status_label.setText("")
+        self.danmaku_input_send_button.setEnabled(True)
+        self.danmaku_input_bar.show()
+        self.danmaku_input_bar.raise_()
+        self._position_danmaku_input()
+        self.danmaku_input_edit.setFocus()
+        self.danmaku_input_edit.selectAll()
+
+    def _close_danmaku_input(self) -> None:
+        self._danmaku_sending = False
+        self.danmaku_input_send_button.setEnabled(True)
+        self.danmaku_input_bar.hide()
+        self.danmaku_input_edit.clear()
+        self._set_player_shortcuts_enabled(True)
+        # 焦点还给视频(NoFocus 控件需主动失焦,否则空格/方向键仍指向上次聚焦的控件)
+        focused = self.focusWidget()
+        if focused is not None and focused.window() is self:
+            focused.clearFocus()
+
+    def _position_danmaku_input(self) -> None:
+        if self.danmaku_input_bar.isHidden():
+            return
+        parent_rect = self.video_stack.rect()
+        if parent_rect.width() <= 0 or parent_rect.height() <= 0:
+            return
+        width = min(max(320, parent_rect.width() * 7 // 10), 760)
+        height = self.danmaku_input_bar.sizeHint().height()
+        x = max(0, (parent_rect.width() - width) // 2)
+        y = parent_rect.height() - height - max(12, parent_rect.height() // 15)
+        if not self.skip_banner.isHidden():
+            y = max(0, y - self.skip_banner.height() - 8)
+        self.danmaku_input_bar.setGeometry(x, y, width, height)
+
+    def _submit_danmaku_input(self) -> None:
+        if self.danmaku_input_bar.isHidden() or self._danmaku_sending:
+            return
+        message = self.danmaku_input_edit.text().strip()
+        if not message:
+            self.danmaku_input_status_label.setText("弹幕内容不能为空")
+            return
+        current_item = self._current_play_item()
+        vod_id = str(getattr(current_item, "vod_id", "") or "").strip()
+        loader = None
+        if self.session is not None:
+            loader = getattr(self.session, "bilibili_comments_loader", None)
+        if not vod_id or loader is None:
+            self.danmaku_input_status_label.setText("当前来源不支持发送弹幕")
+            return
+        position_getter = getattr(self.video, "position_seconds", None)
+        try:
+            position = position_getter() if callable(position_getter) else None
+        except Exception:
+            position = None
+        progress_ms = max(0, int(position) * 1000) if position is not None else 0
+
+        self._danmaku_sending = True
+        self.danmaku_input_send_button.setEnabled(False)
+        self.danmaku_input_status_label.setText("发送中…")
+
+        def run() -> None:
+            ok = False
+            error = ""
+            try:
+                loader({
+                    "kind": "danmaku",
+                    "bvid": vod_id,
+                    "message": message,
+                    "progress": progress_ms,
+                    "mode": 1,
+                })
+                ok = True
+            except Exception as exc:
+                error = str(exc) or exc.__class__.__name__
+            if self._is_window_alive():
+                if ok:
+                    self._danmaku_send_signals.finished.emit(True, message, "")
+                else:
+                    self._danmaku_send_signals.finished.emit(False, "", error)
+
+        threading.Thread(target=run, daemon=True, name="bilibili-danmaku-send").start()
+
+    def _handle_danmaku_send_finished(self, ok: bool, message: str, error: str) -> None:
+        self._danmaku_sending = False
+        self.danmaku_input_send_button.setEnabled(True)
+        if not ok:
+            # 失败保留输入条与内容,改后可直接重发(上游文案已含"发送频率过快"等提示)
+            self.danmaku_input_status_label.setText(f"发送失败: {error}")
+            self._append_log(f"弹幕发送失败[danmaku]: {error}")
+            self.danmaku_input_edit.setFocus()
+            return
+        self._append_log("弹幕已发送")
+        self._close_danmaku_input()
+        self._present_self_danmaku(message)
+
+    def _present_self_danmaku(self, text: str) -> None:
+        present = getattr(self.video, "present_self_danmaku", None)
+        if not callable(present) or not text.strip():
+            return
+        size = self.video_stack.size()
+        if size.width() <= 0 or size.height() <= 0:
+            return
+        self._stop_self_danmaku_preview(clear=False)
+        font_size = max(16, min(44, int(size.height() * 0.04)))
+        # 近似测宽:全角按 1em、半角按 0.55em,足够估算 \pos 出屏时刻
+        text_units = sum(1.0 if ord(ch) > 0x2E7F else 0.55 for ch in text)
+        text_width = int(font_size * text_units) + font_size
+        self._self_danmaku_preview = {
+            "present": present,
+            "text": _ass_escape(text),
+            "font_size": font_size,
+            "text_width": text_width,
+            "x": float(size.width() + 16),
+            "speed": (size.width() + text_width + 32) / 8000.0,
+            "y": max(font_size, int(size.height() * 0.3)),
+            "width": size.width(),
+            "height": size.height(),
+        }
+        self._self_danmaku_preview_timer.start()
+
+    def _tick_self_danmaku_preview(self) -> None:
+        state = self._self_danmaku_preview
+        if state is None:
+            self._self_danmaku_preview_timer.stop()
+            return
+        state["x"] = float(state["x"]) - float(state["speed"]) * 50.0
+        if float(state["x"]) <= -float(state["text_width"]):
+            self._stop_self_danmaku_preview()
+            return
+        event = (
+            "{\\an7"
+            f"\\pos({int(float(state['x']))},{int(state['y'])})"
+            f"\\fs{state['font_size']}"
+            "\\b1\\c&HFFFFFF&\\3c&H000000&\\bord1.5}"
+            f"{state['text']}"
+        )
+        try:
+            state["present"](event, int(state["width"]), int(state["height"]))
+        except Exception:
+            logger.debug("self danmaku overlay failed", exc_info=True)
+            self._stop_self_danmaku_preview(clear=False)
+
+    def _stop_self_danmaku_preview(self, *, clear: bool = True) -> None:
+        self._self_danmaku_preview_timer.stop()
+        state = self._self_danmaku_preview
+        self._self_danmaku_preview = None
+        if state is not None and clear:
+            try:
+                state["present"]("", int(state["width"]), int(state["height"]))
+            except Exception:
+                logger.debug("self danmaku overlay clear failed", exc_info=True)
 
     # ── 直播实时弹幕(后端 /live/danmaku 轮询,mpv OSD 渲染) ───────────────
 
@@ -13796,6 +14035,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._close_metadata_scrape_dialog()
         self._close_video_context_menu()
         self._hide_related_overlay()
+        if not self.danmaku_input_bar.isHidden():
+            self._close_danmaku_input()
+        self._stop_self_danmaku_preview()
         self._stop_live_danmaku()
         self._remember_restore_state()
         try:
@@ -13859,6 +14101,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _handle_escape(self) -> None:
         if self._dismiss_escape_dialog():
+            return
+        if not self.danmaku_input_bar.isHidden():
+            self._close_danmaku_input()
             return
         if not self.related_overlay.isHidden():
             self._hide_related_overlay()
@@ -14172,6 +14417,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._close_help_dialog()
             self._close_video_context_menu()
             self._clear_active_danmaku()
+            self._stop_self_danmaku_preview()
             self._stop_live_danmaku()
             self.report_progress(force_remote_report=True)
             self._stop_current_playback()
@@ -14221,6 +14467,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if watched is video_stack and event.type() == QEvent.Type.Resize:
             self._position_skip_banner()
             self._position_telemetry_badge()
+            self._position_danmaku_input()
             self._sync_live_danmaku_canvas()
             if not self.related_overlay.isHidden():
                 self._position_related_overlay()
