@@ -611,3 +611,26 @@ def test_reply_row_renders_cached_emote_with_reply_prefix(qtbot, monkeypatch, tm
     # 直答根评论无前缀,表情内嵌渲染
     assert rendered.startswith("层内表情")
     assert "<img" in rendered
+
+
+def test_own_comment_shows_self_tag_instead_of_author(qtbot) -> None:
+    # 自己发的回复:is_self 标「我」;「作者」只属于视频 UP 主(is_up),二者独立
+    loader = FakeLoader(
+        payloads=[
+            _main_payload([
+                _comment("1001", "我", is_self=True, is_up=False),
+                _comment("1002", "UP主", is_self=False, is_up=True),
+                _comment("1003", "路人"),
+            ])
+        ]
+    )
+    dialog = _make_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog, 3)
+
+    mine = dialog.card_by_rpid("1001").meta_label.text()
+    assert "[我]" in mine
+    assert "[作者]" not in mine
+    up = dialog.card_by_rpid("1002").meta_label.text()
+    assert "[作者]" in up
+    assert "[我]" not in up
+    assert "[我]" not in dialog.card_by_rpid("1003").meta_label.text()

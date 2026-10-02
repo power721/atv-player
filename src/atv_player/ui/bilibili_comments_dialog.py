@@ -59,6 +59,7 @@ class BilibiliComment:
     location: str = ""
     top: bool = False
     is_up: bool = False
+    is_self: bool = False
     liked: bool = False
     parent_uname: str = ""
     # 正文内嵌表情 [{text:"[doge]", url, size 1小/2大}] 与图片评论 [{url,width,height}]
@@ -85,6 +86,7 @@ def parse_bilibili_comment(payload: object) -> BilibiliComment:
         location=str(payload.get("location") or "").strip(),
         top=bool(payload.get("top")),
         is_up=bool(payload.get("is_up")),
+        is_self=bool(payload.get("is_self")),
         liked=bool(payload.get("liked")),
         parent_uname=str(payload.get("parent_uname") or "").strip(),
         emotes=[dict(entry) for entry in payload.get("emotes") or [] if isinstance(entry, dict)],
@@ -169,6 +171,9 @@ def _meta_html(comment: BilibiliComment) -> str:
         parts.append(f'<span style="color:{tokens.accent};">[置顶]</span>')
     if comment.is_up:
         parts.append(f'<span style="color:{tokens.accent};">[作者]</span>')
+    if comment.is_self:
+        # 当前登录账号自己发的评论;UP 主身份(is_up)与登录身份(is_self)独立,可同时出现
+        parts.append(f'<span style="color:{tokens.accent};">[我]</span>')
     if comment.level > 0:
         parts.append(f'<span style="color:{tokens.text_secondary};">Lv{comment.level}</span>')
     time_text = _format_ctime(comment.ctime) or comment.time_desc
