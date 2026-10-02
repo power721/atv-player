@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -28,6 +29,8 @@ from atv_player.ui.window_chrome import ThemedDialogBase
 #   {"kind": "replies", "bvid": str, "root": "rpid", "page": 1} ->
 #       {"count": int, "page": int, "replies": [评论dict]}
 #   {"kind": "like", "bvid": str, "rpid": str, "on": bool} -> {"liked": bool}
+#   {"kind": "reply", "bvid": str, "root": str, "parent": str, "message": str} ->
+#       {"comment": 新评论dict}
 # 评论dict字段(后端 /bilibili/{token}/comments 精简输出):
 #   rpid/uname/avatar/level/message/like/rcount/ctime/time_desc/location/top/is_up/liked/parent_uname/preview
 CommentsLoader = Callable[[dict[str, object]], dict[str, object]]
@@ -151,12 +154,64 @@ class _LikeButton(QPushButton):
         self.setEnabled(True)
 
 
-class _ReplyRow(QWidget):
-    """楼中楼单行:昵称行 + 「回复 @xxx：内容」正文 + 点赞。"""
+class _ReplyComposer(QFrame):
+    """行内回复输入区:输入框(Enter 发送)+发送/取消;发送中置忙防连点。"""
 
-    def __init__(self, comment: BilibiliComment, dialog: BilibiliCommentsDialog, parent: QWidget | None = None) -> None:
+    submitted = Signal(str)  # message
+    cancelled = Signal()
+
+    def __init__(self, placeholder: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("bilibiliReplyComposer")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        self.edit = QLineEdit(self)
+        self.edit.setPlaceholderText(placeholder)
+        self.edit.returnPressed.connect(self._emit_submitted)
+        self.send_button = QPushButton("发送", self)
+        self.send_button.setObjectName("bilibiliReplySendButton")
+        self.send_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.send_button.clicked.connect(self._emit_submitted)
+        cancel_button = QPushButton("取消", self)
+        cancel_button.setObjectName("bilibiliReplyCancelButton")
+        cancel_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel_button.clicked.connect(self.cancelled.emit)
+        layout.addWidget(self.edit, 1)
+        layout.addWidget(self.send_button)
+        layout.addWidget(cancel_button)
+
+    def message(self) -> str:
+        return self.edit.text().strip()
+
+    def set_busy(self, busy: bool) -> None:
+        self.edit.setReadOnly(busy)
+        self.send_button.setEnabled(not busy)
+        self.send_button.setText("发送中..." if busy else "发送")
+
+    def focus_input(self) -> None:
+        self.edit.setFocus()
+
+    def _emit_submitted(self) -> None:
+        text = self.message()
+        if text and not self.edit.isReadOnly():
+            self.submitted.emit(text)
+
+
+class _ReplyRow(QWidget):
+    """楼中楼单行:昵称行 + 「回复 @xxx：内容」正文 + 点赞/回复。"""
+
+    def __init__(
+        self,
+        comment: BilibiliComment,
+        dialog: BilibiliCommentsDialog,
+        card: _CommentCard,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.comment = comment
+        self._dialog = dialog
+        self.card = card
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 4)
         layout.setSpacing(1)
@@ -172,8 +227,21 @@ class _ReplyRow(QWidget):
         self.message_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.meta_label)
         layout.addWidget(self.message_label)
+        actions = QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(16)
         self.like_button = _LikeButton(comment, dialog, self)
-        layout.addWidget(self.like_button)
+        actions.addWidget(self.like_button)
+        self.reply_button = QPushButton("回复")
+        self.reply_button.setObjectName("bilibiliCommentReplyButton")
+        self.reply_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.reply_button.setFlat(True)
+        self.reply_button.clicked.connect(
+            lambda _checked=False: dialog.show_reply_composer(card, self)
+        )
+        actions.addWidget(self.reply_button)
+        actions.addStretch(1)
+        layout.addLayout(actions)
 
 
 class _CommentCard(QFrame):
@@ -228,6 +296,14 @@ class _CommentCard(QFrame):
         self.toggle_reply_button.setVisible(comment.rcount > 0)
         self.toggle_reply_button.clicked.connect(self._toggle_floor)
         footer.addWidget(self.toggle_reply_button)
+        self.reply_button = QPushButton("回复")
+        self.reply_button.setObjectName("bilibiliCommentReplyButton")
+        self.reply_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.reply_button.setFlat(True)
+        self.reply_button.clicked.connect(
+            lambda _checked=False: dialog.show_reply_composer(self, None)
+        )
+        footer.addWidget(self.reply_button)
         footer.addStretch(1)
         content.addLayout(footer)
 
@@ -262,6 +338,25 @@ class _CommentCard(QFrame):
         self._sync_more_button()
         self.toggle_reply_button.setText(self._toggle_button_text())
 
+    def append_own_reply(self, reply: BilibiliComment) -> None:
+        """本地插入自己刚发出的回复:楼中楼未展开则免请求直接展开(先补预览行)。"""
+        self.comment.rcount += 1
+        if self._floor_widget is None:
+            self._floor_widget = self._create_floor_widget()
+            self.layout().addWidget(self._floor_widget)
+            self._floor_expanded = True
+            for preview in self.comment.preview:
+                self._append_floor_row(preview)
+        else:
+            self._floor_widget.setVisible(True)
+            self._floor_expanded = True
+        self._append_floor_row(reply)
+        self._floor_complete = len(self._floor_rows) >= self.comment.rcount
+        self._set_floor_status("")
+        self._sync_more_button()
+        self.toggle_reply_button.setVisible(True)
+        self.toggle_reply_button.setText(self._toggle_button_text())
+
     def _toggle_button_text(self) -> str:
         if self.floor_expanded():
             return "收起 ▴"
@@ -289,7 +384,7 @@ class _CommentCard(QFrame):
         floor = self._floor_widget
         if floor is None:
             return
-        row = _ReplyRow(reply, self._dialog, floor)
+        row = _ReplyRow(reply, self._dialog, self, floor)
         self._floor_rows.append(row)
         floor.layout().addWidget(row)
 
@@ -354,6 +449,7 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
         self._epoch = 0
         self._avatar_semaphore = poster_load_slot()
         self._cards: list[_CommentCard] = []
+        self._active_composer: _ReplyComposer | None = None
         self._signals = _LoaderSignals()
         self._connect_async_signal(self._signals.succeeded, self._handle_loaded)
         self._connect_async_signal(self._signals.failed, self._handle_failed)
@@ -472,6 +568,71 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
         request = {"kind": "like", "bvid": self.bvid, "rpid": button.comment.rpid, "on": turn_on}
         self._start_load(request, {"kind": "like", "button": button, "turn_on": turn_on})
 
+    # --- 回复评论 -------------------------------------------------------
+
+    def show_reply_composer(self, card: _CommentCard, row: _ReplyRow | None) -> None:
+        """行内回复输入区:同一时刻只保留一个;主评论的插在卡片内,楼中楼行的插在楼层末尾。"""
+        self._dismiss_active_composer()
+        target = row.comment if row is not None else card.comment
+        composer = _ReplyComposer(f"回复 @{target.uname}：", card)
+        composer.submitted.connect(
+            lambda message, c=card, r=row, comp=composer: self._submit_reply(comp, c, r, message)
+        )
+        composer.cancelled.connect(self._dismiss_active_composer)
+        self._active_composer = composer
+        if row is None:
+            card.layout().insertWidget(1, composer)
+        else:
+            floor_layout = card._floor_widget.layout() if card._floor_widget is not None else None
+            if floor_layout is None:
+                return
+            more = card.more_replies_button()
+            if more is not None:
+                floor_layout.insertWidget(floor_layout.indexOf(more), composer)
+            else:
+                floor_layout.addWidget(composer)
+        composer.focus_input()
+
+    def _dismiss_active_composer(self) -> None:
+        composer = self._active_composer
+        self._active_composer = None
+        if composer is not None and shiboken6.isValid(composer):
+            composer.deleteLater()
+
+    def _submit_reply(
+        self, composer: _ReplyComposer, card: _CommentCard, row: _ReplyRow | None, message: str
+    ) -> None:
+        composer.set_busy(True)
+        parent_comment = row.comment if row is not None else card.comment
+        request = {
+            "kind": "reply",
+            "bvid": self.bvid,
+            "root": card.comment.rpid,
+            "parent": parent_comment.rpid,
+            "message": message,
+        }
+        self._start_load(request, {"kind": "reply", "card": card, "row": row, "composer": composer})
+
+    def _handle_reply_loaded(self, payload: dict[str, object], context: dict[str, object]) -> None:
+        card = context.get("card")
+        row = context.get("row")
+        composer = context.get("composer")
+        if not isinstance(card, _CommentCard) or not shiboken6.isValid(card):
+            return
+        new_reply = parse_bilibili_comment(payload.get("comment"))
+        if not new_reply.rpid:
+            self.status_label.setText("回复失败:上游未返回新评论")
+            if isinstance(composer, _ReplyComposer) and shiboken6.isValid(composer):
+                composer.set_busy(False)
+            return
+        if isinstance(row, _ReplyRow) and shiboken6.isValid(row):
+            new_reply.parent_uname = row.comment.uname
+        card.append_own_reply(new_reply)
+        self._active_composer = None
+        if isinstance(composer, _ReplyComposer) and shiboken6.isValid(composer):
+            composer.deleteLater()
+        self.status_label.setText("回复成功")
+
     def _start_load(self, request: dict[str, object], context: dict[str, object]) -> None:
         epoch = self._epoch
 
@@ -506,6 +667,9 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
             comment.liked = liked
             button.refresh_state()
             return
+        if isinstance(context, dict) and context.get("kind") == "reply":
+            self._handle_reply_loaded(payload, context)
+            return
         self._apply_main_payload(payload)
 
     def _handle_failed(self, epoch: int, message: str, context: object) -> None:
@@ -516,6 +680,13 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
             if isinstance(button, _LikeButton) and shiboken6.isValid(button):
                 button.refresh_state()
             self.status_label.setText(f"点赞失败:{message}")
+            return
+        if isinstance(context, dict) and context.get("kind") == "reply":
+            composer = context.get("composer")
+            if isinstance(composer, _ReplyComposer) and shiboken6.isValid(composer):
+                composer.set_busy(False)
+                composer.focus_input()
+            self.status_label.setText(f"回复失败:{message}")
             return
         if not self._cards:
             self.status_label.setText(f"加载失败:{message}")
@@ -546,6 +717,7 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
 
     def _clear_cards(self) -> None:
         self._cards = []
+        self._active_composer = None
         while self.comments_layout.count() > 1:
             item = self.comments_layout.takeAt(0)
             widget = item.widget()
@@ -619,6 +791,49 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
             }}
             QPushButton#bilibiliCommentLikeButton:disabled {{
                 color: {tokens.text_secondary};
+            }}
+            QPushButton#bilibiliCommentReplyButton {{
+                color: {tokens.text_secondary};
+                background: transparent;
+                border: none;
+                padding: 2px 4px;
+                font-size: 12px;
+                text-align: left;
+            }}
+            QPushButton#bilibiliCommentReplyButton:hover {{
+                color: {tokens.text_primary};
+            }}
+            QFrame#bilibiliReplyComposer QLineEdit {{
+                color: {tokens.text_primary};
+                background: {tokens.panel_bg};
+                border: 1px solid {tokens.border_subtle};
+                border-radius: 6px;
+                padding: 4px 8px;
+                font-size: 13px;
+            }}
+            QFrame#bilibiliReplyComposer QLineEdit:focus {{
+                border-color: {tokens.accent};
+            }}
+            QFrame#bilibiliReplyComposer QPushButton#bilibiliReplySendButton {{
+                color: {tokens.text_primary};
+                background: {tokens.accent};
+                border: none;
+                border-radius: 6px;
+                padding: 4px 12px;
+                font-size: 12px;
+                font-weight: 600;
+            }}
+            QFrame#bilibiliReplyComposer QPushButton#bilibiliReplySendButton:disabled {{
+                background: {tokens.panel_alt_bg};
+                color: {tokens.text_secondary};
+            }}
+            QFrame#bilibiliReplyComposer QPushButton#bilibiliReplyCancelButton {{
+                color: {tokens.text_secondary};
+                background: transparent;
+                border: 1px solid {tokens.border_subtle};
+                border-radius: 6px;
+                padding: 4px 12px;
+                font-size: 12px;
             }}
             QPushButton#bilibiliCommentsLoadMore {{
                 color: {tokens.text_primary};

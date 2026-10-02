@@ -6831,6 +6831,13 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                         return controller.run_comment_action(
                             vod_id, str(query.get("rpid") or "").strip(), bool(query.get("on"))
                         )
+                    if query.get("kind") == "reply":
+                        return controller.reply_comment(
+                            vod_id,
+                            str(query.get("root") or "").strip(),
+                            str(query.get("parent") or "").strip(),
+                            str(query.get("message") or "").strip(),
+                        )
                     return controller.load_comments(
                         vod_id, mode=int(query.get("mode") or 3), next_offset=str(query.get("next") or "")
                     )

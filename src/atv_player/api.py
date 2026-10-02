@@ -382,6 +382,15 @@ class ApiClient:
             headers={"X-CLIENT": "gui"},
         )
 
+    def reply_bilibili_comment(self, vod_id: str, root: str, parent: str, message: str) -> dict[str, Any]:
+        """B站回复评论,返回 {"comment": 新评论dict}(后端精简字段)。"""
+        return self._request(
+            "POST",
+            f"/bilibili/{self._vod_token}/comment-reply",
+            json={"id": vod_id, "root": root, "parent": parent, "message": message},
+            headers={"X-CLIENT": "gui"},
+        )
+
     def list_emby_items(
         self,
         category_id: str,

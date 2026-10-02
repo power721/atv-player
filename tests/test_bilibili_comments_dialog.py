@@ -319,3 +319,106 @@ def test_like_failure_restores_button_and_surfaces_error(qtbot) -> None:
     assert "未登录" in dialog.status_label.text()
     assert card.like_button.text() == "👍 10"
     assert card.like_button.isEnabled()
+
+
+def _reply_payload(rpid: str = "9999", uname: str = "我", message: str = "我的回复") -> dict:
+    return {"comment": _comment(rpid, uname, message=message)}
+
+
+def test_reply_to_main_comment_appends_floor_without_fetch(qtbot) -> None:
+    loader = FakeLoader(
+        payloads=[
+            _main_payload([_comment("1001", "小明", rcount=1, preview=[_comment("1003", "小刚")])]),
+            _reply_payload(),
+        ]
+    )
+    dialog = _make_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog, 1)
+
+    card = dialog.card_by_rpid("1001")
+    assert not card.floor_expanded()
+    card.reply_button.click()
+    assert dialog._active_composer is not None
+    dialog._active_composer.edit.setText("我的回复")
+    dialog._active_composer.send_button.click()
+
+    qtbot.waitUntil(lambda: dialog.status_label.text() == "回复成功", timeout=5000)
+
+    assert loader.requests[1] == {
+        "kind": "reply", "bvid": "BV1xx411c7mD", "root": "1001", "parent": "1001", "message": "我的回复",
+    }
+    # 未展开过的楼中楼直接本地展开:预览行 + 新回复行,免请求
+    assert card.floor_expanded()
+    assert [row.comment.rpid for row in card.floor_rows()] == ["1003", "9999"]
+    floor_layout = card._floor_widget.layout()
+    assert all(floor_layout.indexOf(row) >= 0 for row in card.floor_rows())
+    assert card.comment.rcount == 2
+    assert card.toggle_reply_button.text() == "收起 ▴"
+    assert dialog._active_composer is None
+
+
+def test_reply_inside_floor_targets_parent_row(qtbot) -> None:
+    preview = [_comment("1003", "小刚")]
+    loader = FakeLoader(
+        payloads=[
+            _main_payload([_comment("1001", "小明", rcount=1, preview=preview)]),
+            _reply_payload(rpid="8888", message="层内回你"),
+        ]
+    )
+    dialog = _make_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog, 1)
+
+    card = dialog.card_by_rpid("1001")
+    card.toggle_reply_button.click()
+    qtbot.waitUntil(lambda: bool(card.floor_rows()), timeout=5000)
+    row = card.floor_rows()[0]
+    row.reply_button.click()
+    dialog._active_composer.edit.setText("层内回你")
+    dialog._active_composer.send_button.click()
+
+    qtbot.waitUntil(lambda: dialog.status_label.text() == "回复成功", timeout=5000)
+
+    assert loader.requests[1] == {
+        "kind": "reply", "bvid": "BV1xx411c7mD", "root": "1001", "parent": "1003", "message": "层内回你",
+    }
+    new_row = card.floor_rows()[-1]
+    assert new_row.comment.rpid == "8888"
+    assert new_row.message_label.text() == "回复 @小刚：层内回你"
+
+
+def test_reply_failure_keeps_composer_with_message(qtbot) -> None:
+    payloads = [_main_payload([_comment("1001", "小明", rcount=0)])]
+
+    def failing_reply(request: dict) -> dict:
+        if request.get("kind") == "reply":
+            raise RuntimeError("评论内容包含敏感信息")
+        return payloads.pop(0)
+
+    dialog = BilibiliCommentsDialog("BV1xx411c7mD", failing_reply)
+    qtbot.addWidget(dialog)
+    _wait_until_cards(qtbot, dialog, 1)
+
+    card = dialog.card_by_rpid("1001")
+    card.reply_button.click()
+    composer = dialog._active_composer
+    composer.edit.setText("说点什么")
+    composer.send_button.click()
+    qtbot.waitUntil(lambda: "回复失败" in dialog.status_label.text(), timeout=5000)
+
+    assert "敏感信息" in dialog.status_label.text()
+    assert dialog._active_composer is composer
+    assert not composer.send_button.isEnabled() or composer.send_button.text() == "发送"
+    qtbot.waitUntil(lambda: composer.send_button.isEnabled(), timeout=5000)
+    assert composer.message() == "说点什么"
+
+
+def test_reply_composer_is_singleton_across_targets(qtbot) -> None:
+    loader = FakeLoader(payloads=[_main_payload([_comment("1001", "小明"), _comment("1002", "小红")])])
+    dialog = _make_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog, 2)
+
+    dialog.card_by_rpid("1001").reply_button.click()
+    first = dialog._active_composer
+    dialog.card_by_rpid("1002").reply_button.click()
+
+    assert dialog._active_composer is not first

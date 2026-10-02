@@ -307,6 +307,10 @@ class BilibiliController:
         """评论点赞/取消;由评论对话框在后台线程调用。"""
         return self._api_client.run_bilibili_comment_action(vod_id, rpid, on)
 
+    def reply_comment(self, vod_id: str, root: str, parent: str, message: str) -> dict[str, object]:
+        """回复评论(root=根评论,回复一级评论时 parent=root);返回新评论对象。"""
+        return self._api_client.reply_bilibili_comment(vod_id, root, parent, message)
+
     def _decorate_card_subtitle(self, item: VodItem) -> VodItem:
         subtitle_parts = [item.vod_year.strip(), item.vod_remarks.strip()]
         item.vod_remarks = " - ".join(part for part in subtitle_parts if part)

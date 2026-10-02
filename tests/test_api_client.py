@@ -1319,6 +1319,32 @@ def test_api_client_runs_bilibili_comment_action() -> None:
     assert seen["body"] == {"id": "BV1xx411c7mD", "rpid": "1002", "action": 1}
 
 
+def test_api_client_replies_bilibili_comment() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as json_mod
+
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["body"] = json_mod.loads(request.content.decode())
+        return httpx.Response(200, json={"comment": {"rpid": "9999"}})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = client.reply_bilibili_comment("BV1xx411c7mD", "1001", "1003", "层内回你")
+
+    assert result == {"comment": {"rpid": "9999"}}
+    assert seen["method"] == "POST"
+    assert seen["path"] == "/bilibili/Harold/comment-reply"
+    assert seen["body"] == {"id": "BV1xx411c7mD", "root": "1001", "parent": "1003", "message": "层内回你"}
+
+
 def test_api_client_gets_feiniu_playback_source() -> None:
     seen = {"path": "", "query": ""}
 
