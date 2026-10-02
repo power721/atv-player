@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -20,7 +21,11 @@ from PySide6.QtWidgets import (
 )
 
 from atv_player.ui.async_guard import AsyncGuardMixin
-from atv_player.ui.poster_loader import load_remote_poster_image, poster_load_slot
+from atv_player.ui.poster_loader import (
+    load_remote_poster_image,
+    poster_cache_path,
+    poster_load_slot,
+)
 from atv_player.ui.theme import current_tokens
 from atv_player.ui.window_chrome import ThemedDialogBase
 
@@ -56,6 +61,9 @@ class BilibiliComment:
     is_up: bool = False
     liked: bool = False
     parent_uname: str = ""
+    # 正文内嵌表情 [{text:"[doge]", url, size 1小/2大}] 与图片评论 [{url,width,height}]
+    emotes: list[dict[str, object]] = field(default_factory=list)
+    pictures: list[dict[str, object]] = field(default_factory=list)
     preview: list[BilibiliComment] = field(default_factory=list)
 
 
@@ -79,6 +87,8 @@ def parse_bilibili_comment(payload: object) -> BilibiliComment:
         is_up=bool(payload.get("is_up")),
         liked=bool(payload.get("liked")),
         parent_uname=str(payload.get("parent_uname") or "").strip(),
+        emotes=[dict(entry) for entry in payload.get("emotes") or [] if isinstance(entry, dict)],
+        pictures=[dict(entry) for entry in payload.get("pictures") or [] if isinstance(entry, dict)],
         preview=preview,
     )
 
@@ -118,6 +128,38 @@ def _format_ctime(ctime: int) -> str:
     return datetime.fromtimestamp(ctime).strftime("%Y-%m-%d %H:%M")
 
 
+_EMOTE_SMALL_PX = 20
+_EMOTE_LARGE_PX = 40
+_PICTURE_MAX_WIDTH = 240
+
+
+def _message_html(text: str, emotes: list[dict[str, object]], cached_urls: set[str]) -> str:
+    """正文富文本:已缓存的表情文本替换为 <img>(file:// 本地缓存,QTextDocument 原生可载)。"""
+    html_text = html.escape(text)
+    for emote in emotes:
+        url = str(emote.get("url") or "")
+        if not url or url not in cached_urls:
+            continue
+        cache_path = poster_cache_path(url)
+        px = _EMOTE_LARGE_PX if int(emote.get("size") or 1) == 2 else _EMOTE_SMALL_PX
+        html_text = html_text.replace(
+            html.escape(str(emote.get("text") or "")),
+            f'<img src="{cache_path.as_uri()}" width="{px}" height="{px}"/>',
+        )
+    return html_text
+
+
+def _picture_display_size(width: object, height: object) -> tuple[int, int]:
+    """缩略显示尺寸:等比压进 _PICTURE_MAX_WIDTH 宽(无尺寸信息给固定占位)。"""
+    try:
+        w = max(1, int(width or 0))
+        h = max(1, int(height or 0))
+    except (TypeError, ValueError):
+        return _PICTURE_MAX_WIDTH, _PICTURE_MAX_WIDTH * 3 // 4
+    scale = min(1.0, _PICTURE_MAX_WIDTH / w)
+    return max(1, int(w * scale)), max(1, int(h * scale))
+
+
 def _meta_html(comment: BilibiliComment) -> str:
     tokens = current_tokens()
     parts: list[str] = []
@@ -144,6 +186,10 @@ class _LoaderSignals(QObject):
 
 class _AvatarSignals(QObject):
     loaded = Signal(object, object)  # QLabel, QImage
+
+
+class _EmoteSignals(QObject):
+    loaded = Signal(object, object)  # message QLabel, BilibiliComment(表情到货后重渲)
 
 
 class _LikeButton(QPushButton):
@@ -241,8 +287,10 @@ class _ReplyRow(QWidget):
         self.message_label = QLabel("".join(message_parts))
         self.message_label.setWordWrap(True)
         self.message_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        dialog.apply_message(self.message_label, comment, text="".join(message_parts))
         layout.addWidget(self.meta_label)
         layout.addWidget(self.message_label)
+        dialog.add_pictures(comment, layout)
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(16)
@@ -298,7 +346,9 @@ class _CommentCard(QFrame):
         self.message_label.setWordWrap(True)
         self.message_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         content.addWidget(self.meta_label)
+        dialog.apply_message(self.message_label, comment)
         content.addWidget(self.message_label)
+        dialog.add_pictures(comment, content)
 
         footer = QHBoxLayout()
         footer.setContentsMargins(0, 0, 0, 0)
@@ -470,7 +520,9 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
         self._connect_async_signal(self._signals.succeeded, self._handle_loaded)
         self._connect_async_signal(self._signals.failed, self._handle_failed)
         self._avatar_signals = _AvatarSignals()
-        self._connect_async_signal(self._avatar_signals.loaded, self._handle_avatar_loaded)
+        self._connect_async_signal(self._avatar_signals.loaded, self._handle_image_loaded)
+        self._emote_signals = _EmoteSignals()
+        self._connect_async_signal(self._emote_signals.loaded, self._handle_emote_loaded)
 
         self.title_label = QLabel("评论")
         self.title_label.setObjectName("bilibiliCommentsTitle")
@@ -537,20 +589,87 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
                 return card
         return None
 
-    def start_avatar_load(self, label: QLabel, url: str) -> None:
+    def start_remote_image(self, label: QLabel, url: str, size: QSize, circular: bool = False) -> None:
+        """通用远程图异步加载(头像圆形/缩略图/表情源图),回填 _handle_image_loaded。"""
         if not url:
             return
+        label.setProperty("circular_image", circular)
 
         def load() -> None:
             self._avatar_semaphore.acquire()
             try:
-                image = load_remote_poster_image(url, QSize(_AVATAR_SIZE * 2, _AVATAR_SIZE * 2))
+                image = load_remote_poster_image(url, size)
                 if image is not None and self._can_deliver_async_result():
                     self._avatar_signals.loaded.emit(label, image)
             finally:
                 self._avatar_semaphore.release()
 
         threading.Thread(target=load, daemon=True).start()
+
+    def start_avatar_load(self, label: QLabel, url: str) -> None:
+        self.start_remote_image(label, url, QSize(_AVATAR_SIZE * 2, _AVATAR_SIZE * 2), circular=True)
+
+    # --- 表情/图片评论渲染 ----------------------------------------------
+
+    def apply_message(self, label: QLabel, comment: BilibiliComment, text: str | None = None) -> None:
+        """正文渲染:无表情纯文本;有表情先按磁盘缓存即时替换,未命中的异步下载后重渲。
+
+        text 为实际显示文本(楼中楼带「回复 @xxx：」前缀),存 property 供重渲取回。
+        """
+        display = text if text is not None else comment.message
+        label.setProperty("message_text", display)
+        if not comment.emotes:
+            label.setText(display)
+            return
+        pending = self._render_message_rich(label, comment)
+        for emote in pending:
+            self.start_emote_load(label, comment, str(emote.get("url") or ""))
+
+    def _render_message_rich(self, label: QLabel, comment: BilibiliComment) -> list[dict[str, object]]:
+        cached = {
+            str(emote.get("url") or "")
+            for emote in comment.emotes
+            if poster_cache_path(str(emote.get("url") or "")).is_file()
+        }
+        display = str(label.property("message_text") or comment.message)
+        label.setTextFormat(Qt.TextFormat.RichText)
+        label.setText(_message_html(display, comment.emotes, cached))
+        return [emote for emote in comment.emotes if str(emote.get("url") or "") not in cached]
+
+    def start_emote_load(self, label: QLabel, comment: BilibiliComment, url: str) -> None:
+        if not url:
+            return
+
+        def load() -> None:
+            self._avatar_semaphore.acquire()
+            try:
+                image = load_remote_poster_image(url, QSize(_EMOTE_LARGE_PX * 2, _EMOTE_LARGE_PX * 2))
+                if image is not None and self._can_deliver_async_result():
+                    self._emote_signals.loaded.emit(label, comment)
+            finally:
+                self._avatar_semaphore.release()
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def add_pictures(self, comment: BilibiliComment, layout) -> None:
+        """图片评论缩略行:按上游宽高先占位,异步加载后填充。"""
+        if not comment.pictures:
+            return
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        for picture in comment.pictures:
+            url = str(picture.get("url") or "")
+            if not url:
+                continue
+            width, height = _picture_display_size(picture.get("width"), picture.get("height"))
+            thumb = QLabel()
+            thumb.setObjectName("bilibiliCommentPicture")
+            thumb.setFixedSize(width, height)
+            thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            row.addWidget(thumb)
+            self.start_remote_image(thumb, url, QSize(_PICTURE_MAX_WIDTH * 2, _PICTURE_MAX_WIDTH * 2))
+        layout.addLayout(row)
 
     # --- 数据加载 -------------------------------------------------------
 
@@ -815,6 +934,11 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
                 background: transparent;
                 border: none;
             }}
+            QLabel#bilibiliCommentPicture {{
+                background: {tokens.panel_alt_bg};
+                border: 1px solid {tokens.border_subtle};
+                border-radius: 4px;
+            }}
             QPushButton#bilibiliCommentRepliesButton, QPushButton#bilibiliCommentMoreButton {{
                 color: {tokens.accent};
                 background: transparent;
@@ -923,8 +1047,22 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
             f"QPushButton:hover {{ border-color: {tokens.input_hover_border}; }}"
         )
 
-    def _handle_avatar_loaded(self, label: object, image: object) -> None:
+    def _handle_image_loaded(self, label: object, image: object) -> None:
         if not isinstance(label, QLabel) or not shiboken6.isValid(label) or not isinstance(image, QImage):
             return
-        label.setText("")
-        label.setPixmap(_circular_pixmap(image, _AVATAR_SIZE))
+        if bool(label.property("circular_image")):
+            label.setText("")
+            label.setPixmap(_circular_pixmap(image, _AVATAR_SIZE))
+            return
+        pixmap = QPixmap.fromImage(image).scaled(
+            label.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        )
+        label.setPixmap(pixmap)
+
+    def _handle_emote_loaded(self, label: object, comment: object) -> None:
+        if not isinstance(label, QLabel) or not shiboken6.isValid(label):
+            return
+        if not isinstance(comment, BilibiliComment):
+            return
+        # 到货即已写入磁盘缓存,重渲命中 file:// 替换(幂等,多表情多次到货无害)
+        self._render_message_rich(label, comment)

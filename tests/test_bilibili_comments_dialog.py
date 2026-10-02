@@ -3,6 +3,8 @@ from __future__ import annotations
 import threading
 
 import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel
 
 from atv_player.ui.bilibili_comments_dialog import BilibiliCommentsDialog
 
@@ -499,3 +501,113 @@ def test_comment_meta_falls_back_to_time_desc_without_ctime(qtbot) -> None:
     _wait_until_cards(qtbot, dialog, 1)
 
     assert "3天前发布" in dialog.card_by_rpid("1001").meta_label.text()
+
+
+def _png_bytes() -> bytes:
+    from PySide6.QtGui import QImage
+    from PySide6.QtCore import QBuffer, QIODevice
+
+    image = QImage(8, 8, QImage.Format.Format_ARGB32)
+    image.fill(0xFFFF0000)
+    buffer = QBuffer()
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    image.save(buffer, "PNG")
+    return bytes(buffer.data())
+
+
+def test_comment_renders_cached_emotes_inline(qtbot, monkeypatch, tmp_path) -> None:
+    png = _png_bytes()
+    emote_url = "https://i0.hdslb.com/bfs/emote/doge.png"
+    cache_file = tmp_path / "emote.img"
+    cache_file.write_bytes(png)
+    monkeypatch.setattr(
+        "atv_player.ui.bilibili_comments_dialog.poster_cache_path", lambda url: cache_file
+    )
+    loader = FakeLoader(
+        payloads=[
+            _main_payload(
+                [_comment("1001", "小明", message="这个视频太好了[doge]", emotes=[
+                    {"text": "[doge]", "url": emote_url, "size": 1},
+                ])]
+            )
+        ]
+    )
+    dialog = _make_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog, 1)
+
+    card = dialog.card_by_rpid("1001")
+    # 缓存命中:即时富文本替换为 file:// 内嵌图
+    assert card.message_label.textFormat() == Qt.TextFormat.RichText
+    rendered = card.message_label.text()
+    assert "<img" in rendered and "file://" in rendered and 'width="20"' in rendered
+    assert "[doge]" not in rendered
+
+
+def test_comment_emotes_without_cache_keep_plain_text(qtbot, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "atv_player.ui.bilibili_comments_dialog.poster_cache_path",
+        lambda url: tmp_path / "missing.img",
+    )
+    loader = FakeLoader(
+        payloads=[
+            _main_payload(
+                [_comment("1001", "小明", message="纯文本[妙啊]", emotes=[
+                    {"text": "[妙啊]", "url": "https://i0.hdslb.com/bfs/emote/miaoa.png", "size": 2},
+                ])]
+            )
+        ]
+    )
+    dialog = _make_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog, 1)
+
+    # 无缓存且测试环境不发网络请求时保持文本形态,不炸不空
+    card = dialog.card_by_rpid("1001")
+    assert "[妙啊]" in card.message_label.text()
+
+
+def test_comment_pictures_render_placeholder_thumbs(qtbot, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "atv_player.ui.bilibili_comments_dialog.poster_cache_path",
+        lambda url: tmp_path / "missing.img",
+    )
+    loader = FakeLoader(
+        payloads=[
+            _main_payload(
+                [_comment("1001", "小明", message="看图", pictures=[
+                    {"url": "https://i0.hdslb.com/bfs/new_dyn/1.jpg", "width": 800, "height": 600},
+                    {"url": "https://i0.hdslb.com/bfs/new_dyn/2.jpg", "width": 1000, "height": 500},
+                ])]
+            )
+        ]
+    )
+    dialog = _make_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog, 1)
+
+    card = dialog.card_by_rpid("1001")
+    thumbs = [w for w in card.findChildren(QLabel) if w.objectName() == "bilibiliCommentPicture"]
+    assert len(thumbs) == 2
+    dims = sorted((thumb.size().width(), thumb.size().height()) for thumb in thumbs)
+    assert dims == [(240, 120), (240, 180)]  # 等比压进 240 宽
+
+
+def test_reply_row_renders_cached_emote_with_reply_prefix(qtbot, monkeypatch, tmp_path) -> None:
+    cache_file = tmp_path / "emote.img"
+    cache_file.write_bytes(_png_bytes())
+    monkeypatch.setattr(
+        "atv_player.ui.bilibili_comments_dialog.poster_cache_path", lambda url: cache_file
+    )
+    preview = [_comment("1003", "小刚", message="层内表情[doge]", emotes=[
+        {"text": "[doge]", "url": "https://i0.hdslb.com/bfs/emote/doge.png", "size": 1},
+    ])]
+    loader = FakeLoader(payloads=[_main_payload([_comment("1001", "小明", rcount=1, preview=preview)])])
+    dialog = _make_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog, 1)
+
+    card = dialog.card_by_rpid("1001")
+    card.toggle_reply_button.click()
+    qtbot.waitUntil(lambda: bool(card.floor_rows()), timeout=5000)
+    row = card.floor_rows()[0]
+    rendered = row.message_label.text()
+    # 直答根评论无前缀,表情内嵌渲染
+    assert rendered.startswith("层内表情")
+    assert "<img" in rendered
