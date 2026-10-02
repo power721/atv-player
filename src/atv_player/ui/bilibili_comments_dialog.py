@@ -31,6 +31,7 @@ from atv_player.ui.window_chrome import ThemedDialogBase
 #   {"kind": "like", "bvid": str, "rpid": str, "on": bool} -> {"liked": bool}
 #   {"kind": "reply", "bvid": str, "root": str, "parent": str, "message": str} ->
 #       {"comment": 新评论dict}
+#   {"kind": "post", "bvid": str, "message": str} -> {"comment": 新评论dict}
 # 评论dict字段(后端 /bilibili/{token}/comments 精简输出):
 #   rpid/uname/avatar/level/message/like/rcount/ctime/time_desc/location/top/is_up/liked/parent_uname/preview
 CommentsLoader = Callable[[dict[str, object]], dict[str, object]]
@@ -155,12 +156,15 @@ class _LikeButton(QPushButton):
 
 
 class _ReplyComposer(QFrame):
-    """行内回复输入区:输入框(Enter 发送)+发送/取消;发送中置忙防连点。"""
+    """行内回复输入区:输入框(Enter 发送)+发送/取消;发送中置忙防连点。
+
+    cancellable=False 用于对话框顶部常驻的发表框(无取消按钮)。
+    """
 
     submitted = Signal(str)  # message
     cancelled = Signal()
 
-    def __init__(self, placeholder: str, parent: QWidget | None = None) -> None:
+    def __init__(self, placeholder: str, parent: QWidget | None = None, cancellable: bool = True) -> None:
         super().__init__(parent)
         self.setObjectName("bilibiliReplyComposer")
         layout = QHBoxLayout(self)
@@ -173,13 +177,14 @@ class _ReplyComposer(QFrame):
         self.send_button.setObjectName("bilibiliReplySendButton")
         self.send_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.send_button.clicked.connect(self._emit_submitted)
-        cancel_button = QPushButton("取消", self)
-        cancel_button.setObjectName("bilibiliReplyCancelButton")
-        cancel_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        cancel_button.clicked.connect(self.cancelled.emit)
         layout.addWidget(self.edit, 1)
         layout.addWidget(self.send_button)
-        layout.addWidget(cancel_button)
+        if cancellable:
+            cancel_button = QPushButton("取消", self)
+            cancel_button.setObjectName("bilibiliReplyCancelButton")
+            cancel_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            cancel_button.clicked.connect(self.cancelled.emit)
+            layout.addWidget(cancel_button)
 
     def message(self) -> str:
         return self.edit.text().strip()
@@ -473,6 +478,10 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
         header.addWidget(self.mode_hot_button)
         header.addWidget(self.mode_latest_button)
 
+        # 顶部常驻发表框:直接评论视频(root/parent 空)
+        self.post_composer = _ReplyComposer("发表评论...", self, cancellable=False)
+        self.post_composer.submitted.connect(self._submit_post)
+
         self.status_label = QLabel("")
         self.status_label.setObjectName("bilibiliCommentsStatus")
 
@@ -497,6 +506,7 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(10)
         layout.addLayout(header)
+        layout.addWidget(self.post_composer)
         layout.addWidget(self.status_label)
         layout.addWidget(scroll, 1)
         layout.addWidget(self.load_more_button)
@@ -613,6 +623,30 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
         }
         self._start_load(request, {"kind": "reply", "card": card, "row": row, "composer": composer})
 
+    def _submit_post(self, message: str) -> None:
+        """顶部发表框:直接评论视频;成功后新评论插到列表首。"""
+        self.post_composer.set_busy(True)
+        request = {"kind": "post", "bvid": self.bvid, "message": message}
+        self._start_load(request, {"kind": "post"})
+
+    def _handle_post_loaded(self, payload: dict[str, object]) -> None:
+        comment = parse_bilibili_comment(payload.get("comment"))
+        if not comment.rpid:
+            self.status_label.setText("评论失败:上游未返回新评论")
+            self.post_composer.set_busy(False)
+            return
+        card = _CommentCard(comment, self, self.comments_widget)
+        card.replies_requested.connect(self._request_replies)
+        self._cards.insert(0, card)
+        self.comments_layout.insertWidget(0, card)
+        if self._count is not None:
+            self._count += 1
+            self.title_label.setText(f"评论 · {_format_stat_value(self._count)}条")
+        self.status_label.setText("")
+        self.post_composer.edit.clear()
+        self.post_composer.set_busy(False)
+        self.post_composer.focus_input()
+
     def _handle_reply_loaded(self, payload: dict[str, object], context: dict[str, object]) -> None:
         card = context.get("card")
         row = context.get("row")
@@ -670,6 +704,9 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
         if isinstance(context, dict) and context.get("kind") == "reply":
             self._handle_reply_loaded(payload, context)
             return
+        if isinstance(context, dict) and context.get("kind") == "post":
+            self._handle_post_loaded(payload)
+            return
         self._apply_main_payload(payload)
 
     def _handle_failed(self, epoch: int, message: str, context: object) -> None:
@@ -687,6 +724,11 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
                 composer.set_busy(False)
                 composer.focus_input()
             self.status_label.setText(f"回复失败:{message}")
+            return
+        if isinstance(context, dict) and context.get("kind") == "post":
+            self.post_composer.set_busy(False)
+            self.post_composer.focus_input()
+            self.status_label.setText(f"评论失败:{message}")
             return
         if not self._cards:
             self.status_label.setText(f"加载失败:{message}")

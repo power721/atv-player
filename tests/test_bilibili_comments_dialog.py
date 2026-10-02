@@ -422,3 +422,59 @@ def test_reply_composer_is_singleton_across_targets(qtbot) -> None:
     dialog.card_by_rpid("1002").reply_button.click()
 
     assert dialog._active_composer is not first
+
+
+def test_post_composer_publishes_top_level_comment_at_list_head(qtbot) -> None:
+    loader = FakeLoader(
+        payloads=[
+            _main_payload([_comment("1001", "小明")]),
+            _reply_payload(rpid="7777", message="我评视频"),
+        ]
+    )
+    dialog = _make_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog, 1)
+
+    assert dialog.post_composer.isVisibleTo(dialog)
+    dialog.post_composer.edit.setText("我评视频")
+    dialog.post_composer.send_button.click()
+    qtbot.waitUntil(lambda: dialog.card_by_rpid("7777") is not None, timeout=5000)
+
+    assert loader.requests[1] == {"kind": "post", "bvid": "BV1xx411c7mD", "message": "我评视频"}
+    assert dialog.cards()[0].comment.rpid == "7777"
+    assert dialog.cards()[0].message_label.text() == "我评视频"
+    assert dialog.title_label.text() == "评论 · 963条"  # 962+1
+    assert dialog.post_composer.message() == ""
+    assert dialog.post_composer.send_button.isEnabled()
+
+
+def test_post_composer_failure_keeps_input_and_shows_error(qtbot) -> None:
+    payloads = [_main_payload([_comment("1001", "小明")])]
+
+    def failing_post(request: dict) -> dict:
+        if request.get("kind") == "post":
+            raise RuntimeError("评论内容包含敏感信息")
+        return payloads.pop(0)
+
+    dialog = BilibiliCommentsDialog("BV1xx411c7mD", failing_post)
+    qtbot.addWidget(dialog)
+    _wait_until_cards(qtbot, dialog, 1)
+
+    dialog.post_composer.edit.setText("说点什么")
+    dialog.post_composer.send_button.click()
+    qtbot.waitUntil(lambda: "评论失败" in dialog.status_label.text(), timeout=5000)
+
+    assert "敏感信息" in dialog.status_label.text()
+    assert dialog.post_composer.message() == "说点什么"
+    qtbot.waitUntil(lambda: dialog.post_composer.send_button.isEnabled(), timeout=5000)
+
+
+def test_post_composer_empty_message_is_blocked_locally(qtbot) -> None:
+    loader = FakeLoader(payloads=[_main_payload([_comment("1001", "小明")], is_end=True)])
+    dialog = _make_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog, 1)
+    requests_before = len(loader.requests)
+
+    dialog.post_composer.edit.setText("   ")
+    dialog.post_composer.send_button.click()
+
+    assert len(loader.requests) == requests_before

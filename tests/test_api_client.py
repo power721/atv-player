@@ -1636,3 +1636,29 @@ def test_api_client_resolves_msub_episode_surfaces_failure_message() -> None:
     with pytest.raises(ApiError) as excinfo:
         client.resolve_msub_episode(5, 3)
     assert "暂无可用播放源" in str(excinfo.value)
+
+
+def test_api_client_posts_bilibili_top_level_comment() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as json_mod
+
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["body"] = json_mod.loads(request.content.decode())
+        return httpx.Response(200, json={"comment": {"rpid": "7777"}})
+
+    client = ApiClient(
+        base_url="http://127.0.0.1:4567",
+        token="token-123",
+        vod_token="Harold",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = client.post_bilibili_comment("BV1xx411c7mD", "我评视频")
+
+    assert result == {"comment": {"rpid": "7777"}}
+    assert seen["method"] == "POST"
+    assert seen["path"] == "/bilibili/Harold/comment-reply"
+    assert seen["body"] == {"id": "BV1xx411c7mD", "root": "", "parent": "", "message": "我评视频"}

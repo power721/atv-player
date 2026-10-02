@@ -311,6 +311,10 @@ class BilibiliController:
         """回复评论(root=根评论,回复一级评论时 parent=root);返回新评论对象。"""
         return self._api_client.reply_bilibili_comment(vod_id, root, parent, message)
 
+    def post_comment(self, vod_id: str, message: str) -> dict[str, object]:
+        """发表顶层评论(直接评论视频);返回新评论对象。"""
+        return self._api_client.post_bilibili_comment(vod_id, message)
+
     def _decorate_card_subtitle(self, item: VodItem) -> VodItem:
         subtitle_parts = [item.vod_year.strip(), item.vod_remarks.strip()]
         item.vod_remarks = " - ".join(part for part in subtitle_parts if part)

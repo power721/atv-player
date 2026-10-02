@@ -6838,6 +6838,8 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
                             str(query.get("parent") or "").strip(),
                             str(query.get("message") or "").strip(),
                         )
+                    if query.get("kind") == "post":
+                        return controller.post_comment(vod_id, str(query.get("message") or "").strip())
                     return controller.load_comments(
                         vod_id, mode=int(query.get("mode") or 3), next_offset=str(query.get("next") or "")
                     )
