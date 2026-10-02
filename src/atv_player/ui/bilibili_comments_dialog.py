@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 
 import shiboken6
 from PySide6.QtCore import QObject, QSize, Qt, Signal
@@ -48,6 +49,7 @@ class BilibiliComment:
     message: str = ""
     like: int = 0
     rcount: int = 0
+    ctime: int = 0
     time_desc: str = ""
     location: str = ""
     top: bool = False
@@ -70,6 +72,7 @@ def parse_bilibili_comment(payload: object) -> BilibiliComment:
         message=str(payload.get("message") or "").strip(),
         like=int(payload.get("like") or 0),
         rcount=int(payload.get("rcount") or 0),
+        ctime=int(payload.get("ctime") or 0),
         time_desc=str(payload.get("time_desc") or "").strip(),
         location=str(payload.get("location") or "").strip(),
         top=bool(payload.get("top")),
@@ -108,6 +111,13 @@ def _circular_pixmap(image: QImage, size: int) -> QPixmap:
     return pixmap
 
 
+def _format_ctime(ctime: int) -> str:
+    """完整时间(本地时区):2026-07-13 11:31;ctime 缺失返回空回退上游相对文案。"""
+    if ctime <= 0:
+        return ""
+    return datetime.fromtimestamp(ctime).strftime("%Y-%m-%d %H:%M")
+
+
 def _meta_html(comment: BilibiliComment) -> str:
     tokens = current_tokens()
     parts: list[str] = []
@@ -119,8 +129,9 @@ def _meta_html(comment: BilibiliComment) -> str:
         parts.append(f'<span style="color:{tokens.accent};">[作者]</span>')
     if comment.level > 0:
         parts.append(f'<span style="color:{tokens.text_secondary};">Lv{comment.level}</span>')
-    if comment.time_desc:
-        parts.append(f'<span style="color:{tokens.text_secondary};">{comment.time_desc}</span>')
+    time_text = _format_ctime(comment.ctime) or comment.time_desc
+    if time_text:
+        parts.append(f'<span style="color:{tokens.text_secondary};">{time_text}</span>')
     if comment.location:
         parts.append(f'<span style="color:{tokens.text_secondary};">{comment.location}</span>')
     return " ".join(parts)

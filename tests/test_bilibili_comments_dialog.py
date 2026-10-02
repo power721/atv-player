@@ -478,3 +478,24 @@ def test_post_composer_empty_message_is_blocked_locally(qtbot) -> None:
     dialog.post_composer.send_button.click()
 
     assert len(loader.requests) == requests_before
+
+
+def test_comment_meta_shows_full_datetime_instead_of_relative_text(qtbot) -> None:
+    loader = FakeLoader(
+        payloads=[_main_payload([_comment("1001", "小明", ctime=1783575060, time_desc="2个月前发布")])]
+    )
+    dialog = _make_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog, 1)
+
+    card = dialog.card_by_rpid("1001")
+    assert "2026-07-09 13:31" in card.meta_label.text()
+    assert "发布" not in card.meta_label.text()
+    assert "2个月前" not in card.meta_label.text()
+
+
+def test_comment_meta_falls_back_to_time_desc_without_ctime(qtbot) -> None:
+    loader = FakeLoader(payloads=[_main_payload([_comment("1001", "小明", time_desc="3天前发布")])])
+    dialog = _make_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog, 1)
+
+    assert "3天前发布" in dialog.card_by_rpid("1001").meta_label.text()
