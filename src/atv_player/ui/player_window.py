@@ -1893,6 +1893,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.danmaku_input_edit.setClearButtonEnabled(True)
         self.danmaku_input_edit.setMaxLength(100)
         self.danmaku_input_edit.returnPressed.connect(self._submit_danmaku_input)
+        # 快捷键系统抢键保底:输入框聚焦时宣称 Enter/Esc 归控件处理
+        self.danmaku_input_edit.installEventFilter(self)
         self.danmaku_input_send_button = QPushButton("发送")
         self.danmaku_input_send_button.setObjectName("danmakuInputSendButton")
         self.danmaku_input_send_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -14471,6 +14473,17 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._sync_live_danmaku_canvas()
             if not self.related_overlay.isHidden():
                 self._position_related_overlay()
+        danmaku_input_edit = getattr(self, "danmaku_input_edit", None)
+        if (
+            watched is danmaku_input_edit
+            and event.type() == QEvent.Type.ShortcutOverride
+            and isinstance(event, QKeyEvent)
+            and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Escape)
+        ):
+            # 输入框聚焦时 Enter/Esc 归控件处理(发送/交给 Esc 快捷键路由),
+            # 阻止快捷键系统抢键
+            event.accept()
+            return True
         related_scroll = getattr(self, "related_overlay_scroll", None)
         if (
             related_scroll is not None
@@ -14562,6 +14575,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         return super().eventFilter(cast(QObject, watched), event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
+        if not self.danmaku_input_bar.isHidden():
+            # 弹幕输入条打开时不触发播放器动作键:焦点在输入框内的按键本就不会
+            # 冒泡到这里,这里兜的是焦点不在输入框的漏网键(Enter 曾在此切全屏)
+            super().keyPressEvent(event)
+            return
         if event.key() == Qt.Key.Key_F1:
             self._show_shortcut_help()
             event.accept()
