@@ -1,4 +1,6 @@
 # ruff: noqa: E501
+import threading
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -934,3 +936,79 @@ def test_update_service_does_not_prompt_completed_watched_series_for_future_unre
     assert record is not None
     assert record.has_update is False
     assert record.homepage_prompt_pending is False
+
+
+def test_update_service_timer_check_runs_gateway_off_main_thread(qtbot, tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    repo.upsert(_record())
+    refresh_threads: list[int] = []
+    release = threading.Event()
+
+    class SlowGateway(FakeMetadataGateway):
+        def refresh(self, record: FollowingRecord, provider: str):
+            refresh_threads.append(threading.get_ident())
+            release.wait(10)
+            return super().refresh(record, provider)
+
+    service = FollowingUpdateService(repo, metadata_gateway=SlowGateway(), now=lambda: 200)
+
+    finished: list[object] = []
+    service.update_finished.connect(finished.append)
+
+    service._on_check_timer()
+    qtbot.waitUntil(lambda: bool(refresh_threads), timeout=5000)
+    assert threading.get_ident() not in refresh_threads
+
+    release.set()
+    qtbot.waitUntil(lambda: not service._async_check_running, timeout=5000)
+    qtbot.waitUntil(lambda: bool(finished), timeout=5000)
+
+    record = repo.get(1)
+    assert record is not None
+    assert record.last_error == ""
+    assert finished
+
+
+def test_update_service_skips_async_check_while_previous_round_in_flight(qtbot, tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    repo.upsert(_record())
+    calls = {"count": 0}
+    release = threading.Event()
+
+    class SlowGateway(FakeMetadataGateway):
+        def refresh(self, record: FollowingRecord, provider: str):
+            calls["count"] += 1
+            release.wait(10)
+            return super().refresh(record, provider)
+
+    service = FollowingUpdateService(repo, metadata_gateway=SlowGateway(), now=lambda: 200)
+
+    service._start_async_check()
+    qtbot.waitUntil(lambda: calls["count"] == 1, timeout=5000)
+    service._start_async_check()  # 上一轮未结束:不得重复发起
+    time.sleep(0.1)
+    assert calls["count"] == 1
+
+    release.set()
+    qtbot.waitUntil(lambda: not service._async_check_running, timeout=5000)
+
+
+def test_update_service_async_failure_clears_in_flight_and_emits_nothing(qtbot, tmp_path: Path) -> None:
+    repo = FollowingRepository(tmp_path / "app.db")
+    repo.upsert(_record())
+
+    class ExplodingGateway(FakeMetadataGateway):
+        def refresh(self, record: FollowingRecord, provider: str):
+            raise RuntimeError("network down")
+
+    service = FollowingUpdateService(repo, metadata_gateway=ExplodingGateway(), now=lambda: 200)
+
+    finished: list[object] = []
+    service.update_finished.connect(finished.append)
+
+    service._start_async_check()
+    qtbot.waitUntil(lambda: not service._async_check_running, timeout=5000)
+    # provider 异常被 _check_one 吞掉转 checked=False 结果,不外抛、不清空 in_flight 死锁
+    assert len(finished) == 1
+    assert finished[0][0].checked is False
+    assert service._async_check_running is False

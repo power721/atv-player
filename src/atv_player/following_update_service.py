@@ -1,12 +1,14 @@
 # ruff: noqa: E501
 from __future__ import annotations
 
+import logging
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import replace as _replace
 from datetime import datetime
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from atv_player.following_metadata import compute_episode_counts
 from atv_player.following_models import (
@@ -21,6 +23,8 @@ from atv_player.following_models import (
     resolve_progress_season,
 )
 from atv_player.time_utils import beijing_timezone
+
+logger = logging.getLogger(__name__)
 
 _replace_snapshot = _replace
 
@@ -37,6 +41,7 @@ def is_common_update_window(timestamp: int) -> bool:
 
 class FollowingUpdateService(QObject):
     update_finished = Signal(object)
+    _async_check_completed = Signal(list)
 
     def __init__(self, repository, *, metadata_gateway, now: Callable[[], int] | None = None, parent=None) -> None:
         super().__init__(parent)
@@ -44,18 +49,56 @@ class FollowingUpdateService(QObject):
         self._metadata_gateway = metadata_gateway
         self._now = now or (lambda: int(time.time()))
         self._timer = QTimer(self)
-        self._timer.timeout.connect(self.check_due_records)
+        # 自动轮询必须落后台线程:check_due_records 是同步网络(douban/bangumi/TMDB
+        # 搜索+详情),更新窗口期 5 分钟一轮、单条可拖约 50s,QTimer 直连曾把 GUI
+        # 主线程整段冻住(挂机/播放中均复现"未响应+转圈",恢复要等网络超时)。
+        self._timer.timeout.connect(self._on_check_timer)
+        self._async_check_running = False
+        self._async_check_completed.connect(self._handle_async_check_completed)
 
     def next_interval_seconds(self) -> int:
         return WINDOW_INTERVAL_SECONDS if is_common_update_window(self._now()) else NORMAL_INTERVAL_SECONDS
 
     def start(self) -> None:
-        QTimer.singleShot(60_000, self.check_due_records)
+        QTimer.singleShot(60_000, self._on_check_timer)
         self._timer.start(self.next_interval_seconds() * 1000)
 
-    def check_due_records(self, limit: int = 3) -> list[FollowingUpdateResult]:
+    def _on_check_timer(self) -> None:
+        # 先重排再执行:即使本轮网络拖过下个到期点也不会漏掉后续轮询。
+        self._timer.start(self.next_interval_seconds() * 1000)
+        self._start_async_check()
+
+    def _start_async_check(self) -> None:
+        if self._async_check_running:
+            return
+        self._async_check_running = True
+
+        def run() -> None:
+            try:
+                results = self._check_due_records_blocking()
+            except Exception:
+                logger.warning("追剧到期检查后台执行失败", exc_info=True)
+                results = []
+            self._async_check_completed.emit(results)
+
+        threading.Thread(target=run, daemon=True, name="following-update-check").start()
+
+    @Slot(list)
+    def _handle_async_check_completed(self, results: list) -> None:
+        self._async_check_running = False
+        if results:
+            self.update_finished.emit(results)
+
+    def _check_due_records_blocking(self, limit: int = 3) -> list[FollowingUpdateResult]:
         now = self._now()
-        results = [self._check_one(record, now=now) for record in self._repository.load_due_records(now=now, limit=limit)]
+        return [
+            self._check_one(record, now=now)
+            for record in self._repository.load_due_records(now=now, limit=limit)
+        ]
+
+    def check_due_records(self, limit: int = 3) -> list[FollowingUpdateResult]:
+        # 手动"检查更新"保持同步语义(调用方自行带 busy 态等待返回值)。
+        results = self._check_due_records_blocking(limit)
         if results:
             self.update_finished.emit(results)
         if self._timer.isActive():
