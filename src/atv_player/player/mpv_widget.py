@@ -115,6 +115,23 @@ _AUDIO_STARVATION_MAX_RELOADS = 3
 # shutdown() 在 GUI 线程被调用,terminate 挪到后台线程执行,
 # 超过该时长仍未返回则放弃等待(泄漏实例)。
 _MPV_TERMINATE_TIMEOUT_SECONDS = 10.0
+
+# 播放期间持续变化的运行时属性,observe_property 推送到 _observed_properties 缓存,
+# 周期性读取(进度条/进度上报/遥测/断粮看门狗)一律走缓存,不在 GUI 线程同步 get。
+_RUNTIME_OBSERVED_PROPERTIES = (
+    "time-pos",
+    "duration",
+    "demuxer-cache-duration",
+    "playback-time",
+    "audio-pts",
+    "frame-drop-count",
+    "cache-buffering-state",
+    "video-bitrate",
+    "audio-bitrate",
+    "audio-codec",
+    "audio-params",
+    "demuxer-cache-state",
+)
 _NVIDIA_VERSION_RE = re.compile(r"(\d+\.\d+(?:\.\d+)*)")
 _LINUX_NVIDIA_DRIVER_MISMATCH: tuple[str, str] | bool | None = None
 _WINDOWS_MPV_DIAGNOSTIC_STAGES_LOGGED: set[str] = set()
@@ -376,6 +393,11 @@ class MpvWidget(QWidget):
         self._video_out_params: dict[str, object] = {}
         self._telemetry: dict[str, object] = {}
         self._telemetry_handlers: list[object] = []
+        # 播放期间持续变化的运行时属性,由 observe_property 在 mpv 事件线程回写,
+        # GUI/看门狗只读缓存:demuxer 忙于网络读(大文件起播/暂停恢复重连)时
+        # mpv_get_property 会等 demuxer 锁,曾把同步轮询的主线程冻住分钟级。
+        self._observed_properties: dict[str, object] = {}
+        self._observed_property_handlers: list[object] = []
         self._audio_cover_active = False
         self._audio_cover_mode = False
         self._playback_finished_emitted = False
@@ -806,6 +828,7 @@ class MpvWidget(QWidget):
             return
 
         def handle_track_list(_property_name, _tracks) -> None:
+            self._observed_properties["track-list"] = _tracks or []
             self.subtitle_tracks_changed.emit()
             self.audio_tracks_changed.emit()
             normalized = _tracks or []
@@ -848,6 +871,7 @@ class MpvWidget(QWidget):
         def handle_pause_changed(_property_name, paused) -> None:
             if paused is None:
                 return
+            self._observed_properties["pause"] = paused
             self.pause_state_changed.emit(bool(paused))
 
         observe_property("pause", handle_pause_changed)
@@ -861,6 +885,15 @@ class MpvWidget(QWidget):
 
             observe_property(telemetry_property, handle_telemetry_property)
             self._telemetry_handlers.append(handle_telemetry_property)
+
+        # 持续项运行时属性:进度条/进度上报/遥测徽章/外挂音轨断粮看门狗的周期读取
+        # 全部改走这份缓存,消除 GUI 线程同步 get(见 __init__ 注释)。
+        for observed_property in _RUNTIME_OBSERVED_PROPERTIES:
+            def handle_observed_property(_property_name, value, _key=observed_property) -> None:
+                self._observed_properties[_key] = value
+
+            observe_property(observed_property, handle_observed_property)
+            self._observed_property_handlers.append(handle_observed_property)
 
         register_key_binding = getattr(self._player, "register_key_binding", None)
         if register_key_binding is None:
@@ -1201,6 +1234,10 @@ class MpvWidget(QWidget):
         self._playback_finished_emitted = False
         self._windows_file_loaded_timer.stop()
         self._player_property_cache.clear()
+        # 在 loadfile 发出前清 observe 缓存:mpv 卸载/加载文件时属性经 None 中转
+        # 必产生变化通知,新值会被重新推送;若改在 file-loaded 事件里清,会把
+        # 先于事件入队的推送值抹掉且不再重推(两集 duration 恰好相同时尤甚)。
+        self._observed_properties.clear()
         self._pending_external_audio_files = ""
         self._reset_audio_starvation_state(audio_files or "")
         ensure_started_at = time.monotonic()
@@ -1441,15 +1478,14 @@ class MpvWidget(QWidget):
         if not self._audio_pts_supported:
             self._audio_starvation_timer.stop()
             return
-        # 运行时属性必须走 getattr(_player_property 的回退路径):
-        # python-mpv 的 player["x"] 走 options/ 前缀,对 playback-time 等
-        # 运行时属性会直接抛 "property does not exist"。
-        paused = self._player_property("pause")
+        # 周期采样读 observe 缓存(handle_pause_changed/handle_track_list/持续项注册
+        # 共同维护):demuxer 断粮时同步 get 会被锁卡住,恰好看门狗要在这种状态下跑。
+        paused = self._observed_properties.get("pause")
         if paused is None:
             return
-        playback_time = self._player_property("playback-time")
-        audio_pts = self._player_property("audio-pts")
-        tracks = self._player_property("track-list") or []
+        playback_time = self._observed_properties.get("playback-time")
+        audio_pts = self._observed_properties.get("audio-pts")
+        tracks = self._observed_properties.get("track-list") or []
         if paused:
             self._audio_starvation_samples.clear()
             return
@@ -1748,15 +1784,12 @@ class MpvWidget(QWidget):
             raise
 
     def position_seconds(self) -> int | None:
-        if not self._on_widget_thread():
-            return self._run_on_widget_thread(self.position_seconds)
-        if self._player is None:
+        # 读 observe 缓存(任意线程安全):同步 get 会被 demuxer 网络读锁阻塞
+        # GUI 线程(见 __init__ 注释)。
+        pos = self._observed_properties.get("time-pos")
+        if isinstance(pos, bool) or not isinstance(pos, (int, float)):
             return None
-        try:
-            pos = self._player.time_pos
-            return int(pos) if pos is not None else None
-        except Exception:
-            return None
+        return int(pos)
 
     def current_video_height(self) -> int | None:
         if not self._on_widget_thread():
@@ -1767,24 +1800,10 @@ class MpvWidget(QWidget):
         return None
 
     def duration_seconds(self) -> int:
-        if not self._on_widget_thread():
-            return int(self._run_on_widget_thread(self.duration_seconds) or 0)
-        if self._player is None:
-            return 0
-        duration = self._seconds_property_value(self._player_property("duration", None))
-        if duration > 0:
-            return duration
-        try:
-            return self._seconds_property_value(getattr(self._player, "duration", 0))
-        except Exception:
-            return 0
+        return self._seconds_property_value(self._observed_properties.get("duration"))
 
     def demuxer_cache_duration_seconds(self) -> int:
-        if not self._on_widget_thread():
-            return int(self._run_on_widget_thread(self.demuxer_cache_duration_seconds) or 0)
-        if self._player is None:
-            return 0
-        return self._seconds_property_value(self._player_property("demuxer-cache-duration", None))
+        return self._seconds_property_value(self._observed_properties.get("demuxer-cache-duration"))
 
     def telemetry_snapshot(self) -> dict[str, object]:
         """播放遥测快照,供徽章 1Hz 刷新。
@@ -1825,12 +1844,8 @@ class MpvWidget(QWidget):
         return snapshot
 
     def _read_runtime_property(self, name: str) -> object:
-        # python-mpv 的 player[name] 走 options/ 前缀,运行时属性必须经属性访问读取。
-        player = self._player
-        try:
-            return getattr(player, name.replace("-", "_"))
-        except AttributeError:
-            return None
+        # observe 缓存;同步 get 会等 demuxer 锁(GUI 冻结根因,见 __init__ 注释)。
+        return self._observed_properties.get(name)
 
     def _chapter_label(self, title: str, index: int) -> str:
         return title.strip() or f"章节 {index}"

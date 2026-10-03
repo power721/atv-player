@@ -8,7 +8,13 @@ import pytest
 from atv_player.player import mpv_widget as mpv_widget_module
 from atv_player.models import AppConfig
 from atv_player.player.mpv_user_config import ShaderPreset
-from atv_player.player.mpv_widget import AudioTrack, Chapter, MpvWidget, SubtitleTrack
+from atv_player.player.mpv_widget import (
+    _RUNTIME_OBSERVED_PROPERTIES,
+    AudioTrack,
+    Chapter,
+    MpvWidget,
+    SubtitleTrack,
+)
 
 
 class FakeDeadPlayer:
@@ -33,13 +39,19 @@ class FakeAlivePlayer:
 class FakeRuntimePlayer:
     core_shutdown = False
 
-    def __init__(self) -> None:
-        self.frame_drop_count = 3
-        self.cache_buffering_state = 100
-        self.video_bitrate = None
-        self.audio_bitrate = 69533.0
-        self.audio_codec = "AAC (Advanced Audio Coding)"
-        self.demuxer_cache_state = {"raw-input-rate": 7_201_569, "cache-duration": 3.64}
+
+def _fill_runtime_observed_properties(widget: MpvWidget) -> None:
+    """模拟 observe_property 已推送的持续项值,供 snapshot/读取测试直接消费。"""
+    widget._observed_properties.update(
+        {
+            "frame-drop-count": 3,
+            "cache-buffering-state": 100,
+            "video-bitrate": None,
+            "audio-bitrate": 69533.0,
+            "audio-codec": "AAC (Advanced Audio Coding)",
+            "demuxer-cache-state": {"raw-input-rate": 7_201_569, "cache-duration": 3.64},
+        }
+    )
 
 
 def test_mpv_widget_telemetry_snapshot_combines_cached_and_runtime_values(qtbot) -> None:
@@ -52,6 +64,7 @@ def test_mpv_widget_telemetry_snapshot_combines_cached_and_runtime_values(qtbot)
         "hwdec-current": "nvdec",
         "container-fps": 23.976,
     }
+    _fill_runtime_observed_properties(widget)
 
     snapshot = widget.telemetry_snapshot()
 
@@ -95,6 +108,104 @@ def test_mpv_widget_telemetry_snapshot_tolerates_missing_runtime_attrs(qtbot) ->
         "audio_bitrate": None,
         "audio_codec": None,
     }
+
+
+def test_mpv_widget_position_seconds_reads_observed_property_cache(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    widget._observed_properties["time-pos"] = 91.4
+
+    assert widget.position_seconds() == 91
+
+
+def test_mpv_widget_position_seconds_returns_none_without_cache(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    # 非数字/缺失一律 None,不落回同步 get(那是 GUI 冻结根因)
+    widget._observed_properties["time-pos"] = None
+
+    assert widget.position_seconds() is None
+
+
+def test_mpv_widget_runtime_property_cache_cleared_on_load(qtbot, monkeypatch) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    widget._observed_properties.update({"time-pos": 12.0, "duration": 300.0})
+
+    class FakeLoadPlayer:
+        core_shutdown = False
+        pause = False
+        loadfile_calls: list[tuple[str, dict[str, object]]] = []
+        options: dict[str, object] = {}
+
+        def event_callback(self, *event_types):
+            def register(callback):
+                return callback
+
+            return register
+
+        def observe_property(self, name: str, handler) -> None:
+            return None
+
+        def loadfile(self, url: str, options: dict[str, object]) -> None:
+            self.loadfile_calls.append((url, options))
+
+        def play(self, url: str) -> None:
+            return None
+
+        def __setitem__(self, key: str, value: object) -> None:
+            self.options[key] = value
+
+    player = FakeLoadPlayer()
+    monkeypatch.setattr(widget, "_create_player", lambda: player)
+
+    widget.load("http://m/1.mp4")
+
+    assert "time-pos" not in widget._observed_properties
+    assert "duration" not in widget._observed_properties
+
+
+def test_mpv_widget_runtime_property_observer_writes_cache(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    handlers: dict[str, object] = {}
+
+    class FakeObservingPlayer:
+        core_shutdown = False
+        pause = False
+
+        def event_callback(self, *event_types):
+            def register(callback):
+                return callback
+
+            return register
+
+        def observe_property(self, name: str, handler) -> None:
+            handlers[name] = handler
+
+    widget._player = FakeObservingPlayer()
+    widget._register_player_events()
+
+    time_pos_handler = handlers.get("time-pos")
+    assert callable(time_pos_handler)
+    time_pos_handler("time-pos", 33.3)
+    assert widget._observed_properties["time-pos"] == 33.3
+
+    cache_state_handler = handlers.get("demuxer-cache-state")
+    assert callable(cache_state_handler)
+    cache_state_handler("demuxer-cache-state", {"cache-duration": 4.2})
+    assert widget._observed_properties["demuxer-cache-state"] == {"cache-duration": 4.2}
+
+    pause_handler = handlers.get("pause")
+    assert callable(pause_handler)
+    pause_handler("pause", True)
+    assert widget._observed_properties["pause"] is True
+
+    track_list_handler = handlers.get("track-list")
+    assert callable(track_list_handler)
+    track_list_handler("track-list", [{"id": 1, "type": "audio", "external": True, "selected": True}])
+    assert widget._observed_properties["track-list"][0]["type"] == "audio"
 
 
 def test_mpv_widget_create_player_passes_explicit_ytdlp_hook_path(qtbot, monkeypatch) -> None:
@@ -618,6 +729,8 @@ def test_mpv_widget_reregisters_player_events_after_recreating_during_load_failu
                 self._eof_reached_observer = handler
                 return
             if name in ("video-params", "video-format", "hwdec-current", "container-fps"):
+                return
+            if name in _RUNTIME_OBSERVED_PROPERTIES:
                 return
             assert name == "pause"
             self._pause_observer = handler
@@ -1709,6 +1822,8 @@ def test_mpv_widget_emits_playback_finished_when_audio_cover_reaches_eof(qtbot) 
                 return
             if name in ("video-params", "video-format", "hwdec-current", "container-fps"):
                 return
+            if name in _RUNTIME_OBSERVED_PROPERTIES:
+                return
             assert name == "pause"
             self._pause_observer = handler
 
@@ -2065,6 +2180,7 @@ def test_mpv_widget_registers_property_observers_on_windows(qtbot, monkeypatch) 
         "video-format",
         "hwdec-current",
         "container-fps",
+        *_RUNTIME_OBSERVED_PROPERTIES,
     ]
 
 
@@ -2151,20 +2267,16 @@ def test_mpv_widget_applies_repeated_property_sets_on_windows_via_direct_assignm
     assert player.mute_history == [True, True]
 
 
-def test_mpv_widget_duration_prefers_live_mpv_property_when_attribute_is_zero(qtbot, monkeypatch) -> None:
+def test_mpv_widget_duration_reads_observed_property_cache(qtbot, monkeypatch) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
     monkeypatch.setattr("atv_player.player.mpv_widget.sys.platform", "win32")
 
     class FakePlayer:
-        duration = 0
-
-        def __getitem__(self, key: str) -> object:
-            if key == "duration":
-                return 3672.8
-            raise KeyError(key)
+        pass
 
     widget._player = FakePlayer()
+    widget._observed_properties["duration"] = 3672.8
 
     assert widget.duration_seconds() == 3672
 
@@ -2241,6 +2353,8 @@ def test_mpv_widget_emits_subtitle_tracks_changed_when_mpv_track_list_updates(qt
                 self._eof_reached_observer = handler
                 return
             if name in ("video-params", "video-format", "hwdec-current", "container-fps"):
+                return
+            if name in _RUNTIME_OBSERVED_PROPERTIES:
                 return
             assert name == "pause"
             self._pause_observer = handler
@@ -3106,6 +3220,8 @@ def test_mpv_widget_emits_audio_tracks_changed_when_mpv_track_list_updates(qtbot
                 return
             if name in ("video-params", "video-format", "hwdec-current", "container-fps"):
                 return
+            if name in _RUNTIME_OBSERVED_PROPERTIES:
+                return
             assert name == "pause"
             self._pause_observer = handler
 
@@ -3229,18 +3345,16 @@ def test_mpv_widget_can_select_a_specific_embedded_audio_track(qtbot) -> None:
     assert player.aid == 9
 
 
-def test_mpv_widget_demuxer_cache_duration_reads_live_property(qtbot, monkeypatch) -> None:
+def test_mpv_widget_demuxer_cache_duration_reads_observed_property_cache(qtbot, monkeypatch) -> None:
     widget = MpvWidget()
     qtbot.addWidget(widget)
     monkeypatch.setattr("atv_player.player.mpv_widget.sys.platform", "win32")
 
     class FakePlayer:
-        def __getitem__(self, key: str) -> object:
-            if key == "demuxer-cache-duration":
-                return 42.7
-            raise KeyError(key)
+        pass
 
     widget._player = FakePlayer()
+    widget._observed_properties["demuxer-cache-duration"] = 42.7
 
     assert widget.demuxer_cache_duration_seconds() == 42
 
@@ -3251,8 +3365,7 @@ def test_mpv_widget_demuxer_cache_duration_returns_zero_when_missing(qtbot, monk
     monkeypatch.setattr("atv_player.player.mpv_widget.sys.platform", "win32")
 
     class FakePlayer:
-        def __getitem__(self, key: str) -> object:
-            raise KeyError(key)
+        pass
 
     widget._player = FakePlayer()
 
@@ -3428,7 +3541,16 @@ class _StarvationFakePlayer:
     core_shutdown = False
 
     def __init__(self) -> None:
-        self.state: dict[str, object] = {
+        self.audio_reload_calls = 0
+
+    def audio_reload(self) -> None:
+        self.audio_reload_calls += 1
+
+
+def _seed_starvation_cache(widget: MpvWidget) -> None:
+    """模拟 observe_property 已推送的看门狗采样值。"""
+    widget._observed_properties.update(
+        {
             "pause": False,
             "playback-time": 100.0,
             "audio-pts": 50.0,
@@ -3437,16 +3559,7 @@ class _StarvationFakePlayer:
                 {"id": 2, "type": "audio", "external": True, "selected": True},
             ],
         }
-        self.audio_reload_calls = 0
-
-    def __getitem__(self, key: str):
-        return self.state.get(key)
-
-    def __setitem__(self, key: str, value: object) -> None:
-        self.state[key] = value
-
-    def audio_reload(self) -> None:
-        self.audio_reload_calls += 1
+    )
 
 
 _STARVATION_AUDIO_URL = "http://127.0.0.1:2323/dash/asset/tok/1.m4s"
@@ -3454,8 +3567,12 @@ _MPV_WIDGET_MAX_STARVATION_ROUNDS = mpv_widget_module._AUDIO_STARVATION_MAX_RELO
 
 
 def _tick_starvation(widget, player, clock, *, playback_delta=2.0, audio_pts_delta=0.0) -> None:
-    player.state["playback-time"] = float(player.state["playback-time"]) + playback_delta
-    player.state["audio-pts"] = float(player.state["audio-pts"]) + audio_pts_delta
+    del player  # 采样值直接从 observe 缓存读,不再经过 player
+    cache = widget._observed_properties
+    if "playback-time" in cache:
+        cache["playback-time"] = float(cache["playback-time"]) + playback_delta
+    if "audio-pts" in cache:
+        cache["audio-pts"] = float(cache["audio-pts"]) + audio_pts_delta
     widget._check_external_audio_starvation()
     clock["now"] += 2.0
 
@@ -3467,6 +3584,7 @@ def test_mpv_widget_audio_starvation_watchdog_fires_when_audio_pts_freezes(qtbot
     widget._player = player
     widget._external_audio_files = _STARVATION_AUDIO_URL
     widget._audio_pts_supported = True
+    _seed_starvation_cache(widget)
 
     clock = {"now": 1000.0}
     monkeypatch.setattr(mpv_widget_module.time, "monotonic", lambda: clock["now"])
@@ -3493,6 +3611,7 @@ def test_mpv_widget_audio_starvation_watchdog_stays_silent_while_audio_advances(
     widget._player = player
     widget._external_audio_files = _STARVATION_AUDIO_URL
     widget._audio_pts_supported = True
+    _seed_starvation_cache(widget)
 
     clock = {"now": 1000.0}
     monkeypatch.setattr(mpv_widget_module.time, "monotonic", lambda: clock["now"])
@@ -3513,6 +3632,7 @@ def test_mpv_widget_audio_starvation_watchdog_ignores_pause_and_missing_track(qt
     widget._player = player
     widget._external_audio_files = _STARVATION_AUDIO_URL
     widget._audio_pts_supported = True
+    _seed_starvation_cache(widget)
 
     clock = {"now": 1000.0}
     monkeypatch.setattr(mpv_widget_module.time, "monotonic", lambda: clock["now"])
@@ -3520,13 +3640,13 @@ def test_mpv_widget_audio_starvation_watchdog_ignores_pause_and_missing_track(qt
     starved: list[str] = []
     widget.external_audio_starved.connect(starved.append)
 
-    player.state["pause"] = True
+    widget._observed_properties["pause"] = True
     for _ in range(6):
         _tick_starvation(widget, player, clock)
     assert starved == []
 
-    player.state["pause"] = False
-    player.state["track-list"] = [{"id": 1, "type": "video"}]
+    widget._observed_properties["pause"] = False
+    widget._observed_properties["track-list"] = [{"id": 1, "type": "video"}]
     for _ in range(6):
         _tick_starvation(widget, player, clock)
     assert starved == []
@@ -3539,6 +3659,7 @@ def test_mpv_widget_audio_starvation_watchdog_respects_cooldown_and_gives_up(qtb
     widget._player = player
     widget._external_audio_files = _STARVATION_AUDIO_URL
     widget._audio_pts_supported = True
+    _seed_starvation_cache(widget)
 
     clock = {"now": 1000.0}
     monkeypatch.setattr(mpv_widget_module.time, "monotonic", lambda: clock["now"])
