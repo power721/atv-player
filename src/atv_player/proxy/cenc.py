@@ -362,19 +362,53 @@ class CencRangeReader:
         self._fragment_cache: dict[int, list[_CencSample]] = {}
 
     def _fetch_range(self, start: int, end: int) -> bytes:
-        response = self._get(
-            self._url,
-            headers={**self._headers, "Range": f"bytes={start}-{end}"},
-            timeout=20.0,
-            follow_redirects=True,
-        )
-        status = int(getattr(response, "status_code", 0) or 0)
-        if status not in (200, 206):
-            raise ValueError(f"CENC 媒体源返回 {status}")
-        content = getattr(response, "content", b"")
-        if isinstance(content, str):
-            content = content.encode("utf-8", errors="replace")
-        return bytes(content)
+        # 上游偶发短响应(负载/边缘节点),必须补拉到请求长度,
+        # 否则 read_range 会出现字节缺口,播放器 demuxer 拿到错位流会卡死。
+        want = end - start + 1
+        cursor = start
+        parts: list[bytes] = []
+        for _attempt in range(4):
+            response = self._get(
+                self._url,
+                headers={**self._headers, "Range": f"bytes={cursor}-{end}"},
+                timeout=20.0,
+                follow_redirects=True,
+            )
+            status = int(getattr(response, "status_code", 0) or 0)
+            if status not in (200, 206):
+                raise ValueError(f"CENC 媒体源返回 {status}")
+            content = getattr(response, "content", b"")
+            if isinstance(content, str):
+                content = content.encode("utf-8", errors="replace")
+            if status == 200 and cursor > 0:
+                # 镜像忽略 Range 回了整文件:从全文里切出请求窗口。
+                content = content[cursor : end + 1]
+            else:
+                headers_obj = getattr(response, "headers", None)
+                content_range = ""
+                if headers_obj is not None:
+                    try:
+                        content_range = str(headers_obj.get("Content-Range") or "")
+                    except Exception:
+                        content_range = ""
+                if content_range.startswith("bytes ") and "-" in content_range:
+                    try:
+                        actual_start = int(content_range[6:].split("-", 1)[0])
+                    except ValueError:
+                        actual_start = cursor
+                    if actual_start != cursor:
+                        # 起点错位的响应直接丢弃重试。
+                        continue
+            parts.append(content)
+            cursor += len(content)
+            if cursor > end or not content:
+                break
+        data = b"".join(parts)
+        if len(data) < want:
+            raise ValueError(
+                f"CENC 媒体源短响应: {len(data)}/{want} bytes @{start}"
+            )
+        return data[:want]
 
     def _probe_total_size(self) -> int:
         response = self._get(

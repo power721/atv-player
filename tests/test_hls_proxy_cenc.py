@@ -539,3 +539,35 @@ def test_fmp4_reader_without_tenc_stays_passthrough() -> None:
     assert index.fragments == []
     body = reader.read_range(synthetic.frag2_mdat_payload, len(passthrough) - 1)
     assert body.startswith(passthrough[synthetic.frag2_mdat_payload :])
+
+
+class TruncatingRangeGet:
+    """模拟上游短响应:每次响应都比请求短 10 字节,逼出补拉路径。"""
+
+    def __init__(self, data: bytes) -> None:
+        self.data = data
+
+    def __call__(self, url, headers=None, timeout=None, follow_redirects=True):
+        range_header = (headers or {}).get("Range", "")
+        if range_header == "bytes=0-0":
+            return FakeResponse(b"x", f"bytes 0-0/{len(self.data)}")
+        start_text, end_text = range_header[len("bytes=") :].split("-")
+        start, end = int(start_text), int(end_text)
+        span = end - start + 1
+        keep = span if span <= 64 else span - 10
+        return FakeResponse(
+            self.data[start : start + keep],
+            f"bytes {start}-{start + keep - 1}/{len(self.data)}",
+        )
+
+
+def test_reader_fills_short_upstream_responses() -> None:
+    synthetic = SyntheticCencMedia()
+    upstream = TruncatingRangeGet(synthetic.media)
+    reader = CencRangeReader(
+        "http://fake/cenc.mp4", {}, synthetic.spade_a, get=upstream
+    )
+    index = reader.ensure_index()
+    whole = reader.read_range(0, index.total_size - 1)
+    reference = synthetic.reader()
+    assert whole == reference.read_range(0, index.total_size - 1)
