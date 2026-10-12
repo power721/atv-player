@@ -590,12 +590,14 @@ class CencRangeReader:
             inter_start = max(overlap_start, cipher_start)
             inter_end = min(overlap_end, cipher_end)
             if inter_end >= inter_start and cipher:
+                # 密钥流必须覆盖到本次重叠区间在子样本内的末端:
+                # 长度不足时 zip 截短会让切片赋值缩短 chunk,造成字节丢失错位。
+                key_offset = stream_pos + (inter_start - cipher_start)
                 keystream = self._keystream(
-                    sample.iv, stream_pos + (inter_end - inter_start + 1)
+                    sample.iv, key_offset + (inter_end - inter_start + 1)
                 )
                 self._xor_region(
-                    chunk, cursor, inter_start, inter_end, keystream,
-                    stream_pos + (inter_start - cipher_start),
+                    chunk, cursor, inter_start, inter_end, keystream, key_offset
                 )
             position = cipher_start + cipher
             stream_pos = (stream_pos + cipher + 15) // 16 * 16
@@ -611,7 +613,11 @@ class CencRangeReader:
     ) -> None:
         local_start = overlap_start - cursor
         local_end = overlap_end - cursor
-        key_slice = keystream[key_offset : key_offset + (local_end - local_start + 1)]
+        span = local_end - local_start + 1
+        key_slice = keystream[key_offset : key_offset + span]
+        if len(key_slice) != span:
+            # 切片赋值遇短字节串会缩短 chunk,造成字节流错位,必须显式失败。
+            raise ValueError("CENC 密钥流长度不足")
         chunk[local_start : local_end + 1] = bytes(
             value ^ key
             for value, key in zip(chunk[local_start : local_end + 1], key_slice)

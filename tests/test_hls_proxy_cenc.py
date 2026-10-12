@@ -494,17 +494,26 @@ def test_fmp4_reader_index_and_encrypted_fragment_decryption() -> None:
 
 
 def test_fmp4_reader_partial_windows_match_full_read() -> None:
-    synthetic = SyntheticFmp4CencMedia()
+    synthetic = SyntheticFmp4CencMedia(subsample_heads=16)
     reader = synthetic.reader()
     index = reader.ensure_index()
     whole = reader.read_range(0, index.total_size - 1)
-    # 从加密样本中间开始、窗口只盖住片段尾部:与整读结果逐字节一致。
+    # 从密文区中间开始(子样本部分重叠)、窗口只盖住片段尾部:
+    # 必须与整读逐字节一致,且返回长度恒等于请求长度(防密钥流截短缩块)。
     for start, end in [
-        (synthetic.frag2_mdat_payload + 10, synthetic.frag2_mdat_payload + 60),
-        (synthetic.frag2_mdat_payload + 50, index.total_size - 1),
-        (synthetic.frag2_start, synthetic.frag2_mdat_payload + 20),
+        (synthetic.frag2_mdat_payload + 30, synthetic.frag2_mdat_payload + 80),
+        (synthetic.frag2_mdat_payload + 21, index.total_size - 1),
+        (synthetic.frag2_start, synthetic.frag2_mdat_payload + 40),
     ]:
-        assert reader.read_range(start, end) == whole[start : end + 1]
+        piece = reader.read_range(start, end)
+        assert len(piece) == end - start + 1
+        assert piece == whole[start : end + 1]
+    # 跨多个样本的任意窗口同样守恒。
+    piece = reader.read_range(
+        synthetic.frag2_mdat_payload + 5, synthetic.frag2_mdat_payload + 100
+    )
+    assert len(piece) == 96
+    assert piece == whole[synthetic.frag2_mdat_payload + 5 : synthetic.frag2_mdat_payload + 101]
 
 
 def test_fmp4_reader_subsample_encryption_only_cipher_ranges() -> None:
@@ -517,7 +526,6 @@ def test_fmp4_reader_subsample_encryption_only_cipher_ranges() -> None:
         synthetic.frag2_mdat_payload : synthetic.frag2_mdat_payload + len(plain)
     ]
     assert region == plain
-    # 每个样本的前 16 字节在密文里本就是明文,子样本链只解其余部分。
     cursor = 0
     for sample in synthetic.enc_samples:
         assert region[cursor : cursor + 16] == sample[:16]
@@ -571,3 +579,4 @@ def test_reader_fills_short_upstream_responses() -> None:
     whole = reader.read_range(0, index.total_size - 1)
     reference = synthetic.reader()
     assert whole == reference.read_range(0, index.total_size - 1)
+
