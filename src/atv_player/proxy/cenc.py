@@ -47,14 +47,24 @@ def derive_content_key(spade_a: str) -> bytes:
     return key
 
 
-def build_cenc_media_fragment(spade_a: str) -> str:
-    payload = json.dumps({"spade_a": spade_a}, separators=(",", ":"))
-    encoded = base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii")
+def build_cenc_media_fragment(
+    spade_a: str,
+    audio_url: str = "",
+    audio_spade_a: str = "",
+) -> str:
+    payload: dict[str, str] = {"spade_a": spade_a}
+    if audio_url:
+        payload["audio"] = audio_url
+        if audio_spade_a:
+            payload["audio_spade_a"] = audio_spade_a
+    encoded = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii")
     return f"#{CENC_FRAGMENT_KEY}={encoded}"
 
 
-def parse_cenc_media_fragment(url: str) -> tuple[str, str] | None:
-    """从播放地址里拆出 CENC 参数，返回 (纯净媒体 URL, spade_a)。"""
+def _decode_cenc_fragment(url: str) -> tuple[str, dict] | None:
+    """拆出 (纯净媒体 URL, 片段 payload);无片段或 payload 非法返回 None。"""
     marker = f"#{CENC_FRAGMENT_KEY}="
     if marker not in url:
         return None
@@ -65,10 +75,40 @@ def parse_cenc_media_fragment(url: str) -> tuple[str, str] | None:
         )
     except (ValueError, UnicodeDecodeError):
         return None
-    spade_a = str(payload.get("spade_a") or "").strip() if isinstance(payload, dict) else ""
+    if not isinstance(payload, dict):
+        return None
+    return clean_url.strip(), payload
+
+
+def parse_cenc_media_fragment(url: str) -> tuple[str, str] | None:
+    """从播放地址里拆出 CENC 参数，返回 (纯净媒体 URL, spade_a)。"""
+    decoded = _decode_cenc_fragment(url)
+    if decoded is None:
+        return None
+    clean_url, payload = decoded
+    spade_a = str(payload.get("spade_a") or "").strip()
     if not spade_a:
         return None
-    return clean_url.strip(), spade_a
+    return clean_url, spade_a
+
+
+def parse_cenc_audio_fragment(url: str) -> tuple[str, str] | None:
+    """拆出片段携带的分离音频流(红果电影 DASH 式音视频分离)。
+
+    返回 (音频 URL, 音频 spade_a);音频未单独给密钥时回退视频的 spade_a,
+    无音频字段返回 None。
+    """
+    decoded = _decode_cenc_fragment(url)
+    if decoded is None:
+        return None
+    _clean_url, payload = decoded
+    audio_url = str(payload.get("audio") or "").strip()
+    if not audio_url.startswith(("http://", "https://")):
+        return None
+    audio_spade_a = str(payload.get("audio_spade_a") or "").strip() or str(
+        payload.get("spade_a") or ""
+    ).strip()
+    return audio_url, audio_spade_a
 
 
 @dataclass
@@ -76,6 +116,8 @@ class _CencSample:
     offset: int
     size: int
     iv: bytes
+    # fMP4 子样本加密时的 (clear, cipher) 链;None = 整样本加密。
+    subsamples: list[tuple[int, int]] | None = None
 
 
 @dataclass
@@ -84,16 +126,26 @@ class CencMediaIndex:
     prefix: bytes = b""
     prefix_end: int = 0
     samples: list[_CencSample] = field(default_factory=list)
+    # fMP4(电影逐片段 CENC):sidx 片段表 (moof 绝对偏移, 片段大小)。
+    fragments: list[tuple[int, int]] = field(default_factory=list)
 
 
-def _find_box(data: memoryview | bytes, fourcc: bytes, start: int) -> tuple[int, int]:
+def _find_box(
+    data: memoryview | bytes,
+    fourcc: bytes,
+    start: int,
+    *,
+    size_limit: int | None = None,
+) -> tuple[int, int]:
+    # size_limit 允许命中"起点在窗口内、box 超出窗口"的情况（大 moov 探测）。
+    fit_limit = len(data) if size_limit is None else size_limit
     for index in range(max(4, start), len(data) - 4):
         if data[index : index + 4] != fourcc:
             continue
         size = struct.unpack_from(">I", data, index - 4)[0]
         if size == 1 and index + 12 <= len(data):
             size = struct.unpack_from(">Q", data, index + 4)[0]
-        if 8 <= size <= 500_000_000 and index - 4 + size <= len(data):
+        if 8 <= size <= 500_000_000 and index - 4 + size <= fit_limit:
             return index - 4, size
     return -1, 0
 
@@ -188,6 +240,54 @@ def _parse_track_tables(moov: memoryview, track_offset: int) -> dict | None:
     }
 
 
+def _parse_tenc_iv_size(moov_bytes: bytes) -> int:
+    """moov 内 tenc 声明的逐样本 IV 长度(8/16);未加密或不认识返回 0。"""
+    data = bytes(moov_bytes)
+    position = 0
+    while True:
+        position = data.find(b"tenc", position)
+        if position < 4:
+            return 0
+        box_size = struct.unpack_from(">I", data, position - 4)[0]
+        body = data[position + 4 : position - 4 + box_size]
+        # FullBox(4) + [reserved(1) + reserved/byte_block(1)] + is_protected(1) + iv_size(1)
+        if len(body) >= 10 and body[6] == 1 and body[7] in (8, 16):
+            return body[7]
+        position += 4
+
+
+def _parse_sidx_fragments(head: bytes, sidx_offset: int, sidx_size: int) -> list[tuple[int, int]]:
+    """sidx → [(片段绝对偏移, 片段大小)];布局异常/含子 sidx 引用返回空表。"""
+    body = head[sidx_offset + 8 : sidx_offset + sidx_size]
+    if len(body) < 24:
+        return []
+    version = body[0]
+    if version == 0:
+        first_offset = int.from_bytes(body[16:20], "big")
+        count_at, entries_at = 22, 24
+    elif version == 1:
+        if len(body) < 32:
+            return []
+        first_offset = int.from_bytes(body[20:28], "big")
+        count_at, entries_at = 30, 32
+    else:
+        return []
+    count = struct.unpack_from(">H", body, count_at)[0]
+    if entries_at + count * 12 > len(body):
+        return []
+    start = sidx_offset + sidx_size + first_offset
+    fragments: list[tuple[int, int]] = []
+    for index in range(count):
+        word = struct.unpack_from(">I", body, entries_at + index * 12)[0]
+        reference_size = word & 0x7FFFFFFF
+        if word >> 31 or reference_size < 8:
+            # reference_type=1 指向子 sidx,电影流不出现;防脏数据直接放弃。
+            return []
+        fragments.append((start, reference_size))
+        start += reference_size
+    return fragments
+
+
 def _patch_moov_prefix(data: bytes) -> bytes:
     """还原 ftyp+moov 区域的 fourcc：encv/enca→原格式（frma），sinf→free。"""
     result = bytearray(data)
@@ -257,6 +357,9 @@ class CencRangeReader:
         self._get = get
         self._probe_bytes = probe_bytes
         self._index: CencMediaIndex | None = None
+        # fMP4(电影逐片段 CENC)状态:tenc 声明的逐样本 IV 长度 + 片段样本缓存。
+        self._per_sample_iv_size = 0
+        self._fragment_cache: dict[int, list[_CencSample]] = {}
 
     def _fetch_range(self, start: int, end: int) -> bytes:
         response = self._get(
@@ -298,7 +401,11 @@ class CencRangeReader:
             return self._index
         total_size = self._probe_total_size()
         head = self._fetch_range(0, min(self._probe_bytes, total_size - 1))
-        moov_start, moov_size = _find_box(memoryview(head), b"moov", 0)
+        # size_limit=total_size：长内容的 moov（大样本表）可远超探测窗口，
+        # 只要起点在窗口内且整盒不越出文件就算命中，随后补拉缺失部分。
+        moov_start, moov_size = _find_box(
+            memoryview(head), b"moov", 0, size_limit=total_size
+        )
         if moov_start < 0:
             # moov 在文件尾部的情况：尾部探测。
             tail_start = max(0, total_size - self._probe_bytes)
@@ -311,14 +418,22 @@ class CencRangeReader:
             prefix_bytes = self._fetch_range(0, moov_abs_start - 1) if moov_abs_start > 0 else b""
         else:
             if moov_start + moov_size > len(head):
-                moov_bytes = self._fetch_range(0, moov_start + moov_size - 1)[moov_start:]
+                moov_bytes = self._fetch_range(moov_start, moov_start + moov_size - 1)
             else:
                 moov_bytes = head[moov_start : moov_start + moov_size]
             prefix_bytes = head[:moov_start]
-        self._index = self._build_index(moov_bytes, prefix_bytes, total_size)
+        self._index = self._build_index(
+            moov_bytes, prefix_bytes, total_size, head_bytes=head
+        )
         return self._index
 
-    def _build_index(self, moov_bytes: bytes, prefix_bytes: bytes, total_size: int) -> CencMediaIndex:
+    def _build_index(
+        self,
+        moov_bytes: bytes,
+        prefix_bytes: bytes,
+        total_size: int,
+        head_bytes: bytes = b"",
+    ) -> CencMediaIndex:
         moov = memoryview(moov_bytes)
         samples: list[_CencSample] = []
         search = 0
@@ -331,12 +446,23 @@ class CencRangeReader:
                 samples.extend(self._build_track_samples(tables))
             search = track + max(track_size, 8)
         samples.sort(key=lambda sample: sample.offset)
+        fragments: list[tuple[int, int]] = []
+        if not samples:
+            # fMP4(电影逐片段 CENC):整段样本表为空时按 sidx 片段表懒解密。
+            # 实测电影流开头若干片段为明文(无 senc),其余片段整样本 AES-CTR,
+            # IV 逐样本存于 traf/senc(tenc 声明 8/16 字节)。
+            self._per_sample_iv_size = _parse_tenc_iv_size(moov_bytes)
+            if self._per_sample_iv_size and head_bytes:
+                sidx_offset, sidx_size = _find_box(memoryview(head_bytes), b"sidx", 0)
+                if sidx_offset >= 0:
+                    fragments = _parse_sidx_fragments(head_bytes, sidx_offset, sidx_size)
         prefix = _patch_moov_prefix(prefix_bytes + moov_bytes)
         return CencMediaIndex(
             total_size=total_size,
             prefix=prefix,
             prefix_end=len(prefix),
             samples=samples,
+            fragments=fragments,
         )
 
     def _build_track_samples(self, tables: dict) -> list[_CencSample]:
@@ -384,31 +510,203 @@ class CencRangeReader:
                 continue
             window_end = min(inclusive_end, cursor + 1024 * 1024 - 1, index.total_size - 1)
             chunk = bytearray(self._fetch_range(cursor, window_end))
-            for sample in index.samples:
-                if sample.offset > window_end:
+            if index.samples:
+                for sample in index.samples:
+                    if sample.offset > window_end:
+                        break
+                    self._xor_sample_in_window(chunk, cursor, window_end, sample)
+            for moof_abs, fragment_size in index.fragments:
+                if moof_abs > window_end:
                     break
-                sample_end = sample.offset + sample.size - 1
-                if sample_end < cursor:
+                if moof_abs + fragment_size - 1 < cursor:
                     continue
-                overlap_start = max(cursor, sample.offset)
-                overlap_end = min(window_end, sample_end)
-                if overlap_end < overlap_start:
-                    continue
-                keystream = self._keystream(sample.iv, sample.size)
-                local_start = overlap_start - cursor
-                local_end = overlap_end - cursor
-                key_slice = keystream[
-                    overlap_start - sample.offset : overlap_end - sample.offset + 1
-                ]
-                chunk[local_start : local_end + 1] = bytes(
-                    value ^ key
-                    for value, key in zip(
-                        chunk[local_start : local_end + 1], key_slice
-                    )
-                )
+                for sample in self._fragment_samples(moof_abs, fragment_size):
+                    self._xor_sample_in_window(chunk, cursor, window_end, sample)
             output.extend(chunk)
             cursor = window_end + 1
         return bytes(output)
+
+    def _xor_sample_in_window(
+        self, chunk: bytearray, cursor: int, window_end: int, sample: _CencSample
+    ) -> None:
+        sample_end = sample.offset + sample.size - 1
+        if sample_end < cursor or sample.offset > window_end:
+            return
+        overlap_start = max(cursor, sample.offset)
+        overlap_end = min(window_end, sample_end)
+        if overlap_end < overlap_start:
+            return
+        if sample.subsamples is None:
+            keystream = self._keystream(sample.iv, sample.size)
+            self._xor_region(
+                chunk,
+                cursor,
+                overlap_start,
+                overlap_end,
+                keystream,
+                overlap_start - sample.offset,
+            )
+            return
+        # 子样本加密:密钥流只按密文字节推进,每个子样本结束后对齐 16 字节块。
+        stream_pos = 0
+        position = sample.offset
+        for clear, cipher in sample.subsamples:
+            cipher_start = position + clear
+            cipher_end = cipher_start + cipher - 1
+            inter_start = max(overlap_start, cipher_start)
+            inter_end = min(overlap_end, cipher_end)
+            if inter_end >= inter_start and cipher:
+                keystream = self._keystream(
+                    sample.iv, stream_pos + (inter_end - inter_start + 1)
+                )
+                self._xor_region(
+                    chunk, cursor, inter_start, inter_end, keystream,
+                    stream_pos + (inter_start - cipher_start),
+                )
+            position = cipher_start + cipher
+            stream_pos = (stream_pos + cipher + 15) // 16 * 16
+
+    def _xor_region(
+        self,
+        chunk: bytearray,
+        cursor: int,
+        overlap_start: int,
+        overlap_end: int,
+        keystream: bytes,
+        key_offset: int,
+    ) -> None:
+        local_start = overlap_start - cursor
+        local_end = overlap_end - cursor
+        key_slice = keystream[key_offset : key_offset + (local_end - local_start + 1)]
+        chunk[local_start : local_end + 1] = bytes(
+            value ^ key
+            for value, key in zip(chunk[local_start : local_end + 1], key_slice)
+        )
+
+    def _fragment_samples(self, moof_abs: int, fragment_size: int) -> list[_CencSample]:
+        cached = self._fragment_cache.get(moof_abs)
+        if cached is not None:
+            return cached
+        fetch_size = min(max(fragment_size, 8), 65_536)
+        moof = self._fetch_range(moof_abs, moof_abs + fetch_size - 1)
+        box_size = struct.unpack_from(">I", moof, 0)[0] if len(moof) >= 8 else 0
+        samples: list[_CencSample] = []
+        if 8 <= box_size <= 5_000_000:
+            if box_size > len(moof):
+                moof = self._fetch_range(moof_abs, moof_abs + box_size - 1)
+            fragment_end = moof_abs + max(fragment_size, box_size) - 1
+            offset = 8
+            while offset + 8 <= min(len(moof), box_size):
+                traf_size = struct.unpack_from(">I", moof, offset)[0]
+                traf_fourcc = moof[offset + 4 : offset + 8]
+                if traf_size < 8 or offset + traf_size > len(moof):
+                    break
+                if traf_fourcc == b"traf":
+                    samples.extend(
+                        self._parse_traf_samples(
+                            moof[offset : offset + traf_size], moof_abs, fragment_end
+                        )
+                    )
+                offset += traf_size
+        if len(self._fragment_cache) > 256:
+            self._fragment_cache.pop(next(iter(self._fragment_cache)))
+        self._fragment_cache[moof_abs] = samples
+        return samples
+
+    def _parse_traf_samples(
+        self, traf: bytes, moof_abs: int, fragment_end: int
+    ) -> list[_CencSample]:
+        sizes: list[int] = []
+        data_offset: int | None = None
+        iv_entries: list[tuple[bytes, list[tuple[int, int]] | None]] = []
+        offset = 8
+        while offset + 8 <= len(traf):
+            size = struct.unpack_from(">I", traf, offset)[0]
+            fourcc = traf[offset + 4 : offset + 8]
+            if size < 8 or offset + size > len(traf):
+                break
+            body = traf[offset + 8 : offset + size]
+            if fourcc == b"trun":
+                flags = int.from_bytes(body[1:4], "big")
+                count = struct.unpack_from(">I", body, 4)[0]
+                cursor = 8
+                if flags & 1:  # data_offset
+                    if len(body) < cursor + 4:
+                        break
+                    data_offset = struct.unpack_from(">i", body, cursor)[0]
+                    cursor += 4
+                if flags & 4:  # first_sample_flags(固定头部字段,先于样本条目)
+                    cursor += 4
+                chunk_sizes: list[int] = []
+                for _ in range(count):
+                    step = (
+                        (4 if flags & 0x100 else 0)
+                        + (4 if flags & 0x200 else 0)
+                        + (4 if flags & 0x400 else 0)
+                        + (4 if flags & 0x800 else 0)
+                    )
+                    if cursor + step > len(body):
+                        chunk_sizes = []
+                        break
+                    value = 0
+                    if flags & 0x200:
+                        value = struct.unpack_from(">I", body, cursor)[0]
+                    chunk_sizes.append(value)
+                    cursor += step
+                if chunk_sizes:
+                    sizes = chunk_sizes
+            elif fourcc == b"senc":
+                iv_entries = self._parse_senc_entries(body)
+            offset += size
+        if data_offset is None or not iv_entries or not sizes:
+            # 无 senc 的片段是明文(电影开头试用段),透传不解密。
+            return []
+        samples: list[_CencSample] = []
+        position = moof_abs + data_offset
+        for size, (iv, subsamples) in zip(sizes, iv_entries):
+            if size and iv and position + size - 1 <= fragment_end:
+                samples.append(
+                    _CencSample(
+                        offset=position, size=size, iv=iv, subsamples=subsamples
+                    )
+                )
+            position += size
+        return samples
+
+    def _parse_senc_entries(
+        self, body: bytes
+    ) -> list[tuple[bytes, list[tuple[int, int]] | None]]:
+        if len(body) < 8:
+            return []
+        flags = int.from_bytes(body[1:4], "big")
+        count = struct.unpack_from(">I", body, 4)[0]
+        iv_size = self._per_sample_iv_size or 8
+        entries: list[tuple[bytes, list[tuple[int, int]] | None]] = []
+        cursor = 8
+        # 红果电影的封装器用 flags=0x2 表示子样本加密(标准写法是 0x1),
+        # 两种都认;flags=0 的音频流是整样本加密。
+        has_subsamples = bool(flags & 0x3)
+        for _ in range(count):
+            if cursor + iv_size > len(body):
+                return []
+            iv = body[cursor : cursor + iv_size]
+            cursor += iv_size
+            subsamples: list[tuple[int, int]] | None = None
+            if has_subsamples:
+                if cursor + 2 > len(body):
+                    return []
+                pair_count = struct.unpack_from(">H", body, cursor)[0]
+                cursor += 2
+                pairs: list[tuple[int, int]] = []
+                for _ in range(pair_count):
+                    if cursor + 6 > len(body):
+                        return []
+                    clear, cipher = struct.unpack_from(">HI", body, cursor)
+                    cursor += 6
+                    pairs.append((clear, cipher))
+                subsamples = pairs
+            entries.append((iv, subsamples))
+        return entries
 
     def _keystream(self, iv: bytes, length: int) -> bytes:
         cipher = AES.new(

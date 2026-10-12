@@ -13,7 +13,7 @@ import httpx
 from atv_player.models import VideoQualityOption
 from atv_player.paths import app_cache_dir
 from atv_player.player.bluray_iso import BlurayIsoInspector, is_remote_iso_url
-from atv_player.proxy.cenc import parse_cenc_media_fragment
+from atv_player.proxy.cenc import parse_cenc_audio_fragment, parse_cenc_media_fragment
 from atv_player.proxy.server import LocalHlsProxyServer
 from atv_player.proxy.stripper import TS_PACKET_SIZE, repair_segment_bytes
 from atv_player.request_headers import normalize_media_request_headers
@@ -225,10 +225,16 @@ class M3U8AdFilter:
         cenc_media = parse_cenc_media_fragment(url)
         if cenc_media is not None:
             media_url, spade_a = cenc_media
+            audio_url, audio_spade_a = "", ""
+            cenc_audio = parse_cenc_audio_fragment(url)
+            if cenc_audio is not None:
+                audio_url, audio_spade_a = cenc_audio
             return self._proxy_server.create_cenc_media_url(
                 media_url,
                 headers=normalize_media_request_headers(media_url, headers),
                 spade_a=spade_a,
+                audio_url=audio_url,
+                audio_spade_a=audio_spade_a,
             )
         normalized_headers = normalize_media_request_headers(url, headers)
         if is_remote_iso_url(url):
@@ -361,6 +367,19 @@ class M3U8AdFilter:
         if video_url != prepared_url:
             return ""
         return audio_url
+
+    def cenc_external_audio_url(self, prepared_url: str) -> str:
+        """红果电影 DASH 式分离音频:视频 /cenc/ 代理地址对应的音频代理地址。
+
+        音视频合一的密文流(短剧)返回空串,不外挂。
+        """
+        getter = getattr(self._proxy_server, "cenc_external_audio_url", None)
+        if not callable(getter):
+            return ""
+        try:
+            return str(getter(prepared_url) or "")
+        except Exception:
+            return ""
 
     def _prepare(self, url: str, headers: dict[str, str], depth: int, visited: set[str]) -> str:
         if not self.should_prepare(url):

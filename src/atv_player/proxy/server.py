@@ -661,8 +661,14 @@ class LocalHlsProxyServer:
         headers: dict[str, str] | None = None,
         *,
         spade_a: str,
+        audio_url: str = "",
+        audio_spade_a: str = "",
     ) -> str:
-        """为整段 CENC 加密的 MP4 建立流式解密会话。"""
+        """为整段 CENC 加密的 MP4 建立流式解密会话。
+
+        audio_url(红果电影 DASH 式分离音频)会另建解密会话,音频代理地址
+        记录在视频会话上,播放器作外挂音轨挂载(见 cenc_external_audio_url)。
+        """
         normalized_headers = normalize_media_request_headers(url, headers)
         token = self._registry.create_session(url, normalized_headers)
         session = self._registry.get(token)
@@ -673,7 +679,32 @@ class LocalHlsProxyServer:
                 spade_a,
                 get=self._get,
             )
+            if audio_url.startswith(("http://", "https://")):
+                audio_headers = normalize_media_request_headers(audio_url, headers)
+                audio_token = self._registry.create_session(audio_url, audio_headers)
+                audio_session = self._registry.get(audio_token)
+                if audio_session is not None:
+                    audio_session.cenc_reader = CencRangeReader(
+                        audio_url,
+                        audio_headers,
+                        audio_spade_a or spade_a,
+                        get=self._get,
+                    )
+                    session.cenc_audio_url = (
+                        f"http://{self.host}:{self.port}"
+                        f"/cenc/{quote(audio_token, safe='')}.m4a"
+                    )
         return f"http://{self.host}:{self.port}/cenc/{quote(token, safe='')}.mp4"
+
+    def cenc_external_audio_url(self, prepared_url: str) -> str:
+        """视频 /cenc/ 代理地址对应的分离音频代理地址(无分离音频返回空串)。"""
+        parsed = urlparse(prepared_url or "")
+        if parsed.scheme not in {"http", "https"}:
+            return ""
+        session, _token = self._cenc_session(prepared_url)
+        if session is None:
+            return ""
+        return session.cenc_audio_url or ""
 
     def create_iso_media_url(
         self,
@@ -1718,8 +1749,9 @@ class LocalHlsProxyServer:
         if not parsed.path.startswith("/cenc/"):
             return None, ""
         token = unquote(parsed.path[len("/cenc/") :].split("/", 1)[0])
-        if token.endswith(".mp4"):
-            token = token[: -len(".mp4")]
+        # token_urlsafe 字符集不含点号,剥掉 .mp4/.m4a 媒体扩展无歧义。
+        if "." in token:
+            token = token.rsplit(".", 1)[0]
         return self._registry.get(token), token
 
     def _stream_cenc_response(
@@ -1742,6 +1774,14 @@ class LocalHlsProxyServer:
         try:
             total_size = reader.ensure_index().total_size
         except Exception as exc:
+            # 会话建立成功但媒体索引失败（moov 异常/上游 4xx 等）必须留痕,
+            # 否则 mpv 只见 502 无从排查。
+            logger.warning(
+                "CENC 媒体索引失败(流式) token=%s url=%s: %s",
+                _token,
+                session.playlist_url,
+                exc,
+            )
             payload = f"cenc media error: {exc}".encode("utf-8")
             handler.send_response(502)
             handler.send_header("Content-Length", str(len(payload)))
@@ -1807,6 +1847,12 @@ class LocalHlsProxyServer:
         try:
             total_size = reader.ensure_index().total_size
         except Exception as exc:
+            logger.warning(
+                "CENC 媒体索引失败(HEAD) token=%s url=%s: %s",
+                _token,
+                session.playlist_url,
+                exc,
+            )
             payload = f"cenc media error: {exc}".encode("utf-8")
             handler.send_response(502)
             handler.send_header("Content-Length", str(len(payload)))

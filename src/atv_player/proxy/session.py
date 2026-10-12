@@ -54,6 +54,9 @@ class ProxySession:
     cached_playlist_text: str | None = None
     media_encrypted: bool = False
     cenc_reader: object | None = None
+    # 红果电影 DASH 式音视频分离:视频会话记录音频流的 /cenc 代理地址,
+    # 播放器经 cenc_external_audio_url 取出后作外挂音轨挂载。
+    cenc_audio_url: str = ""
     created_at: float = field(default_factory=time.time)
     last_accessed_at: float = field(default_factory=time.time)
 

@@ -6432,6 +6432,21 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                         exc_info=True,
                     )
                     external_audio_url = ""
+            if not external_audio_url:
+                # 红果电影 DASH 式分离音频:视频 /cenc/ 会话上另挂音频代理地址。
+                cenc_audio_getter = getattr(
+                    self._m3u8_ad_filter, "cenc_external_audio_url", None
+                )
+                if callable(cenc_audio_getter):
+                    try:
+                        external_audio_url = str(cenc_audio_getter(prepared_url) or "")
+                    except Exception:
+                        logger.warning(
+                            "CENC 外挂音频解析失败 url=%s",
+                            _summarize_media_url(prepared_url),
+                            exc_info=True,
+                        )
+                        external_audio_url = ""
             self._playback_prepare_signals.succeeded.emit(
                 request_id, prepared_url, external_audio_url
             )
