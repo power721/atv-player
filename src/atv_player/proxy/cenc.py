@@ -359,7 +359,10 @@ class CencRangeReader:
         self._index: CencMediaIndex | None = None
         # fMP4(电影逐片段 CENC)状态:tenc 声明的逐样本 IV 长度 + 片段样本缓存。
         self._per_sample_iv_size = 0
-        self._fragment_cache: dict[int, list[_CencSample]] = {}
+        # moof 偏移 -> (样本表, CENC 盒类型字段偏移, seig 组类型字段偏移)。
+        self._fragment_cache: dict[
+            int, tuple[list[_CencSample], list[int], list[int]]
+        ] = {}
 
     def _fetch_range(self, start: int, end: int) -> bytes:
         # 上游偶发短响应(负载/边缘节点),必须补拉到请求长度,
@@ -554,8 +557,14 @@ class CencRangeReader:
                     break
                 if moof_abs + fragment_size - 1 < cursor:
                     continue
-                for sample in self._fragment_samples(moof_abs, fragment_size):
+                samples, box_type_offsets, seig_type_offsets = self._fragment_samples(
+                    moof_abs, fragment_size
+                )
+                for sample in samples:
                     self._xor_sample_in_window(chunk, cursor, window_end, sample)
+                self._neutralize_cenc_boxes(
+                    chunk, cursor, moof_abs, box_type_offsets, seig_type_offsets
+                )
             output.extend(chunk)
             cursor = window_end + 1
         return bytes(output)
@@ -623,7 +632,9 @@ class CencRangeReader:
             for value, key in zip(chunk[local_start : local_end + 1], key_slice)
         )
 
-    def _fragment_samples(self, moof_abs: int, fragment_size: int) -> list[_CencSample]:
+    def _fragment_samples(
+        self, moof_abs: int, fragment_size: int
+    ) -> tuple[list[_CencSample], list[int], list[int]]:
         cached = self._fragment_cache.get(moof_abs)
         if cached is not None:
             return cached
@@ -631,6 +642,10 @@ class CencRangeReader:
         moof = self._fetch_range(moof_abs, moof_abs + fetch_size - 1)
         box_size = struct.unpack_from(">I", moof, 0)[0] if len(moof) >= 8 else 0
         samples: list[_CencSample] = []
+        # CENC 辅助盒(seiz/saio/senc)类型字段与 seig 样本组 grouping_type 字段
+        # 在 moof 内的偏移,输出前等长改写中和(见 _neutralize_cenc_boxes)。
+        box_type_offsets: list[int] = []
+        seig_type_offsets: list[int] = []
         if 8 <= box_size <= 5_000_000:
             if box_size > len(moof):
                 moof = self._fetch_range(moof_abs, moof_abs + box_size - 1)
@@ -644,17 +659,49 @@ class CencRangeReader:
                 if traf_fourcc == b"traf":
                     samples.extend(
                         self._parse_traf_samples(
-                            moof[offset : offset + traf_size], moof_abs, fragment_end
+                            moof[offset : offset + traf_size],
+                            moof_abs,
+                            fragment_end,
+                            offset,
+                            box_type_offsets,
+                            seig_type_offsets,
                         )
                     )
                 offset += traf_size
+        info = (samples, box_type_offsets, seig_type_offsets)
         if len(self._fragment_cache) > 256:
             self._fragment_cache.pop(next(iter(self._fragment_cache)))
-        self._fragment_cache[moof_abs] = samples
-        return samples
+        self._fragment_cache[moof_abs] = info
+        return info
+
+    @staticmethod
+    def _neutralize_cenc_boxes(
+        chunk: bytearray,
+        cursor: int,
+        moof_abs: int,
+        box_type_offsets: list[int],
+        seig_type_offsets: list[int],
+    ) -> None:
+        """输出已解密且 moov 已剥 sinf/tenc,traf 内残留的 saiz/saio/senc 会令严格
+        解析器(ExoPlayer FragmentedMp4Extractor.parseTraf)在 encryptionBox 非空
+        断言上崩溃,seig 样本组则会重建逐样本加密标记;两者等长改写让明文输出自洽
+        (盒尺寸不变,trun data_offset/saio 偏移等全部继续成立)。ffmpeg 对这些盒
+        本就不敏感。跨 chunk 的字段留给覆盖它的后续窗口补写。
+        """
+        for offsets, replacement in ((box_type_offsets, b"free"), (seig_type_offsets, b"seix")):
+            for relative in offsets:
+                absolute = moof_abs + relative
+                if cursor <= absolute and absolute + 4 <= cursor + len(chunk):
+                    chunk[absolute - cursor : absolute - cursor + 4] = replacement
 
     def _parse_traf_samples(
-        self, traf: bytes, moof_abs: int, fragment_end: int
+        self,
+        traf: bytes,
+        moof_abs: int,
+        fragment_end: int,
+        traf_origin: int,
+        box_type_offsets: list[int],
+        seig_type_offsets: list[int],
     ) -> list[_CencSample]:
         sizes: list[int] = []
         data_offset: int | None = None
@@ -665,6 +712,14 @@ class CencRangeReader:
             fourcc = traf[offset + 4 : offset + 8]
             if size < 8 or offset + size > len(traf):
                 break
+            if fourcc in (b"saiz", b"saio", b"senc"):
+                box_type_offsets.append(traf_origin + offset + 4)
+            elif (
+                fourcc in (b"sbgp", b"sgpd")
+                and size >= 16
+                and traf[offset + 12 : offset + 16] == b"seig"
+            ):
+                seig_type_offsets.append(traf_origin + offset + 12)
             body = traf[offset + 8 : offset + size]
             if fourcc == b"trun":
                 flags = int.from_bytes(body[1:4], "big")

@@ -230,6 +230,7 @@ class SyntheticFmp4CencMedia:
             tfdt = _full_box(b"tfdt", 0, 0, struct.pack(">I", 0))
             mfhd = _full_box(b"mfhd", 0, 0, struct.pack(">I", 1))
             senc = b""
+            aux = b""
             if ivs is not None:
                 body = struct.pack(">I", len(ivs))
                 for iv, chain in zip(ivs, chains):
@@ -241,6 +242,16 @@ class SyntheticFmp4CencMedia:
                         )
                 # 红果电影封装器用 flags=0x2 表示子样本加密(非标准 0x1)。
                 senc = _full_box(b"senc", 0, 0x2 if subsample_heads else 0, body)
+                # 实流加密片段 traf 在 trun 后还带 saiz/saio 辅助盒
+                # (输出端必须等长中和,否则 ExoPlayer 严格解析崩溃)。
+                saiz = _full_box(
+                    b"saiz", 0, 0,
+                    bytes([0]) + struct.pack(">I", len(ivs)) + bytes([8]) * len(ivs),
+                )
+                saio = _full_box(
+                    b"saio", 0, 0, struct.pack(">I", 1) + struct.pack(">I", 0)
+                )
+                aux = saiz + saio
 
             def build(data_offset: int) -> bytes:
                 # 0x205 = data_offset + first_sample_flags + sizes(实流视频片段形态)。
@@ -250,7 +261,7 @@ class SyntheticFmp4CencMedia:
                     + struct.pack(">I", 0)
                     + b"".join(struct.pack(">I", len(s)) for s in samples),
                 )
-                return _box(b"moof", mfhd + _box(b"traf", tfhd + tfdt + trun + senc))
+                return _box(b"moof", mfhd + _box(b"traf", tfhd + tfdt + trun + aux + senc))
 
             # data_offset 相对 moof 盒起点;实流恰好指向紧随其后的 mdat 载荷。
             return build(len(build(0)) + 8)
@@ -530,6 +541,39 @@ def test_fmp4_reader_subsample_encryption_only_cipher_ranges() -> None:
     for sample in synthetic.enc_samples:
         assert region[cursor : cursor + 16] == sample[:16]
         cursor += len(sample)
+
+
+def test_fmp4_serve_neutralizes_cenc_aux_boxes() -> None:
+    # 明文输出(moov 已剥 tenc)残留 saiz/saio/senc 时,ExoPlayer 会在
+    # FragmentedMp4Extractor.parseTraf 的 encryptionBox 非空断言上崩溃;
+    # 输出必须把它们等长改写为 free,且除类型字段外逐字节不变。
+    synthetic = SyntheticFmp4CencMedia(subsample_heads=16)
+    reader = synthetic.reader()
+    index = reader.ensure_index()
+    whole = reader.read_range(0, index.total_size - 1)
+
+    moof_size = struct.unpack_from(">I", whole, synthetic.frag2_start)[0]
+    served = whole[synthetic.frag2_start : synthetic.frag2_start + moof_size]
+    original = synthetic.media[
+        synthetic.frag2_start : synthetic.frag2_start + moof_size
+    ]
+    diffs = [i for i in range(moof_size) if served[i] != original[i]]
+    groups: list[list[int]] = []
+    for position in diffs:
+        if groups and position - groups[-1][-1] <= 1:
+            groups[-1].append(position)
+        else:
+            groups.append([position])
+    assert [original[g[0] : g[0] + 4] for g in groups] == [b"saiz", b"saio", b"senc"]
+    assert [served[g[0] : g[0] + 4] for g in groups] == [b"free"] * 3
+    assert b"senc" not in served and b"saiz" not in served and b"saio" not in served
+
+    # 试看片段(无加密辅助盒)原样透传。
+    frag1_size = struct.unpack_from(">I", whole, synthetic.frag1_start)[0]
+    frag1_moof = whole[synthetic.frag1_start : synthetic.frag1_start + frag1_size]
+    assert frag1_moof == synthetic.media[
+        synthetic.frag1_start : synthetic.frag1_start + frag1_size
+    ]
 
 
 def test_fmp4_reader_without_tenc_stays_passthrough() -> None:
