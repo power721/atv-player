@@ -14,6 +14,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
+import httpx
+
 from atv_player.api import ApiError
 from atv_player.karaoke import parse_raw_karaoke, render_karaoke_ass
 from atv_player.controllers.player_controller import PlayerSession
@@ -69,6 +71,7 @@ from atv_player.models import (
     PlaybackDetailField,
     PlaybackDetailValuePart,
     PlaybackLoadResult,
+    SpiderDanmakuDirectSource,
     VideoQualityOption,
     SpiderPluginAction,
     SpiderPluginRawCategory,
@@ -386,6 +389,52 @@ def _count_danmaku_entries(xml_text: str) -> int:
     if not xml_text:
         return 0
     return len(re.findall(r"<d\b", xml_text))
+
+
+_SPIDER_DANMAKU_MAX_XML_BYTES = 8 * 1024 * 1024
+_SPIDER_DANMAKU_FETCH_TIMEOUT_SECONDS = 10.0
+_SPIDER_DANMAKU_HEADER_WHITELIST = {"referer", "user-agent", "cookie"}
+
+
+def _spider_danmaku_xml_valid(xml_text: str) -> bool:
+    if not xml_text or "<d" not in xml_text:
+        return False
+    return len(xml_text.encode("utf-8", errors="ignore")) <= _SPIDER_DANMAKU_MAX_XML_BYTES
+
+
+def _map_spider_danmaku_source(payload: object) -> SpiderDanmakuDirectSource | None:
+    """解析 playerContent payload 的 `danmaku` 字段(直供弹幕声明)。
+
+    值域:URL 字符串 / 内联 XML 字符串 / {"url":..., "header":{...}} / {"xml":...}。
+    旧 TVBox 布尔 `danmu` 不是本字段,继续被忽略。
+    """
+    if isinstance(payload, Mapping):
+        inline_xml = str(payload.get("xml") or "").strip()
+        if _spider_danmaku_xml_valid(inline_xml):
+            return SpiderDanmakuDirectSource(xml=inline_xml)
+        url = str(payload.get("url") or "").strip()
+        if url.startswith(("http://", "https://")):
+            return SpiderDanmakuDirectSource(url=url, headers=_normalize_headers(payload.get("header")))
+        _log_invalid_spider_danmaku_payload(payload)
+        return None
+    if isinstance(payload, str):
+        value = payload.strip()
+        if _spider_danmaku_xml_valid(value):
+            return SpiderDanmakuDirectSource(xml=value)
+        if value.startswith(("http://", "https://")):
+            return SpiderDanmakuDirectSource(url=value)
+        _log_invalid_spider_danmaku_payload(payload)
+        return None
+    return None
+
+
+def _log_invalid_spider_danmaku_payload(payload: object) -> None:
+    if payload in (None, "", {}, []):
+        return
+    logger.warning(
+        "Spider plugin playerContent returned unsupported danmaku payload type=%s",
+        type(payload).__name__,
+    )
 
 
 def _query_requests_explicit_episode(query_name: str) -> tuple[bool, int | None]:
@@ -825,6 +874,9 @@ class SpiderPluginController:
         self._danmaku_enabled = (
             bool(getattr(self._spider, "danmaku", lambda: False)()) if self._spider_initialized else False
         )
+        self._danmaku_content_supported = (
+            self._probe_danmaku_content_support() if self._spider_initialized else False
+        )
         self._danmaku_lock = threading.Lock()
         self._pending_danmaku_item_ids: set[int] = set()
         self._warming_danmaku_source_cache_keys: set[str] = set()
@@ -873,7 +925,26 @@ class SpiderPluginController:
             if self._spider_initializer is not None:
                 self._spider_initializer()
             self._danmaku_enabled = bool(getattr(self._spider, "danmaku", lambda: False)())
+            self._danmaku_content_supported = self._probe_danmaku_content_support()
             self._spider_initialized = True
+
+    def _probe_danmaku_content_support(self) -> bool:
+        probe = getattr(self._spider, "supports_danmaku_content", None)
+        if callable(probe):
+            try:
+                return bool(probe())
+            except Exception:
+                logger.exception(
+                    "Spider plugin danmakuContent support probe failed plugin=%s",
+                    self._plugin_name,
+                )
+                return False
+        return callable(getattr(self._spider, "danmakuContent", None))
+
+    def _direct_danmaku_available(self, item: PlayItem) -> bool:
+        if item.danmaku_source is not None:
+            return True
+        return self._danmaku_content_supported and bool(str(item.vod_id or "").strip())
 
     def _is_short_drama_item(self, item: PlayItem) -> bool:
         if _is_short_drama_item(item):
@@ -1439,6 +1510,13 @@ class SpiderPluginController:
         is_prefetch: bool = False,
         prefetch_still_valid: Callable[[], bool] | None = None,
     ) -> None:
+        if self._direct_danmaku_available(item) and self._resolve_direct_danmaku(
+            item,
+            playlist,
+            is_prefetch=is_prefetch,
+            prefetch_still_valid=prefetch_still_valid,
+        ):
+            return
         if not self._danmaku_enabled or self._danmaku_service is None or self._is_short_drama_item(item):
             return
         is_prefetch_valid = prefetch_still_valid or (lambda: True)
@@ -2052,6 +2130,131 @@ class SpiderPluginController:
             kwargs["option"] = option
         return resolve_method(page_url, **kwargs)
 
+    def _direct_danmaku_cache_keys(self, item: PlayItem) -> tuple[str, str]:
+        return (
+            f"plugin:{self._plugin_name}",
+            f"danmaku-direct:{str(item.vod_id or '').strip()}",
+        )
+
+    def _direct_danmaku_headers(self, item: PlayItem, source: SpiderDanmakuDirectSource) -> dict[str, str]:
+        headers = {
+            key: value
+            for key, value in (item.headers or {}).items()
+            if str(key).lower() in _SPIDER_DANMAKU_HEADER_WHITELIST and value
+        }
+        for key, value in (source.headers or {}).items():
+            if value:
+                headers[str(key)] = str(value)
+        return headers
+
+    def _fetch_direct_danmaku_xml(
+        self,
+        item: PlayItem,
+        source: SpiderDanmakuDirectSource,
+        *,
+        is_prefetch: bool,
+    ) -> str:
+        if source.xml:
+            return source.xml
+        if source.url:
+            if not is_prefetch:
+                self._log_danmaku_event("弹幕下载中", item, detail=source.url)
+            response = httpx.get(
+                source.url,
+                headers=self._direct_danmaku_headers(item, source),
+                timeout=_SPIDER_DANMAKU_FETCH_TIMEOUT_SECONDS,
+                follow_redirects=True,
+            )
+            response.raise_for_status()
+            return str(response.text or "").strip()
+        if not is_prefetch:
+            self._log_danmaku_event("弹幕下载中", item, detail="插件直供")
+        self._log_spider_method_call("danmakuContent", flag=item.play_source, id=item.vod_id)
+        result = self._spider.danmakuContent(item.play_source, item.vod_id)
+        self._log_spider_method_call("danmakuContent", response=result)
+        return str(result or "").strip()
+
+    def _resolve_direct_danmaku(
+        self,
+        item: PlayItem,
+        playlist: list[PlayItem] | None = None,
+        *,
+        is_prefetch: bool = False,
+        prefetch_still_valid: Callable[[], bool] | None = None,
+    ) -> bool:
+        """直供弹幕(playerContent danmaku 字段或 danmakuContent 方法),成功返回 True。"""
+        source = item.danmaku_source or SpiderDanmakuDirectSource()
+        is_prefetch_valid = prefetch_still_valid or (lambda: True)
+        cache_name, cache_reg = self._direct_danmaku_cache_keys(item)
+        cached_xml = load_cached_danmaku_xml(cache_name, cache_reg)
+        if _spider_danmaku_xml_valid(cached_xml):
+            self._apply_direct_danmaku(item, cached_xml, source, playlist=playlist, is_prefetch=is_prefetch)
+            logger.info(
+                "Spider plugin loaded cached direct danmaku plugin=%s source=%s",
+                self._plugin_name,
+                item.vod_id,
+            )
+            return True
+        if not is_prefetch_valid():
+            return False
+        error = ""
+        try:
+            xml_text = self._fetch_direct_danmaku_xml(item, source, is_prefetch=is_prefetch)
+        except Exception as exc:
+            error = str(exc)
+            logger.warning(
+                "Spider plugin direct danmaku failed plugin=%s source=%s error=%s",
+                self._plugin_name,
+                item.vod_id,
+                exc,
+            )
+            xml_text = ""
+        if not is_prefetch_valid():
+            return False
+        if not _spider_danmaku_xml_valid(xml_text):
+            if error:
+                item.danmaku_error = error
+                if not is_prefetch:
+                    self._log_danmaku_event("弹幕下载失败", item, detail=error)
+            else:
+                logger.info(
+                    "Spider plugin direct danmaku empty plugin=%s source=%s",
+                    self._plugin_name,
+                    item.vod_id,
+                )
+            return False
+        save_cached_danmaku_xml(cache_name, cache_reg, xml_text)
+        self._apply_direct_danmaku(item, xml_text, source, playlist=playlist, is_prefetch=is_prefetch)
+        logger.info(
+            "Spider plugin resolved direct danmaku plugin=%s source=%s url=%s",
+            self._plugin_name,
+            item.vod_id,
+            source.url,
+        )
+        return True
+
+    def _apply_direct_danmaku(
+        self,
+        item: PlayItem,
+        xml_text: str,
+        source: SpiderDanmakuDirectSource,
+        *,
+        playlist: list[PlayItem] | None = None,
+        is_prefetch: bool = False,
+    ) -> None:
+        item.danmaku_xml = xml_text
+        item.selected_danmaku_provider = f"plugin:{self._plugin_name}"
+        item.selected_danmaku_url = source.url
+        item.selected_danmaku_title = (item.media_title or item.title).strip()
+        item.danmaku_error = ""
+        if not is_prefetch:
+            danmaku_count = _count_danmaku_entries(xml_text)
+            self._log_danmaku_event(
+                "弹幕下载成功",
+                item,
+                detail=_build_danmaku_success_detail(item, danmaku_count, playlist),
+            )
+
     def _apply_danmaku_source_search_result(self, item: PlayItem, result) -> None:
         item.danmaku_candidates = result.groups
         item.selected_danmaku_provider = result.default_provider
@@ -2352,16 +2555,18 @@ class SpiderPluginController:
         playlist: list[PlayItem],
     ) -> None:
         self._ensure_spider_initialized()
-        if self._is_short_drama_item(item):
-            return
-        if not _should_prefetch_danmaku(item, playlist):
-            return
+        direct_available = self._direct_danmaku_available(item)
+        if not direct_available:
+            if self._is_short_drama_item(item):
+                return
+            if not _should_prefetch_danmaku(item, playlist):
+                return
         url = (item.url or item.vod_id or "").strip()
         if not url:
             return
         if item.danmaku_xml or item.danmaku_pending:
             return
-        if self._danmaku_enabled and self._danmaku_service is not None:
+        if not direct_available and self._danmaku_enabled and self._danmaku_service is not None:
             lookup = self._prepare_danmaku_lookup(item, url, playlist)
             if lookup is not None:
                 preference, search_name, reg_src = lookup
@@ -2397,7 +2602,10 @@ class SpiderPluginController:
             logger.exception("Danmaku log handler failed event=%s", event)
 
     def _maybe_resolve_danmaku(self, item: PlayItem, url: str, playlist: list[PlayItem] | None = None, *, is_prefetch: bool = False) -> None:
-        if not self._danmaku_enabled or self._danmaku_service is None or self._is_short_drama_item(item):
+        # 直供(payload danmaku 字段/danmakuContent 方法)不受聚合开关、弹幕服务与短剧排除约束
+        if not self._direct_danmaku_available(item) and (
+            not self._danmaku_enabled or self._danmaku_service is None or self._is_short_drama_item(item)
+        ):
             return
         if item.danmaku_xml or item.danmaku_pending:
             return
@@ -2588,6 +2796,7 @@ class SpiderPluginController:
             )
             raise ValueError(str(exc)) from exc
         cover_source = str(payload.get("cover") or "").strip()
+        item.danmaku_source = _map_spider_danmaku_source(payload.get("danmaku"))
         parse_required = int(payload.get("parse") or 0) == 1
         item.parse_required = parse_required
         raw_url = payload.get("url")
@@ -2899,7 +3108,9 @@ class SpiderPluginController:
             episode_title_enhancer=episode_title_enhancer,
             danmaku_controller=(
                 self
-                if self._danmaku_enabled and self._danmaku_service is not None and not is_short_drama
+                if self._danmaku_service is not None
+                and (self._danmaku_enabled or self._danmaku_content_supported)
+                and (not is_short_drama or self._danmaku_content_supported)
                 else None
             ),
             playback_history_loader=history_loader,

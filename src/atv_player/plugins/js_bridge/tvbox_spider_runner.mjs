@@ -487,6 +487,7 @@ async function callMethod(method, args) {
     detail: "detail",
     search: "search",
     play: "play",
+    danmakuContent: "danmakuContent",
     getName: "getName",
     destroy: "destroy",
   };

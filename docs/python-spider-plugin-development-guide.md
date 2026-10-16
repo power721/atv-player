@@ -35,6 +35,7 @@
 - `qualities`
 - `subt`
 - `lyric`
+- `danmaku`
 - `actions`
 - `ext`
 
@@ -53,7 +54,7 @@
 
 这几个点非常重要：
 
-1. `playerContent()["danmu"]` 已经无效，是否启用弹幕能力只看 `danmaku()`
+1. 旧式布尔开关 `playerContent()["danmu"]` 已经无效；聚合弹幕搜索只看 `danmaku()`，直供弹幕走新的 `danmaku` 字段 / `danmakuContent()` 方法（见 §9.5）
 2. 对 Spider 插件来源，`danmaku()` 不仅控制弹幕能力，也控制自动元数据增强和播放器内刮削能力是否挂载
 3. `localProxy(...)` 在 `atv-player` 当前实现里没有运行时入口，写了也不会被调用
 4. `self.backend_parse = True` 不是通用传统字段，而是 `alist-tvbox` 后端提供的 [Atvp.py](https://github.com/power721/alist-tvbox/blob/master/src/main/resources/static/Atvp.py) 兼容运行层读取的特殊配置；如果 Spider 返回的是网盘资源或磁力资源，就必须配置这个参数，`atv-player` 当前直加载模式不会读取它
@@ -661,6 +662,47 @@ def danmaku(self):
 - 标题干净
 - 集数标注明确
 - 年份尽量准确
+
+### 9.5 弹幕直供（`danmaku` 字段与 `danmakuContent()` 方法）
+
+如果插件自己就知道弹幕数据在哪（例如站内评论接口需要插件签名才能调用），可以让宿主跳过聚合搜索，直接使用插件提供的弹幕。这是和 `danmaku()` 聚合搜索完全独立的一条通道：
+
+**方式一：`playerContent` 返回 `danmaku` 字段（适合已有现成 XML 直链或小体量数据）**
+
+```python
+def playerContent(self, flag, id, vipFlags):
+    return {
+        "parse": 0,
+        "url": play_url,
+        "danmaku": "https://cdn.example/comments/episode-1.xml",  # B站式弹幕 XML 直链
+    }
+```
+
+支持三种写法：
+
+- URL 字符串：`"danmaku": "https://.../xxx.xml"`
+- 内联 XML：`"danmaku": {"xml": "<i><d p=\"1.0,1,25,16777215\">文本</d>...</i>"}` 或裸 XML 字符串
+- 带请求头：`"danmaku": {"url": "https://...", "header": {"Referer": "..."}}`
+
+XML 需要是 B站兼容格式：`<d p="秒,模式,字号,颜色,时间戳,池,用户,行ID">文本</d>`。下载在起播后的后台线程进行，不会阻塞起播；默认复用 `header` 里的 referer/user-agent/cookie（dict 形式的 `header` 会整体覆盖）。
+
+**方式二：实现可选方法 `danmakuContent`（适合需要插件签名/翻页才能拿到数据的场景）**
+
+```python
+def danmakuContent(self, flag, id):
+    # 用插件自己的签名请求拉齐弹幕，转成 B站式 XML 字符串
+    return '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">你好</d></i>'
+```
+
+宿主在起播后的弹幕后台线程里调用它（不在 `playerContent` 里同步调用，所以可以做耗时 的签名请求与翻页）。返回 `None`、空串或抛异常都视为本集无直供弹幕。JS 插件同样支持：导出 `danmakuContent(flag, id)` 即可。
+
+**语义边界：**
+
+- 直供与聚合互不隐含：`danmaku()` 只控制聚合搜索；`danmaku` 字段 / `danmakuContent` 只控制直供。需要签名的源建议把 `danmaku()` 保持 `False`（聚合源大概率不收录，白扫），只用直供。
+- 优先级：payload `danmaku` 字段 > `danmakuContent` 方法 > 聚合搜索。直供失败（网络错误、方法抛异常）时，若 `danmaku()` 为 `True` 才回退聚合搜索。
+- 直供不受短剧排除影响（聚合搜索会跳过短剧条目，直供不会——短剧恰恰是直供的主要场景）。
+- 直供结果按 `插件名 + 播放项 id` 缓存 3 天，重播不重新请求；插件侧也可自行用 `getCache/setCache` 再做一层。
+- 实现了 `danmakuContent` 的插件即使 `danmaku()` 为 `False`、条目是短剧，也会正常挂载播放器弹幕控制与下集弹幕预取。
 
 ## 10. 外挂字幕与卡拉 OK 歌词
 

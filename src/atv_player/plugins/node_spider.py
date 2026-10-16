@@ -52,6 +52,12 @@ class NodeSpider:
     def playerContent(self, flag, id, vipFlags):
         return self._call("play", flag, id, vipFlags)
 
+    def danmakuContent(self, flag, id):
+        return self._call("danmakuContent", flag, id)
+
+    def supports_danmaku_content(self) -> bool:
+        return bool(self._call("hasMethod", "danmakuContent"))
+
     def getName(self):
         try:
             return str(self._call("getName") or "")

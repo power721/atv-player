@@ -221,6 +221,15 @@ class PlayChapter:
 
 
 @dataclass(slots=True)
+class SpiderDanmakuDirectSource:
+    """playerContent payload `danmaku` 字段声明的直供弹幕来源(URL 或内联 XML)。"""
+
+    url: str = ""
+    headers: dict[str, str] = field(default_factory=dict)
+    xml: str = ""
+
+
+@dataclass(slots=True)
 class PlayItem:
     title: str
     url: str
@@ -269,6 +278,7 @@ class PlayItem:
     selected_danmaku_provider: str = ""
     selected_danmaku_title: str = ""
     danmaku_error: str = ""
+    danmaku_source: SpiderDanmakuDirectSource | None = None
     type_name: str = ""
     category_name: str = ""
     metadata_provider_url: str = ""
