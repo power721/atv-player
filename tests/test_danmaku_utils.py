@@ -16,6 +16,7 @@ from atv_player.danmaku.utils import (
     extract_variety_part,
     has_explicit_episode_marker,
     has_variety_issue_marker,
+    _play_item_episode_number,
     infer_playlist_episode_number,
     is_likely_variety_title,
     is_other_fallback_only_result,
@@ -676,3 +677,26 @@ def test_should_filter_name_keeps_numeric_movie_title_extension() -> None:
     # 纯数字片名不受季 token 收紧影响:候选是查询的延展(前传/续集)仍放行
     assert should_filter_name("300", "300勇士：帝国崛起") is False
     assert should_filter_name("1917", "1917") is False
+
+
+def test_play_item_episode_number_parses_trailing_number_with_extension() -> None:
+    # 尾部裸数字/短横线集号模式行尾锚定,扩展名曾把它们整个挡掉:"仙逆-hu-075.mp4"
+    # 提取不到 75,退化到播放列表位置推断,把第75集当第1集搜弹幕
+    item = PlayItem(
+        vod_id="/仙逆/仙逆-hu-075.mp4",
+        title="仙逆-hu-075.mp4",
+        url="https://media.example/1.mp4",
+        media_title="仙逆",
+    )
+
+    assert _play_item_episode_number(item) == 75
+    assert infer_playlist_episode_number(item, [item]) == 75
+
+
+def test_play_item_episode_number_extension_strip_keeps_guards() -> None:
+    def item_with_title(title: str) -> PlayItem:
+        return PlayItem(vod_id=f"/仙逆/{title}", title=title, url="https://media.example/x", media_title="仙逆")
+
+    # 分辨率数字不是集号;无数字文件名不硬造
+    assert _play_item_episode_number(item_with_title("1920x1080.mp4")) is None
+    assert _play_item_episode_number(item_with_title("仙逆.mp4")) is None

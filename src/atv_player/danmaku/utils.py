@@ -380,12 +380,24 @@ def _episode_path_basename(value: str) -> str:
     return basename
 
 
+_MEDIA_FILE_EXTENSION_RE = re.compile(
+    r"\.(?:mkv|mp4|avi|mov|m4v|ts|flv|webm|wmv|mpg|mpeg|3gp|rmvb|iso|strm)$",
+    re.IGNORECASE,
+)
+
+
 def _episode_number_from_candidate(name: str) -> int | None:
-    technical_filename = _looks_like_technical_media_filename(name)
-    direct = extract_episode_number(name)
-    if direct is not None and (not technical_filename or has_explicit_episode_marker(name)):
-        return direct
-    return None
+    # 尾部裸数字/短横线集号模式是行尾锚定的,文件名扩展名会挡住它们
+    # ("仙逆-hu-075.mp4"提取不到 75,退化到播放列表位置把第75集当第1集)。
+    # 候选都是文件名(标题/原始标题/路径基名),统一剥掉扩展名再解析。
+    candidate = _MEDIA_FILE_EXTENSION_RE.sub("", str(name or "").strip())
+    technical_filename = _looks_like_technical_media_filename(candidate)
+    direct = extract_episode_number(candidate)
+    if direct is None:
+        return None
+    if technical_filename and not has_explicit_episode_marker(candidate):
+        return None
+    return direct
 
 
 def _play_item_episode_number(item: PlayItem) -> int | None:
