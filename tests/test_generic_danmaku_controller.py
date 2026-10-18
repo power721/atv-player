@@ -6,6 +6,7 @@ import atv_player.danmaku.cache as danmaku_cache_module
 import atv_player.danmaku.generic as generic_danmaku_module
 from atv_player.danmaku.generic import GenericDanmakuController
 from atv_player.danmaku.models import (
+    DanmakuSeriesPreference,
     DanmakuSourceGroup,
     DanmakuSourceOption,
     DanmakuSourceSearchResult,
@@ -183,6 +184,238 @@ def test_generic_danmaku_default_episode_label_keeps_hint_only_variety_without_e
     assert generic_danmaku_module._default_episode_label(item, playlist) == ""
 
 
+def test_generic_danmaku_default_episode_label_keeps_filename_anchor_for_single_item() -> None:
+    # 网盘单文件条目（"288 4K.mkv"）的集数读自文件名而非播放位置：保留锚点，
+    # 否则查询退化为纯标题，被同名近似作品夺魁（2026-10-18 完美世界 →
+    # 优酷"完美的世界"事故）。
+    item = PlayItem(
+        title="288 4K.mkv",
+        url="http://127.0.0.1:44399/driver/c3d237201e2b324f",
+        media_title="完美世界",
+    )
+
+    assert generic_danmaku_module._default_episode_label(item, [item]) == "288集"
+
+
+@pytest.mark.parametrize(
+    "title",
+    ["300 (2006).mkv", "1917.mkv", "2012.mkv", "阿凡达.mkv"],
+)
+def test_generic_danmaku_default_episode_label_drops_anchor_for_movie_like_single_items(title: str) -> None:
+    # 年份括注、四位数字纯片名（"1917"/"2012"是电影）与无可解析数字的单文件
+    # 条目保持标题-only：集数锚点只留给可信的剧集文件名。
+    item = PlayItem(
+        title=title, url="http://127.0.0.1:44399/driver/abc", media_title="某电影"
+    )
+
+    assert generic_danmaku_module._default_episode_label(item, [item]) == ""
+
+
+def _use_tmp_danmaku_cache(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(danmaku_cache_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    monkeypatch.setattr(generic_danmaku_module, "load_cached_danmaku_xml", danmaku_cache_module.load_cached_danmaku_xml)
+    monkeypatch.setattr(generic_danmaku_module, "save_cached_danmaku_xml", danmaku_cache_module.save_cached_danmaku_xml)
+    monkeypatch.setattr(
+        generic_danmaku_module,
+        "load_cached_danmaku_source_search_result",
+        danmaku_cache_module.load_cached_danmaku_source_search_result,
+    )
+    monkeypatch.setattr(
+        generic_danmaku_module,
+        "save_cached_danmaku_source_search_result",
+        danmaku_cache_module.save_cached_danmaku_source_search_result,
+    )
+
+
+def test_generic_danmaku_controller_passes_series_preference_to_search(monkeypatch, tmp_path: Path) -> None:
+    # 已保存的系列源偏好（provider/page_url）要传给搜索服务参与默认候选挑选，
+    # 否则一次正确选择无法钉住后续同系列条目。
+
+    class RecordingDanmakuService:
+        def __init__(self) -> None:
+            self.search_calls: list[dict[str, object]] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ) -> DanmakuSourceSearchResult:
+            del reg_src, media_duration_seconds, provider_filter
+            self.search_calls.append(
+                {
+                    "name": name,
+                    "preferred_provider": preferred_provider,
+                    "preferred_page_url": preferred_page_url,
+                }
+            )
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[
+                            DanmakuSourceOption(
+                                provider="tencent", name="完美世界 288集", url="https://v.qq.com/288"
+                            )
+                        ],
+                    )
+                ],
+                default_option_url="https://v.qq.com/288",
+                default_provider="tencent",
+            )
+
+    _use_tmp_danmaku_cache(monkeypatch, tmp_path)
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    store.save(
+        DanmakuSeriesPreference(
+            series_key="完美世界",
+            provider="tencent",
+            page_url="https://v.qq.com/x/cover/mcv8hkc8zk8lnov/k4100ss0urf.html",
+            title="完美世界 167集",
+        )
+    )
+    service = RecordingDanmakuService()
+    controller = GenericDanmakuController(service, danmaku_preference_store=store)
+    item = PlayItem(
+        title="288 4K.mkv",
+        url="http://127.0.0.1:44399/driver/c3d237201e2b324f",
+        vod_id="driver-c3d2",
+        media_title="完美世界",
+    )
+
+    controller.refresh_danmaku_sources(item, playlist=[item], force_refresh=True)
+
+    assert service.search_calls == [
+        {
+            "name": "完美世界 288集",
+            "preferred_provider": "tencent",
+            "preferred_page_url": "https://v.qq.com/x/cover/mcv8hkc8zk8lnov/k4100ss0urf.html",
+        }
+    ]
+
+
+def test_generic_danmaku_controller_cached_restore_reranks_with_series_preference(monkeypatch, tmp_path: Path) -> None:
+    # 缓存恢复路径同样要带偏好重排：缓存里存下的默认候选（可能是错误选择）
+    # 不应原样复出，偏好源应有机会顶上。
+
+    class RecordingRerankService:
+        def __init__(self) -> None:
+            self.rerank_calls: list[dict[str, object]] = []
+
+        def rerank_danmaku_source_search_result(
+            self,
+            result: DanmakuSourceSearchResult,
+            *,
+            query_name: str = "",
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ) -> DanmakuSourceSearchResult:
+            del reg_src, media_duration_seconds
+            self.rerank_calls.append(
+                {
+                    "query_name": query_name,
+                    "preferred_provider": preferred_provider,
+                    "preferred_page_url": preferred_page_url,
+                }
+            )
+            return result
+
+    _use_tmp_danmaku_cache(monkeypatch, tmp_path)
+    danmaku_cache_module.save_cached_danmaku_source_search_result(
+        "完美世界 288集",
+        "",
+        DanmakuSourceSearchResult(
+            groups=[
+                DanmakuSourceGroup(
+                    provider="youku",
+                    provider_label="优酷",
+                    options=[
+                        DanmakuSourceOption(
+                            provider="youku", name="第1集 完美的世界", url="https://v.youku.com/wrong"
+                        )
+                    ],
+                )
+            ],
+            default_option_url="https://v.youku.com/wrong",
+            default_provider="youku",
+        ),
+    )
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    store.save(
+        DanmakuSeriesPreference(
+            series_key="完美世界",
+            provider="tencent",
+            page_url="https://v.qq.com/x/cover/mcv8hkc8zk8lnov/k4100ss0urf.html",
+            title="完美世界 167集",
+        )
+    )
+    service = RecordingRerankService()
+    controller = GenericDanmakuController(service, danmaku_preference_store=store)
+    item = PlayItem(
+        title="288 4K.mkv",
+        url="http://127.0.0.1:44399/driver/c3d237201e2b324f",
+        vod_id="driver-c3d2",
+        media_title="完美世界",
+    )
+
+    assert controller.load_cached_danmaku_sources(item, playlist=[item]) is True
+    assert service.rerank_calls == [
+        {
+            "query_name": "完美世界 288集",
+            "preferred_provider": "tencent",
+            "preferred_page_url": "https://v.qq.com/x/cover/mcv8hkc8zk8lnov/k4100ss0urf.html",
+        }
+    ]
+
+
+def test_generic_danmaku_controller_switch_saves_series_source_preference(monkeypatch, tmp_path: Path) -> None:
+    # generic 路径的下载结果要落库为系列偏好，后续同系列搜索/缓存恢复才能
+    # 钉住用户实际使用的源。
+
+    class ResolveDanmakuService:
+        def resolve_danmu(self, page_url: str) -> str:
+            del page_url
+            return '<i><d p="1,1,25,16777215">hi</d></i>'
+
+    monkeypatch.setattr(generic_danmaku_module, "load_cached_danmaku_xml", lambda _name, _url: "")
+    monkeypatch.setattr(generic_danmaku_module, "save_cached_danmaku_xml", lambda _name, _url, _xml: None)
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    controller = GenericDanmakuController(ResolveDanmakuService(), danmaku_preference_store=store)
+    item = PlayItem(
+        title="第1集",
+        url="https://media.example/1.m3u8",
+        vod_id="item-1",
+        media_title="成何体统",
+        danmaku_search_title="成何体统",
+        danmaku_search_query="成何体统 1集",
+        danmaku_candidates=[
+            DanmakuSourceGroup(
+                provider="tencent",
+                provider_label="腾讯",
+                options=[
+                    DanmakuSourceOption(
+                        provider="tencent", name="成何体统 第1集", url="https://v.qq.com/demo"
+                    )
+                ],
+            )
+        ],
+    )
+
+    controller.switch_danmaku_source(item, "https://v.qq.com/demo")
+
+    saved = store.load("成何体统")
+    assert saved is not None
+    assert saved.provider == "tencent"
+    assert saved.page_url == "https://v.qq.com/demo"
+    assert saved.search_title == "成何体统"
+
+
 def test_generic_danmaku_controller_refreshes_sources_with_media_title_and_episode(monkeypatch, tmp_path: Path) -> None:
     class RecordingDanmakuService:
         def __init__(self) -> None:
@@ -204,7 +437,11 @@ def test_generic_danmaku_controller_refreshes_sources_with_media_title_and_episo
                     DanmakuSourceGroup(
                         provider="tencent",
                         provider_label="腾讯",
-                        options=[DanmakuSourceOption(provider="tencent", name="成何体统 第1集", url="https://v.qq.com/demo")],
+                        options=[
+                    DanmakuSourceOption(
+                        provider="tencent", name="成何体统 第1集", url="https://v.qq.com/demo"
+                    )
+                ],
                     )
                 ],
                 default_option_url="https://v.qq.com/demo",
@@ -257,7 +494,11 @@ def test_generic_danmaku_controller_refresh_emits_log_events(monkeypatch, tmp_pa
                     DanmakuSourceGroup(
                         provider="tencent",
                         provider_label="腾讯",
-                        options=[DanmakuSourceOption(provider="tencent", name="成何体统 第1集", url="https://v.qq.com/demo")],
+                        options=[
+                    DanmakuSourceOption(
+                        provider="tencent", name="成何体统 第1集", url="https://v.qq.com/demo"
+                    )
+                ],
                     )
                 ],
                 default_option_url="https://v.qq.com/demo",
@@ -530,7 +771,11 @@ def test_generic_danmaku_controller_switch_emits_log_events(monkeypatch, tmp_pat
             DanmakuSourceGroup(
                 provider="tencent",
                 provider_label="腾讯",
-                options=[DanmakuSourceOption(provider="tencent", name="成何体统 第1集", url="https://v.qq.com/demo")],
+                options=[
+                    DanmakuSourceOption(
+                        provider="tencent", name="成何体统 第1集", url="https://v.qq.com/demo"
+                    )
+                ],
             )
         ],
     )

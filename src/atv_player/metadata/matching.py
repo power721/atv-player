@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from atv_player.episode_titles import extract_season_number
 from atv_player.metadata.models import MetadataMatch, MetadataQuery
+from atv_player.metadata.query import is_pure_season_title
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -126,6 +127,11 @@ def _title_similarity_score(query_title: str, match_title: str) -> float:
         return 0.0
     if normalized_query == normalized_match:
         return 1.0
+    if is_pure_season_title(query_title):
+        # 纯季标记("S01")会被任何恰含该字样的标题"包含"(如优酷别名注记
+        # "…(别名:Garfield S01)"),包含规则在这里不是证据;乘 0.4 压到
+        # 置信线以下,除非两个标题整串相等(上面已返回 1.0)。
+        return SequenceMatcher(a=normalized_query, b=normalized_match).ratio() * 0.4
 
     query_base = normalize_match_title(strip_match_season_suffix(query_title))
     match_base = normalize_match_title(strip_match_season_suffix(match_title))

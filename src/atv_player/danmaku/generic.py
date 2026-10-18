@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import logging
 import re
+import time
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlparse
@@ -14,16 +15,19 @@ from atv_player.danmaku.cache import (
     save_cached_danmaku_xml,
 )
 from atv_player.danmaku.models import (
+    DanmakuSeriesPreference,
     DanmakuSourceGroup,
     DanmakuSourceOption,
     DanmakuSourceSearchResult,
 )
 from atv_player.danmaku.preferences import (
     DanmakuSeriesPreferenceStore,
+    _ensure_item_series_key,
     load_item_danmaku_offset,
     save_item_danmaku_offset,
 )
 from atv_player.danmaku.utils import (
+    _play_item_episode_number,
     extract_variety_episode_label,
     has_explicit_episode_marker,
     has_variety_issue_marker,
@@ -62,6 +66,24 @@ def _looks_like_title_only_item(item: PlayItem) -> bool:
     return str(item.title or "").strip() in _TITLE_ONLY_ITEM_TITLES
 
 
+def _filename_carries_episode_anchor(item: PlayItem, episode_number: int) -> bool:
+    """单文件条目的文件名是否自带可信集数锚点（"288 4K.mkv"）。
+
+    集数直接读自文件名而非按播放位置推断时保留锚点；丢锚点会让搜索退化为
+    纯标题查询，被同名近似作品夺魁（完美世界 → 优酷"完美的世界"）。四位数字
+    （"1917.mkv"）或带年份括注（"300 (2006).mkv"）更可能是纯数字片名的电影，
+    不算锚点。
+    """
+    if _play_item_episode_number(item) is None:
+        return False
+    if episode_number > 999:
+        return False
+    return not any(
+        value and re.search(r"(?:19|20)\d{2}", str(value))
+        for value in (item.original_title, item.title)
+    )
+
+
 def _default_episode_label(item: PlayItem, playlist: list[PlayItem] | None = None) -> str:
     if _looks_like_title_only_item(item):
         return ""
@@ -85,7 +107,11 @@ def _default_episode_label(item: PlayItem, playlist: list[PlayItem] | None = Non
         return ""
     if title.isdigit():
         return str(episode_number)
-    return f"{episode_number}集" if has_explicit_episode_marker(item.title) or len(playlist or []) != 1 else ""
+    if has_explicit_episode_marker(item.title) or len(playlist or []) != 1:
+        return f"{episode_number}集"
+    if _filename_carries_episode_anchor(item, episode_number):
+        return f"{episode_number}集"
+    return ""
 
 
 def _find_selected_option(item: PlayItem, page_url: str) -> DanmakuSourceOption | None:
@@ -134,6 +160,37 @@ class GenericDanmakuController:
 
     def set_danmaku_log_handler(self, handler: Callable[[str], None] | None) -> None:
         self._danmaku_log_handler = handler
+
+    def _source_preference(self, item: PlayItem) -> DanmakuSeriesPreference | None:
+        if self._danmaku_preference_store is None:
+            return None
+        series_key = _ensure_item_series_key(item)
+        if not series_key:
+            return None
+        return self._danmaku_preference_store.load(series_key)
+
+    def _save_source_preference(self, item: PlayItem) -> None:
+        if self._danmaku_preference_store is None:
+            return
+        series_key = _ensure_item_series_key(item)
+        if not series_key:
+            return
+        existing = self._danmaku_preference_store.load(series_key)
+
+        def _or_existing(current: str, attr: str) -> str:
+            return current or (getattr(existing, attr) if existing is not None else "")
+
+        self._danmaku_preference_store.save(
+            DanmakuSeriesPreference(
+                series_key=series_key,
+                provider=_or_existing(item.selected_danmaku_provider, "provider"),
+                page_url=_or_existing(item.selected_danmaku_url, "page_url"),
+                title=_or_existing(item.selected_danmaku_title, "title"),
+                search_title=_or_existing(item.danmaku_search_title, "search_title"),
+                updated_at=int(time.time()),
+                episode_source_offsets=existing.episode_source_offsets if existing is not None else {},
+            )
+        )
 
     def _log_danmaku_event(self, event: str, item: PlayItem | None = None, detail: str = "") -> None:
         handler = self._danmaku_log_handler
@@ -218,16 +275,23 @@ class GenericDanmakuController:
         query_name: str,
         reg_src: str,
         media_duration_seconds: int = 0,
+        preferred_provider: str = "",
+        preferred_page_url: str = "",
     ) -> DanmakuSourceSearchResult:
         rerank = getattr(self._danmaku_service, "rerank_danmaku_source_search_result", None)
         if not callable(rerank):
             return result
-        return rerank(
-            result,
-            query_name=query_name,
-            reg_src=reg_src,
-            media_duration_seconds=media_duration_seconds,
-        )
+        kwargs: dict[str, Any] = {
+            "query_name": query_name,
+            "reg_src": reg_src,
+            "media_duration_seconds": media_duration_seconds,
+        }
+        params = inspect.signature(rerank).parameters
+        if "preferred_provider" in params:
+            kwargs["preferred_provider"] = preferred_provider
+        if "preferred_page_url" in params:
+            kwargs["preferred_page_url"] = preferred_page_url
+        return rerank(result, **kwargs)
 
     def _fallback_search_queries(
         self,
@@ -272,12 +336,19 @@ class GenericDanmakuController:
         *,
         media_duration_seconds: int = 0,
         provider_filter: str = "",
+        preferred_provider: str = "",
+        preferred_page_url: str = "",
     ) -> DanmakuSourceSearchResult:
         search_sources = getattr(self._danmaku_service, "search_danmu_sources", None)
         if callable(search_sources):
-            kwargs = {"media_duration_seconds": media_duration_seconds}
-            if "provider_filter" in inspect.signature(search_sources).parameters:
+            kwargs: dict[str, Any] = {"media_duration_seconds": media_duration_seconds}
+            params = inspect.signature(search_sources).parameters
+            if "provider_filter" in params:
                 kwargs["provider_filter"] = provider_filter
+            if "preferred_provider" in params:
+                kwargs["preferred_provider"] = preferred_provider
+            if "preferred_page_url" in params:
+                kwargs["preferred_page_url"] = preferred_page_url
             return search_sources(query_name, reg_src, **kwargs)
         candidates = self._danmaku_service.search_danmu(query_name, reg_src, provider_filter=provider_filter)
         grouped: dict[str, list[DanmakuSourceOption]] = {}
@@ -317,6 +388,9 @@ class GenericDanmakuController:
         cached = self._load_source_search_result(query_name, reg_src)
         if cached is None:
             return False
+        preference = self._source_preference(item)
+        preferred_provider = preference.provider if preference is not None else ""
+        preferred_page_url = preference.page_url if preference is not None else ""
         self._apply_source_search_result(
             item,
             self._rerank_source_search_result(
@@ -324,6 +398,8 @@ class GenericDanmakuController:
                 query_name=query_name,
                 reg_src=reg_src,
                 media_duration_seconds=media_duration_seconds,
+                preferred_provider=preferred_provider,
+                preferred_page_url=preferred_page_url,
             ),
         )
         return True
@@ -362,11 +438,16 @@ class GenericDanmakuController:
             candidate_count = sum(len(group.options) for group in item.danmaku_candidates)
             self._log_danmaku_event("弹幕搜索成功", detail=f"找到 {candidate_count} 个候选")
             return
+        preference = self._source_preference(item)
+        preferred_provider = preference.provider if preference is not None else ""
+        preferred_page_url = preference.page_url if preference is not None else ""
         result = self._search_sources(
             query_name,
             reg_src,
             media_duration_seconds=media_duration_seconds,
             provider_filter=provider_filter,
+            preferred_provider=preferred_provider,
+            preferred_page_url=preferred_page_url,
         )
         for fallback_query in self._fallback_search_queries(item, query_name, provider_filter):
             if result.groups:
@@ -378,10 +459,14 @@ class GenericDanmakuController:
                     reg_src,
                     media_duration_seconds=media_duration_seconds,
                     provider_filter=provider_filter,
+                    preferred_provider=preferred_provider,
+                    preferred_page_url=preferred_page_url,
                 ),
                 query_name=query_name,
                 reg_src=reg_src,
                 media_duration_seconds=media_duration_seconds,
+                preferred_provider=preferred_provider,
+                preferred_page_url=preferred_page_url,
             )
             if fallback_result.groups:
                 result = fallback_result
@@ -474,6 +559,7 @@ class GenericDanmakuController:
             item.selected_danmaku_provider = selected_option.provider
             item.selected_danmaku_title = selected_option.name
         item.danmaku_error = ""
+        self._save_source_preference(item)
         self._log_danmaku_event("弹幕下载成功", detail=f"{self._count_danmaku_entries(xml_text)} 条弹幕")
         return xml_text
 
@@ -495,6 +581,7 @@ class GenericDanmakuController:
         item.selected_danmaku_url = normalized_url
         item.selected_danmaku_title = source_title
         item.danmaku_error = ""
+        self._save_source_preference(item)
         self._log_danmaku_event(
             "弹幕下载成功",
             detail=f"{self._count_danmaku_entries(xml_text)} 条弹幕",

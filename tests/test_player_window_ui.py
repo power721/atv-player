@@ -23638,6 +23638,43 @@ def test_player_window_async_metadata_hydration_logs_iqiyi_with_localized_label(
     assert "元数据已更新: 爱奇艺(简介)" in window.log_view.toPlainText()
 
 
+def test_player_window_async_metadata_hydration_logs_title_change(qtbot) -> None:
+    class FakeVideo:
+        def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:
+            return None
+
+        def set_speed(self, value: float) -> None:
+            return None
+
+        def set_volume(self, value: int) -> None:
+            return None
+
+        def position_seconds(self) -> int:
+            return 0
+
+    session = PlayerSession(
+        vod=VodItem(vod_id="v1", vod_name="S01"),
+        playlist=[PlayItem(title="S01E01.mp4", url="https://media.example/1.mp4", vod_id="ep1", media_title="S01")],
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+        metadata_hydrator=lambda current_session: VodItem(
+            vod_id=current_session.vod.vod_id,
+            vod_name="牧神记",
+            metadata_field_sources={"title": "youku"},
+        ),
+    )
+
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.video = FakeVideo()
+
+    window.open_session(session)
+
+    qtbot.waitUntil(lambda: "元数据已更新" in window.log_view.toPlainText(), timeout=1000)
+    assert "优酷(标题)" in window.log_view.toPlainText()
+
+
 def test_player_window_shows_episode_title_tabs_when_playlist_has_title_variants(qtbot) -> None:
     class FakeVideo:
         def load(self, url: str, pause: bool = False, start_seconds: int = 0, headers: dict[str, str] | None = None) -> None:

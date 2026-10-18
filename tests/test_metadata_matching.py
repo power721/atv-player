@@ -204,3 +204,40 @@ def test_score_match_shorter_base_title_stays_confident() -> None:
     )
 
     assert is_confident_match(score_match(query, base)) is True
+
+
+def test_score_match_pure_season_token_query_is_not_confident() -> None:
+    # 季目录名丢剧名后查询退化为 "S01";优酷别名注记 "(别名:Garfield S01)"
+    # 里的字样子串不构成匹配证据,不得过置信门
+    query = MetadataQuery(title="S01")
+
+    alias_match = MetadataMatch(
+        provider="youku",
+        provider_id="yk:1",
+        title="加菲猫的幸福生活 第一季(别名:Garfield S01)",
+        raw={"categories": ["动漫"]},
+    )
+
+    assert not is_confident_match(score_match(query, alias_match))
+
+
+def test_score_match_exact_title_still_confident_for_season_token_query() -> None:
+    query = MetadataQuery(title="S01")
+
+    assert is_confident_match(
+        score_match(query, MetadataMatch(provider="youku", provider_id="yk:1", title="S01"))
+    )
+
+
+def test_score_match_composed_season_title_matches_real_show() -> None:
+    # 源头组合出 "牧神记 S01" 后,正常候选照常高分配信
+    query = MetadataQuery(title="牧神记 S01")
+
+    match = MetadataMatch(
+        provider="youku",
+        provider_id="yk:1",
+        title="牧神记 第一季",
+        raw={"categories": ["动漫"]},
+    )
+
+    assert is_confident_match(score_match(query, match))

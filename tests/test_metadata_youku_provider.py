@@ -248,3 +248,35 @@ def test_youku_metadata_provider_versions_search_and_detail_cache_keys() -> None
         provider.detail_cache_key("https://v.youku.com/v_show/id_XNjUxODQ1MzE1Ng==.html")
         == "https://v.youku.com/v_show/id_XNjUxODQ1MzE1Ng==.html:metadata-v3"
     )
+
+
+def test_youku_metadata_provider_strips_alias_annotation_from_titles() -> None:
+    # 优酷展示名自带的 "(别名:Garfield S01)" 注记里的外文名会作为子串参与
+    # 标题匹配,把退化查询("S01")顶过置信线;搜索与详情两侧都要剥掉
+    provider = YoukuMetadataProvider(
+        get=lambda url, **kwargs: httpx.Response(
+            200,
+            json={
+                "pageComponentList": [
+                    {
+                        "commonData": {
+                            "titleDTO": {"displayName": "加菲猫的幸福生活 第一季(别名:Garfield S01)"},
+                            "descDTO": {"displayName": "加菲猫一家的日常。"},
+                            "coverDTO": {"url": "https://img.youku.com/garfield.jpg"},
+                            "showYear": "2009",
+                            "leftButtonDTO": {
+                                "action": {
+                                    "value": "youku://play?source=search&vid=XNjUzNDA5NDEwNA==&showid=garfield"
+                                }
+                            },
+                        },
+                    }
+                ]
+            },
+        )
+    )
+
+    matches = provider.search(MetadataQuery(title="加菲猫的幸福生活"))
+
+    assert [match.title for match in matches] == ["加菲猫的幸福生活 第一季"]
+    assert provider.get_detail(matches[0]).title == "加菲猫的幸福生活 第一季"

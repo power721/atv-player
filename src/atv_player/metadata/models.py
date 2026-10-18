@@ -3,7 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from atv_player.metadata.query import infer_metadata_category_name_from_title, normalize_metadata_query_inputs
+from atv_player.metadata.query import (
+    infer_metadata_category_name_from_title,
+    is_pure_season_title,
+    normalize_metadata_query_inputs,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -40,6 +44,12 @@ class MetadataContext:
         if self.current_item is not None:
             current_title = str(self.current_item.media_title or "").strip()
         raw_title = current_title or (self.vod.vod_name or "").strip()
+        if is_pure_season_title(raw_title):
+            # 网盘季目录("牧神记/S01")会把 media_title 变成裸季标记;拿它当
+            # 查询标题只会搜出别名里恰含 "S01" 字样的错配,组合回分享标题。
+            vod_title = (self.vod.vod_name or "").strip()
+            if vod_title and not is_pure_season_title(vod_title) and vod_title.casefold() != raw_title.casefold():
+                raw_title = f"{vod_title} {raw_title}"
         title, year = normalize_metadata_query_inputs(
             raw_title,
             self.vod.vod_year or "",

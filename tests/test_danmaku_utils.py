@@ -80,6 +80,32 @@ def test_should_filter_name_keeps_date_led_variety_episode_subtitle() -> None:
     assert should_filter_name(target, "2026-08-10 第2期上：偶像剧现场 情歌对唱甜蜜升温") is False
 
 
+def test_should_filter_name_rejects_marker_led_near_miss_title() -> None:
+    # 平台把剧名回显进集标题（优酷"第1集 完美的世界"）而查询是"完美世界"：
+    # 剥掉集标后的剩余文本与查询剧名相似却不同，是另一部同名近似作品，
+    # 必须过滤——纯标题搜索下它会以最高相似度夺魁（2026-10-18 线上事故）。
+    target = normalize_name("完美世界")
+    assert should_filter_name(target, "第1集 完美的世界") is True
+    assert should_filter_name(target, "第1集 美好世界") is True
+
+
+def test_should_filter_name_keeps_marker_led_exact_and_contained_show_names() -> None:
+    target = normalize_name("完美世界")
+    assert should_filter_name(target, "第1集 完美世界 天生至尊") is False
+    # 搜狐式长剧情副标题里包含查询剧名（《丈夫的完美世界》），与非标记路径
+    # 的包含规则保持一致：放行，由排序决定去留。
+    sohu_wrapped_subtitle = "第12集：她以为被爱，实则被围猎！——《丈夫的完美世界》"
+    assert should_filter_name(target, sohu_wrapped_subtitle) is False
+
+
+def test_should_filter_name_keeps_marker_led_unrelated_plot_subtitles() -> None:
+    # 副标题与查询剧名毫不相干（腾讯"第03话 七神下界"式命名、纯数字集名）：
+    # 无剧名可比，放行，由集数匹配决定。
+    target = normalize_name("完美世界")
+    assert should_filter_name(target, "第03话 七神下界 上篇") is False
+    assert should_filter_name(target, "1") is False
+
+
 def test_episode_matches_request_rejects_different_show_with_same_episode_number() -> None:
     # A candidate carrying a different show-name prefix must still be rejected even
     # when its episode number equals the request (guard against over-relaxation).
@@ -636,3 +662,17 @@ def test_extract_variety_part_supports_trailing_bracket_marker() -> None:
     assert extract_variety_issue_key("第2期：绝叫山庄Ⅱ（下）") == "2下"
     # 括号里不是单字分部标记(如"完整版")不算
     assert extract_variety_part("第2期：绝叫山庄Ⅱ（完整版）") is None
+
+
+def test_should_filter_name_rejects_junk_for_pure_season_token_query() -> None:
+    # 季目录名丢了剧名时(media_title="S01"),含 "s01/s1" 字样的垃圾候选
+    # 不能靠子串包含混进来(爱奇艺直播录像/搜狐错剧)
+    assert should_filter_name("S01 1集", "2026-10-10-14-01-57s1红蝶胜率83.85%！ 第1集") is True
+    assert should_filter_name("S01", "企鹅宝宝的生命轮回！S01") is True
+    assert should_filter_name("S01", "S01") is False
+
+
+def test_should_filter_name_keeps_numeric_movie_title_extension() -> None:
+    # 纯数字片名不受季 token 收紧影响:候选是查询的延展(前传/续集)仍放行
+    assert should_filter_name("300", "300勇士：帝国崛起") is False
+    assert should_filter_name("1917", "1917") is False

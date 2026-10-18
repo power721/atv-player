@@ -2,7 +2,9 @@ from datetime import datetime
 
 from atv_player.controllers.browse_controller import (
     BrowseController,
+    build_drive_grouped_sources,
     build_vod_list_path,
+    compose_drive_media_title,
     filter_search_results,
     map_drive_video_to_play_item,
 )
@@ -735,3 +737,63 @@ def test_drive_external_subtitles_missing_or_invalid_entries_are_ignored() -> No
     request = controller.build_request_from_detail("1$210816$1")
 
     assert request.playlist[0].external_subtitles == []
+
+
+def test_compose_drive_media_title_combines_season_token_with_share_title() -> None:
+    assert compose_drive_media_title("牧神记", "S01") == "牧神记 S01"
+    assert compose_drive_media_title("牧神记", "第一季") == "牧神记 第一季"
+    assert compose_drive_media_title("牧神记", "Season 01") == "牧神记 Season 01"
+
+
+def test_compose_drive_media_title_keeps_real_directory_names() -> None:
+    assert compose_drive_media_title("合集", "等不到说我爱你（82集）崔秀子") == "等不到说我爱你"
+    assert compose_drive_media_title("合集", "加菲猫的幸福生活") == "加菲猫的幸福生活"
+    # 分享名已带季号时不重复拼
+    assert compose_drive_media_title("牧神记 第一季", "S01") == "牧神记 第一季"
+    # 无分享标题可用时维持原样
+    assert compose_drive_media_title("", "S01") == "S01"
+
+
+def test_build_drive_grouped_sources_composes_season_directory_title() -> None:
+    detail = VodItem(vod_id="share-1", vod_name="牧神记")
+    directories = [{"id": "dir-s01", "name": "S01"}]
+    files = [
+        {"name": "S01E01.2024.2160p.WEB-DL.H264.AAC.mp4", "url": "http://p/1.mp4"},
+        {"name": "S01E02.2024.2160p.WEB-DL.H264.AAC.mp4", "url": "http://p/2.mp4"},
+    ]
+
+    source_groups, playlists = build_drive_grouped_sources(
+        detail,
+        "res-1",
+        directories,
+        [],
+        lambda resource_id, dir_id: files,
+    )
+
+    assert [item.media_title for item in playlists[0]] == ["牧神记 S01", "牧神记 S01"]
+    assert source_groups[0].label == "S01"
+
+
+def test_build_drive_grouped_sources_keeps_named_directory_title() -> None:
+    detail = VodItem(vod_id="share-1", vod_name="某合集")
+    directories = [{"id": "dir-1", "name": "等不到说我爱你（82集）崔秀子"}]
+
+    source_groups, playlists = build_drive_grouped_sources(
+        detail,
+        "res-1",
+        directories,
+        [],
+        lambda resource_id, dir_id: [{"name": "01.mp4", "url": "http://p/1.mp4"}],
+    )
+
+    assert playlists[0][0].media_title == "等不到说我爱你"
+
+
+def test_compose_drive_media_title_strips_split_season_range_suffix() -> None:
+    # 分段季目录:"S01" 拆 "S01 100"/"S01 100-130" 上传,起始集号不进标题
+    # (集数锚点由文件名 S01E100 自带),否则查询退化成 "S01 100 100集" 整季 0 结果
+    assert compose_drive_media_title("牧神记", "S01 100") == "牧神记 S01"
+    assert compose_drive_media_title("牧神记", "S01 100-130") == "牧神记 S01"
+    assert compose_drive_media_title("牧神记", "第1季 100") == "牧神记 第1季"
+    # 起始集号后若还有别的词,不是分段目录
+    assert compose_drive_media_title("合集", "S01 4K修复") == "S01 4K修复"

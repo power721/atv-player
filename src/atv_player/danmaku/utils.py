@@ -861,16 +861,43 @@ def episode_matches_request(candidate: str, requested_episode: int, target: str)
     return episode_title_matches(target, candidate)
 
 
+_PURE_SEASON_TOKEN_RE = re.compile(r"^s\d{1,2}$")
+
+
+def _should_filter_marker_led_candidate(target: str, candidate: str) -> bool:
+    """集数标记开头的候选（腾讯式"第03话 剧情副标题"，无剧名前缀）的过滤规则。
+
+    副标题与查询剧名毫不相干 → 放行，由集数匹配决定去留。但副标题与剧名
+    高度相似却既不相等也不互含 → 它是平台回显的自己那份剧名，说明是另一部
+    同名近似作品（查询"完美世界"、候选"第1集 完美的世界"），必须过滤。
+    """
+    marker = _LEADING_EPISODE_MARKER.match(candidate or "")
+    remainder = candidate[marker.end() :] if marker is not None else (candidate or "")
+    left = _simplify_name(strip_episode_suffix(target))
+    right = _simplify_name(remainder)
+    if not left or not right:
+        return False
+    if _PURE_SEASON_TOKEN_RE.fullmatch(left):
+        # 查询本身是季 token（"S01"，季目录名丢了剧名）时没有剧名可比，
+        # "毫不相干即放行"只会放进日期打头的直播录像等垃圾，交给相似度门槛。
+        return similarity_score(target, remainder) < 0.55
+    if right == left or left in right or right in left:
+        return False
+    return similarity_score(target, remainder) >= 0.55
+
+
 def should_filter_name(target: str, candidate: str) -> bool:
     if _starts_with_episode_marker(candidate):
-        return False
+        return _should_filter_marker_led_candidate(target, candidate)
     if _has_sequel_number_mismatch(target, candidate):
         return True
     left = _simplify_name(target)
     right = _simplify_name(candidate)
     if not left or not right:
         return False
-    if left in right or right in left:
+    # 季 token 被候选"包含"（"企鹅宝宝的生命轮回！S01"）不构成匹配证据，
+    # 退化查询同样落到相似度门槛裁决。
+    if (left in right or right in left) and not _PURE_SEASON_TOKEN_RE.fullmatch(left):
         return False
     return similarity_score(left, right) < 0.55
 

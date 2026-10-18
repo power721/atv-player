@@ -5,6 +5,7 @@ import re
 from collections.abc import Callable
 from urllib.parse import urlparse
 
+from atv_player.metadata.query import is_pure_season_title
 from atv_player.models import (
     ExternalSubtitleOption,
     OpenPlayerRequest,
@@ -238,6 +239,45 @@ def clean_drive_directory_title(name: str) -> str:
     return value.strip(" .-_·—、，,／/｜|") or str(name or "").strip()
 
 
+_SHARE_SEASON_MARKED_RE = re.compile(
+    r"(?:第\s*[0-9零一二两三四五六七八九十百]+\s*季|season\s*\d+|\bs\d+\b)",
+    re.IGNORECASE,
+)
+# 分段季目录:"S01 100"/"S01 100-130"——季标记后跟起始集号(网盘按集数段拆分
+# 上传),尾段数字不是剧名的一部分。
+_SEASON_SPLIT_DIR_RE = re.compile(
+    r"^(?P<season>s\s?\d{1,2}|第\s*[0-9零一二两三四五六七八九十百]+\s*季|season\s*\d{1,2})"
+    r"(?:\s+\d{1,4}(?:\s*[-~—至]\s*\d{1,4})?)?$",
+    re.IGNORECASE,
+)
+
+
+def compose_drive_media_title(share_title: str, directory_name: str) -> str:
+    """目录名是纯季标记("S01"/"第一季")或分段季标记("S01 100")时与分享标题组合。
+
+    分享合集里每个顶层目录通常各自是一部剧,标题取目录名;但季目录
+    ("牧神记/S01/…")的名字不是剧名,元数据/弹幕拿它当标题只会搜出别名里
+    恰含 "S01" 字样的错配。分段目录的起始集号同样不进标题(集数锚点由
+    文件名 S01E100 提供)。分享标题已带季号时直接用它,不重复拼。
+    """
+    cleaned = clean_drive_directory_title(directory_name)
+    share = str(share_title or "").strip()
+    if not cleaned or not share:
+        return cleaned
+    season_token = ""
+    if is_pure_season_title(cleaned):
+        season_token = cleaned
+    else:
+        split_match = _SEASON_SPLIT_DIR_RE.fullmatch(cleaned)
+        if split_match is not None:
+            season_token = split_match.group("season")
+    if not season_token:
+        return cleaned
+    if season_token.casefold() in share.casefold() or _SHARE_SEASON_MARKED_RE.search(share):
+        return share
+    return f"{share} {season_token}"
+
+
 def build_drive_grouped_sources(
     detail: VodItem,
     resource_id: str,
@@ -282,7 +322,7 @@ def build_drive_grouped_sources(
             except Exception:
                 items = []
             if items:
-                add_populated_group(name, items, clean_drive_directory_title(name))
+                add_populated_group(name, items, compose_drive_media_title(share_title, name))
                 eager_done = True
                 continue
         # Lazy placeholder; populated by PlayerWindow on first selection.

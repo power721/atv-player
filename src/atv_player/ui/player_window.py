@@ -107,7 +107,11 @@ from atv_player.metadata.episode_title_overrides import (
     episode_override_item_key,
 )
 from atv_player.metadata.providers.tmdb import infer_tmdb_media_type
-from atv_player.controllers.browse_controller import clean_drive_directory_title, map_drive_video_to_play_item
+from atv_player.controllers.browse_controller import (
+    clean_drive_directory_title,
+    compose_drive_media_title,
+    map_drive_video_to_play_item,
+)
 from atv_player.controllers.player_controller import (
     PlayerSession,
     decode_drive_dir_id,
@@ -216,6 +220,11 @@ _DANMAKU_SEARCH_PROVIDER_OPTIONS: list[tuple[str, str]] = [
 _METADATA_PROVIDER_LABELS: dict[str, str] = {
     "tencent": "腾讯",
     "iqiyi": "爱奇艺",
+    "youku": "优酷",
+    "sohu": "搜狐",
+    "bilibili": "B站",
+    "bangumi": "Bangumi",
+    "migu": "咪咕",
     "official_douban": "豆瓣官方",
     "local_douban": "本地豆瓣",
     "remote_douban": "本地豆瓣",
@@ -242,6 +251,7 @@ _METADATA_SCRAPE_CATEGORY_OPTIONS: list[tuple[str, str]] = [
 ]
 
 _METADATA_CHANGE_FIELDS: list[tuple[str, str, str]] = [
+    ("title", "vod_name", "标题"),
     ("poster", "vod_pic", "海报"),
     ("year", "vod_year", "年份"),
     ("genres", "type_name", "类型"),
@@ -7539,7 +7549,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         title = ""
         if str(getattr(group, "drive_dir_id", "") or "").strip():
-            title = clean_drive_directory_title(getattr(group, "label", ""))
+            title = compose_drive_media_title(
+                str(session.vod.vod_name or "").strip(),
+                getattr(group, "label", ""),
+            )
         elif playlist:
             media_title = str(playlist[0].media_title or "").strip()
             vod_name = str(session.vod.vod_name or "").strip()
@@ -7646,8 +7659,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         # Each directory in a share collection is its own drama, so derive the media title
         # from the directory name (not the collection's vod_name) — matching the eager-load
-        # path in build_drive_grouped_sources.
-        media_title = clean_drive_directory_title(group.label)
+        # path in build_drive_grouped_sources. Season-token directories ("S01") carry no
+        # show name, so they compose with the collection title there.
+        media_title = compose_drive_media_title(str(session.vod.vod_name or "").strip(), group.label)
         try:
             videos = session.drive_files_loader(session.drive_resource_id, group.drive_dir_id) or []
         except Exception as exc:
@@ -7730,7 +7744,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             map_drive_video_to_play_item(
                 video,
                 index=index,
-                media_title=clean_drive_directory_title(subgroup.label),
+                media_title=compose_drive_media_title(
+                    str(session.vod.vod_name or "").strip(),
+                    subgroup.label,
+                ),
                 play_source=subgroup.label,
             )
             for index, video in enumerate(videos)

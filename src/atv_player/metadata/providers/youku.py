@@ -10,6 +10,14 @@ from atv_player.danmaku.utils import strip_episode_suffix
 from atv_player.metadata.matching import score_match
 from atv_player.metadata.models import MetadataMatch, MetadataQuery, MetadataRecord
 
+# 优酷展示名常带别名注记("加菲猫的幸福生活 第一季(别名:Garfield S01)"),
+# 注记里的外文名会作为子串参与标题匹配,把毫不相干的查询("S01")顶过置信线。
+_ALIAS_ANNOTATION_RE = re.compile(r"[（(]\s*别名\s*[:：][^（）()]*[）)]")
+
+
+def _strip_alias_annotation(title: str) -> str:
+    return _ALIAS_ANNOTATION_RE.sub("", str(title or "")).strip()
+
 
 class YoukuMetadataProvider:
     name = "youku"
@@ -61,7 +69,7 @@ class YoukuMetadataProvider:
         seen: set[str] = set()
         for item in self._iter_search_items(payload):
             provider_id = str(item.get("provider_id") or "").strip()
-            match_title = str(item.get("title") or "").strip()
+            match_title = _strip_alias_annotation(str(item.get("title") or "").strip())
             if not provider_id or not match_title or provider_id in seen:
                 continue
             seen.add(provider_id)
@@ -92,7 +100,7 @@ class YoukuMetadataProvider:
         return MetadataRecord(
             provider=self.name,
             provider_id=page_url,
-            title=str(payload.get("title") or match.title or "").strip(),
+            title=_strip_alias_annotation(str(payload.get("title") or match.title or "").strip()),
             year=str(payload.get("year") or match.year or "").strip(),
             poster=str(payload.get("poster") or "").strip(),
             overview=str(payload.get("overview") or "").strip(),
@@ -209,11 +217,11 @@ class YoukuMetadataProvider:
         return output
 
     def _series_title(self, common: dict, episodes: list[dict[str, object]]) -> str:
-        title = str((common.get("titleDTO") or {}).get("displayName") or "").strip()
+        title = _strip_alias_annotation(str((common.get("titleDTO") or {}).get("displayName") or "").strip())
         if title:
             return strip_episode_suffix(title)
         for episode in episodes:
-            title = strip_episode_suffix(str(episode.get("title") or "").strip())
+            title = strip_episode_suffix(_strip_alias_annotation(str(episode.get("title") or "").strip()))
             if title:
                 return title
         return ""

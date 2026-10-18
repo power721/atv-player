@@ -14,7 +14,14 @@ from atv_player.metadata.bindings import (
 )
 from atv_player.metadata.cache import MetadataCache
 from atv_player.metadata.cache_key import provider_search_cache_key
-from atv_player.metadata.matching import is_confident_match, normalize_match_title, score_match, strip_match_season_suffix
+from atv_player.metadata.matching import (
+    _MIN_CONFIDENT_MATCH_SCORE,
+    is_confident_match,
+    normalize_match_title,
+    score_match,
+    strip_match_season_suffix,
+)
+from atv_player.metadata.query import is_pure_season_title
 from atv_player.metadata.merge import (
     choose_preferred_title,
     fill_missing_metadata_record,
@@ -535,16 +542,21 @@ class MetadataHydrator:
 
     @staticmethod
     def _score_matches(query, matches: list[MetadataMatch]) -> list[MetadataMatch]:
+        degenerate_query = is_pure_season_title(query.title)
         scored_matches: list[MetadataMatch] = []
         for match in matches:
+            authoritative = _is_authoritative_douban_id_match(query, match)
             score = (
                 _AUTHORITATIVE_ID_MATCH_SCORE
-                if _is_authoritative_douban_id_match(query, match)
+                if authoritative
                 else score_match(query, match)
             )
-            scored_matches.append(
-                replace(match, score=max(float(match.score or 0.0), score))
-            )
+            score = max(float(match.score or 0.0), score)
+            if degenerate_query and not authoritative:
+                # 纯季标记查询("S01")没有剧名可比,供应商自己的相关性分同样
+                # 不可信;压到置信线以下,除非用户绑定/权威 ID 直指该条目。
+                score = min(score, _MIN_CONFIDENT_MATCH_SCORE - 0.01)
+            scored_matches.append(replace(match, score=score))
         return scored_matches
 
     def _load_provider_matches(self, provider: MetadataProvider, query) -> list[MetadataMatch]:

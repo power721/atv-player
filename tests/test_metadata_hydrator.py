@@ -2154,3 +2154,24 @@ def test_metadata_hydrator_auto_iqiyi_match_corrects_garbage_title(tmp_path: Pat
 
     assert updated.vod_name == "国色芳华"
     assert updated.vod_content == "爱奇艺简介"
+
+
+def test_score_matches_clamps_degenerate_season_token_query() -> None:
+    # 查询标题退化为季 token("S01")时,供应商自带的相关性分同样不可信,
+    # 不得越过置信门
+    from atv_player.metadata.matching import is_confident_match
+    from atv_player.metadata.models import MetadataQuery
+
+    query = MetadataQuery(title="S01")
+    matches = [
+        MetadataMatch(
+            provider="youku",
+            provider_id="yk:1",
+            title="加菲猫的幸福生活 第一季(别名:Garfield S01)",
+            score=0.9,
+        )
+    ]
+
+    scored = MetadataHydrator._score_matches(query, matches)
+
+    assert not is_confident_match(scored[0].score)

@@ -14,6 +14,15 @@ _TRAILING_RELEASE_NOISE_RE = re.compile(
     re.IGNORECASE,
 )
 _TRAILING_YEAR_RE = re.compile(r"(.*?)[\s]*[\(（]\s*((?:19|20)\d{2})\s*[\)）]\s*$")
+_PURE_SEASON_TITLE_RE = re.compile(
+    r"^(?:s\s?\d{1,2}|第\s*[0-9零一二两三四五六七八九十百]+\s*季|season\s*\d{1,2})$",
+    re.IGNORECASE,
+)
+
+
+def is_pure_season_title(value: object) -> bool:
+    """整个标题就是一个季标记("S01"/"第一季"/"Season 2"),不含任何剧名。"""
+    return _PURE_SEASON_TITLE_RE.fullmatch(str(value or "").strip()) is not None
 _TITLE_CATEGORY_PREFIX_RE = re.compile(r"^(电视剧|电影|剧集|连续剧|动漫|动画|番剧)\s*[:：]\s*", re.IGNORECASE)
 _TITLE_CATEGORY_SUFFIX_RE = re.compile(r"(电视剧|电影|剧集|连续剧|剧版|真人版|动漫|动画|番剧)\s*$", re.IGNORECASE)
 
