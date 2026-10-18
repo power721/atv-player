@@ -807,7 +807,17 @@ class DanmakuService:
         stable_index: int,
     ) -> tuple[int, ...]:
         variety_issue_match, exact_episode_match = _source_option_query_match_priority(query_name, option)
-        preferred_page = int(bool(preferred_page_url) and option.url == preferred_page_url)
+        requested_episode = extract_episode_number(normalize_name(query_name)) if query_name else None
+        option_episode = extract_episode_number(option.name)
+        # 偏好 URL 只对剧级候选(无集号)或集号与请求一致时生效:集级候选被存成
+        # 系列偏好后,会把后续每一集的自动选集都钉在那一话上(第100集自动
+        # 下了第2话的弹幕)。
+        episode_compatible = option_episode is None or requested_episode in (None, option_episode)
+        preferred_page = int(
+            bool(preferred_page_url)
+            and option.url == preferred_page_url
+            and episode_compatible
+        )
         preferred_provider_match = int(bool(preferred_provider) and option.provider == preferred_provider)
         reg_src_provider_match = int(option.provider == self._preferred_provider_key(reg_src))
         # Among same-named shows on the same provider, prefer the candidate whose
@@ -893,6 +903,7 @@ class DanmakuService:
         preferred_option = None
         best_query_match = (0, 0)
         best_query_option = None
+        requested_episode = None
         if query_name:
             normalized_query = normalize_name(query_name)
             requested_episode = extract_episode_number(normalized_query) if normalized_query else None
@@ -930,16 +941,30 @@ class DanmakuService:
         if preferred_provider:
             for group in groups:
                 if group.provider == preferred_provider and group.options:
-                    return group.options[0]
+                    return self._episode_aware_first_option(group.options, requested_episode)
         matched_provider = self._preferred_provider_key(reg_src)
         if matched_provider:
             for group in groups:
                 if group.provider == matched_provider and group.options:
-                    return group.options[0]
+                    return self._episode_aware_first_option(group.options, requested_episode)
         for group in groups:
             if group.options:
-                return group.options[0]
+                return self._episode_aware_first_option(group.options, requested_episode)
         return None
+
+    @staticmethod
+    def _episode_aware_first_option(
+        options: list[DanmakuSourceOption],
+        requested_episode: int | None,
+    ) -> DanmakuSourceOption:
+        # 集级候选整组同剧不同集(B站《牧神记》第N话):查询带集数锚点时,
+        # 无集数感知的 options[0](未排序时是后端相似度序)会随机抽一集
+        # ——第100集的自动弹幕下到了第2话。
+        if requested_episode is not None:
+            for option in options:
+                if extract_episode_number(option.name) == requested_episode:
+                    return option
+        return options[0]
 
     def _dedupe_source_option_key(self, option: DanmakuSourceOption) -> str:
         url = option.url.strip()

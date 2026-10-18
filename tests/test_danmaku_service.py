@@ -2111,3 +2111,54 @@ def test_search_danmu_queries_all_providers_in_one_concurrent_round(monkeypatch)
 
     assert results == []
     assert observed_max_workers == [len(providers)]
+
+
+def _mushenji_bilibili_group() -> DanmakuSourceGroup:
+    # B站式集级候选:整组同剧不同话,API 原始序非数字序
+    return DanmakuSourceGroup(
+        provider="bilibili",
+        provider_label="B站",
+        options=[
+            DanmakuSourceOption(provider="bilibili", name="《牧神记》第18话 冰潮", url="https://www.bilibili.com/bangumi/play/ep18"),
+            DanmakuSourceOption(provider="bilibili", name="《牧神记》第2话 我是霸体", url="https://www.bilibili.com/bangumi/play/ep2"),
+            DanmakuSourceOption(provider="bilibili", name="《牧神记》第100话 鬼上身", url="https://www.bilibili.com/bangumi/play/ep100", episode_match=True),
+            DanmakuSourceOption(provider="bilibili", name="《牧神记》第58话 虫军", url="https://www.bilibili.com/bangumi/play/ep58"),
+        ],
+    )
+
+
+def test_rerank_default_pick_is_episode_aware_for_per_episode_candidates() -> None:
+    # 查询带集数锚点但 exact 匹配被季名后缀挡住("牧神记 S01 100集")时,
+    # provider 兜底不能按 options[0] 随机抽集——线上第100集自动下到了第2话
+    service = DanmakuService({}, provider_order=[])
+    result = DanmakuSourceSearchResult(groups=[_mushenji_bilibili_group()])
+
+    reranked = service.rerank_danmaku_source_search_result(
+        result,
+        query_name="牧神记 S01 100集",
+        reg_src="/牧神记/S01 100/S01E100.mp4",
+        preferred_provider="bilibili",
+        # 系列偏好被此前某集的自动下载写成了第2话地址
+        preferred_page_url="https://www.bilibili.com/bangumi/play/ep2",
+        media_duration_seconds=0,
+    )
+
+    assert reranked.default_option_url == "https://www.bilibili.com/bangumi/play/ep100"
+
+
+def test_rerank_episode_specific_preferred_page_does_not_outrank_episode_match() -> None:
+    # 时长已知、排序生效时,"别的集"的偏好 URL 不得压过集数锚点命中的候选
+    service = DanmakuService({}, provider_order=[])
+    result = DanmakuSourceSearchResult(groups=[_mushenji_bilibili_group()])
+
+    reranked = service.rerank_danmaku_source_search_result(
+        result,
+        query_name="牧神记 S01 100集",
+        reg_src="/牧神记/S01 100/S01E100.mp4",
+        preferred_provider="bilibili",
+        preferred_page_url="https://www.bilibili.com/bangumi/play/ep2",
+        media_duration_seconds=1500,
+    )
+
+    assert reranked.groups[0].options[0].url == "https://www.bilibili.com/bangumi/play/ep100"
+    assert reranked.default_option_url == "https://www.bilibili.com/bangumi/play/ep100"
