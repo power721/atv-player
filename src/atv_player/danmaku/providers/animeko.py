@@ -48,6 +48,8 @@ class AnimekoDanmakuProvider:
         search_nodes: Sequence[str] = (
             "https://api.bangumi.lol",
             "https://api.bgm.tv",
+            # danmu_api f56b34f 迁移后的镜像域名,作为兜底节点
+            "https://api.bangumi.vip",
         ),
     ) -> None:
         self._get = get

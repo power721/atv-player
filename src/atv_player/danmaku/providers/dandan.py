@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from math import isfinite
 from urllib.parse import urlparse
@@ -9,7 +10,11 @@ import httpx
 from atv_player.danmaku.errors import DanmakuResolveError, DanmakuSearchError
 from atv_player.danmaku.models import DanmakuRecord, DanmakuSearchItem
 from atv_player.danmaku.providers._concurrency import iter_bounded_settled
-from atv_player.danmaku.utils import extract_episode_number, should_filter_name
+from atv_player.danmaku.utils import (
+    extract_episode_number,
+    should_filter_name,
+    to_simplified,
+)
 
 _HEADERS = {
     "Accept": "application/json",
@@ -18,6 +23,11 @@ _HEADERS = {
 }
 _MAX_SERIES = 5
 _MAX_EPISODES_PER_SERIES = 200
+_CJK_RE = re.compile(r"[\u3400-\u9fff]")
+
+
+def _compact_title(text: str) -> str:
+    return re.sub(r"\W+", "", to_simplified(str(text)).casefold())
 
 
 class DandanDanmakuProvider:
@@ -66,10 +76,29 @@ class DandanDanmakuProvider:
         animes = payload.get("animes") if isinstance(payload, dict) else None
         if not isinstance(animes, list):
             return []
+        animes = animes[:_MAX_SERIES]
+        filter_titles = True
+        if not _CJK_RE.search(name):
+            # 外文检索词(罗马字/英文)与中文标题无字符交集,包含/相似度过滤会
+            # 误杀官方搜索的正确命中(如 "Sayonara Lara" → "再见，拉拉")。两级
+            # 策略(对齐 danmu_api #493):标题直击存在时只留直击条目;全部无
+            # 直击时跳过标题过滤全量放行,由请求侧按集数兜底。
+            query_compact = _compact_title(name)
+            direct_hits = [
+                anime
+                for anime in animes
+                if isinstance(anime, dict)
+                and query_compact
+                and query_compact in _compact_title(str(anime.get("animeTitle") or ""))
+            ]
+            if direct_hits:
+                animes = direct_hits
+            else:
+                filter_titles = False
         items: list[DanmakuSearchItem] = []
         for batch in iter_bounded_settled(
-            animes[:_MAX_SERIES],
-            lambda anime: self._expand_anime(name, anime),
+            animes,
+            lambda anime: self._expand_anime(name, anime, filter_title=filter_titles),
         ):
             for settled in batch:
                 if settled.error is None and settled.value is not None:
@@ -133,12 +162,16 @@ class DandanDanmakuProvider:
         self,
         query_name: str,
         anime: object,
+        *,
+        filter_title: bool = True,
     ) -> list[DanmakuSearchItem]:
         if not isinstance(anime, dict):
             return []
         anime_id = str(anime.get("animeId") or "").strip()
         title = str(anime.get("animeTitle") or "").strip()
-        if not anime_id or not title or should_filter_name(query_name, title):
+        if not anime_id or not title:
+            return []
+        if filter_title and should_filter_name(query_name, title):
             return []
         details = self._request_json(f"/v2/bangumi/{anime_id}")
         bangumi = details.get("bangumi") if isinstance(details, dict) else None

@@ -7,6 +7,7 @@ from atv_player.danmaku.models import (
 from atv_player.danmaku.utils import (
     build_xml,
     episode_matches_request,
+    episode_title_matches,
     extract_episode_number,
     extract_official_link_url,
     extract_part_number,
@@ -607,3 +608,31 @@ def test_strip_season_suffix_keeps_real_title_suffixes() -> None:
     assert strip_season_suffix("凡人修仙传") == "凡人修仙传"
     assert strip_season_suffix("流浪地球2") == "流浪地球2"
     assert strip_season_suffix("") == ""
+
+
+def test_title_matching_normalizes_traditional_chinese() -> None:
+    # 繁体候选对简体检索词不再被相似度过滤整批误杀(对齐 danmu_api #484)
+    assert should_filter_name("无职转生", "無職轉生～到了異世界就拿出真本事～") is False
+    assert episode_title_matches("凡人修仙传", "凡人修仙傳") is True
+    assert extract_episode_number("某劇 第3話") == 3
+
+
+def test_roman_numeral_season_matches_arabic_season_forms() -> None:
+    # 尾部罗马数字是季名(对齐 danmu_api):剥季、跨形匹配、季错配仍拒
+    assert strip_season_suffix("无职转生Ⅲ") == "无职转生"
+    assert episode_title_matches("无职转生 第3季", "无职转生Ⅲ") is True
+    assert episode_title_matches("无职转生 第2季", "无职转生Ⅱ") is True
+    assert episode_title_matches("无职转生Ⅲ", "无职转生 第2季") is False
+    assert episode_title_matches("斗罗大陆 第1季", "斗罗大陆 第10季") is False
+
+
+def test_extract_variety_part_supports_trailing_bracket_marker() -> None:
+    # 分部标记在标题末尾括号中(全/半角)也算综艺分部,同期上/下不再折叠成同一
+    # issue key(对齐 danmu_api mango #494)
+    assert extract_variety_part("第2期：绝叫山庄Ⅱ（下）") == "下"
+    assert extract_variety_part("第1期：绝叫山庄Ⅰ(下)") == "下"
+    assert extract_variety_part("第2期：绝叫山庄Ⅱ（上）") == "上"
+    assert extract_variety_issue_key("第2期：绝叫山庄Ⅱ（上）") == "2上"
+    assert extract_variety_issue_key("第2期：绝叫山庄Ⅱ（下）") == "2下"
+    # 括号里不是单字分部标记(如"完整版")不算
+    assert extract_variety_part("第2期：绝叫山庄Ⅱ（完整版）") is None

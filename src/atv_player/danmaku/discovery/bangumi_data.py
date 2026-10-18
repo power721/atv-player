@@ -10,7 +10,11 @@ from dataclasses import dataclass
 import httpx
 from opencc import OpenCC
 
-from atv_player.danmaku.utils import strip_episode_suffix, strip_variety_issue_suffix
+from atv_player.danmaku.utils import (
+    ROMAN_NUMERALS,
+    strip_episode_suffix,
+    strip_variety_issue_suffix,
+)
 from atv_player.paths import app_cache_dir
 
 logger = logging.getLogger(__name__)
@@ -50,6 +54,8 @@ _SEASON_PATTERNS = (
     re.compile(r"第\s*([0-9]+|[一二三四五六七八九十]+)\s*[季期部]"),
     re.compile(r"(?:^|[\s第])(?:season|s)\s*0*([0-9]{1,2})\b", re.IGNORECASE),
 )
+# 尾部罗马数字季号("无职转生Ⅱ"),ASCII 形式无法与型号区分不参与(对齐 danmu_api)
+_ROMAN_SEASON_PATTERN = re.compile(r"第?\s*([Ⅰ-Ⅻⅰ-ⅻ])\s*[季部]?\s*$")
 _CN_NUMERAL = {
     "一": 1,
     "二": 2,
@@ -99,6 +105,9 @@ def _extract_season(text: str) -> int | None:
             season = _cn_to_int(match.group(1))
             if season and 1 <= season <= 99:
                 return season
+    match = _ROMAN_SEASON_PATTERN.search(text or "")
+    if match:
+        return ROMAN_NUMERALS.get(match.group(1))
     return None
 
 

@@ -6,8 +6,41 @@ from html import escape
 from typing import Sequence
 from urllib.parse import urlparse
 
+from opencc import OpenCC
+
 from atv_player.danmaku.models import DanmakuRecord, DanmakuSourceSearchResult
 from atv_player.models import PlayItem
+
+# 标题比对统一繁转简(对齐 danmu_api normalizeTitleForMatch):巴哈/bangumi 等源的
+# 候选标题常为繁体,简体检索词与繁体候选无字符交集,相似度过滤会整批误杀。
+_TO_SIMPLIFIED = OpenCC("t2s")
+
+
+def to_simplified(value: str) -> str:
+    return _TO_SIMPLIFIED.convert(str(value))
+
+
+# 匹配层文本:噪声剥离后繁转简,集数/分部/季名等标记提取的统一入口。
+def _match_text(name: str) -> str:
+    return to_simplified(normalize_name(name))
+
+
+# Unicode 罗马数字季号 Ⅰ-Ⅻ 映射为阿拉伯数字参与比对("无职转生Ⅲ"≈"第3季");
+# ASCII 形式的 I/IV 与型号、英文缩写无法区分,不参与识别(对齐 danmu_api)。
+ROMAN_NUMERALS = {
+    character: number
+    for number, characters in enumerate(
+        ("Ⅰⅰ", "Ⅱⅱ", "Ⅲⅲ", "Ⅳⅳ", "Ⅴⅴ", "Ⅵⅵ", "Ⅶⅶ", "Ⅷⅷ", "Ⅸⅸ", "Ⅹⅹ", "Ⅺⅺ", "Ⅻⅻ"),
+        start=1,
+    )
+    for character in characters
+}
+_ROMAN_NUMERAL_RE = re.compile("[" + "".join(ROMAN_NUMERALS) + "]")
+
+
+def _fold_roman_numerals(value: str) -> str:
+    return _ROMAN_NUMERAL_RE.sub(lambda m: str(ROMAN_NUMERALS[m.group(0)]), value)
+
 
 _NOISE_PATTERNS = (
     r"【[^】]*】",
@@ -65,7 +98,7 @@ _BARE_PART_MARKER_RE = re.compile(r"(?<![一-鿿\w])(?<!期\s)[上中下](?![一
 
 
 def extract_part_number(name: str) -> int | None:
-    value = normalize_name(name)
+    value = _match_text(name)
     match = _SUFFIXED_PART_MARKER_RE.search(value) or _BARE_PART_MARKER_RE.search(value)
     if match is None:
         return None
@@ -213,7 +246,7 @@ def _looks_like_numeric_x_suffix_filename(value: str) -> bool:
 
 
 def extract_episode_number(name: str) -> int | None:
-    value = normalize_name(name)
+    value = _match_text(name)
     if _looks_like_numeric_x_suffix_filename(value):
         return None
     # 明确的集号比标题中的分部后缀更可靠。例如“第25集 神魔剑（下）”的“下”
@@ -281,7 +314,7 @@ def _looks_like_date_fragment_part(value: str, match: re.Match[str]) -> bool:
 
 
 def has_explicit_episode_marker(name: str) -> bool:
-    value = normalize_name(name)
+    value = _match_text(name)
     return any(re.search(pattern, value, re.IGNORECASE) is not None for pattern in _EXPLICIT_EPISODE_PATTERNS)
 
 
@@ -474,7 +507,7 @@ def is_stale_other_fallback_result(result: DanmakuSourceSearchResult, reg_src: s
 
 
 def strip_episode_suffix(name: str) -> str:
-    value = normalize_name(name)
+    value = _match_text(name)
     patterns = (
         r"\s+第\s*\d+\s*[集话期]\s*$",
         r"\s+\d+\s*[集话期]\s*$",
@@ -500,7 +533,11 @@ def strip_episode_suffix(name: str) -> str:
 
 _SEASON_SUFFIX_PATTERN = re.compile(
     r"(?:\s*[-—:：]\s*)?"
-    r"(?:第\s*[0-9零一二两三四五六七八九十百]+\s*[季部]|season\s*\d+|s\d+|年番\s*[0-9零一二两三四五六七八九十百]+)"
+    r"(?:第\s*[0-9零一二两三四五六七八九十百Ⅰ-Ⅻⅰ-ⅻ]+\s*[季部]"
+    r"|season\s*\d+"
+    r"|s\d+"
+    r"|年番\s*[0-9零一二两三四五六七八九十百]+"
+    r"|[Ⅰ-Ⅻⅰ-ⅻ])"
     r"\s*$",
     re.IGNORECASE,
 )
@@ -511,9 +548,10 @@ def strip_season_suffix(name: str) -> str:
 
     网盘资源名常自造"年番N/第N季/S2"季名,而弹幕库站点多为连续集数的单条目,
     带这种后缀整季搜不到。只匹配尾部且"年番"必须带序号(裸"年番"本身可以是
-    站点条目名),避免误剥真实标题。
+    站点条目名),避免误剥真实标题。尾部的罗马数字(Ⅰ-Ⅻ)也算季名
+    ("无职转生Ⅲ"→"无职转生")。
     """
-    value = normalize_name(name)
+    value = _match_text(name)
     if not value:
         return ""
     while True:
@@ -553,7 +591,8 @@ def _extract_variety_issue_number(name: str) -> int | None:
 
 
 _VARIETY_PART_PATTERN = re.compile(
-    r"期\s*(加更(?:[上下中终完])?|[上下中终完])(?![一-鿿])",
+    r"期\s*(加更(?:[上下中终完])?|[上下中终完])(?![一-鿿])"
+    r"|[（(](加更(?:[上下中终完])?|[上下中终完])[）)]\s*$",
 )
 
 
@@ -563,12 +602,14 @@ def extract_variety_part(name: str) -> str | None:
     Lets ``extract_variety_issue_key`` distinguish same-date/same-issue halves
     (第2期上 vs 第2期中 vs 第2期下) so danmaku matching picks the exact part.
     The negative CJK lookahead avoids false positives on words like 完整版/完结.
+    The marker may also sit in a trailing bracket (full/half width), e.g.
+    "第2期：绝叫山庄Ⅱ（下）" — same-期 halves must not collapse into one key.
     Returns None when no part marker is present.
     """
-    match = _VARIETY_PART_PATTERN.search(normalize_name(name))
+    match = _VARIETY_PART_PATTERN.search(_match_text(name))
     if match is None:
         return None
-    return match.group(1)
+    return next((part for part in match.groups() if part), None)
 
 
 def extract_variety_issue_key(name: str) -> str | None:
@@ -738,10 +779,17 @@ def extract_cover_id(url: str) -> str:
 
 
 def _simplify_name(name: str) -> str:
-    value = normalize_name(name).casefold()
+    value = _fold_roman_numerals(to_simplified(normalize_name(name)).casefold())
+    # "第N季"归一为裸数字,使"无职转生 第3季"/"无职转生Ⅲ"/"无职转生3"三种
+    # 书写折到同一基名;季名前的空白一并消费,避免留下"标题 3"被下面的尾部
+    # 裸数字剥离误删。续作序号提取仍能从数字位读到季号,季错配照常被拒。
+    def _season_number(match: re.Match[str]) -> str:
+        raw = match.group(1)
+        return str(int(raw) if raw.isdigit() else _cn_to_int(raw))
+
     value = re.sub(
-        r"第\s*([0-9零一二两三四五六七八九十百]+)\s*季",
-        lambda match: f"第{_cn_to_int(match.group(1)) if not match.group(1).isdigit() else int(match.group(1))}季",
+        r"\s*第\s*([0-9零一二两三四五六七八九十百]+)\s*季",
+        _season_number,
         value,
     )
     value = re.sub(r"第\s*\d+\s*[集话期]", "", value)

@@ -238,3 +238,10 @@ def test_service_skips_bangumi_data_when_disabled() -> None:
     )
     service.search_danmu("鬼灭之刃", reg_src="", provider_filter="")
     assert discovery.called is False
+
+
+def test_extract_season_reads_trailing_roman_numerals() -> None:
+    # Unicode 罗马数字季号;ASCII 形式无法与型号区分,不参与识别
+    assert _extract_season("无职转生Ⅱ") == 2
+    assert _extract_season("OVERLORD Ⅳ") == 4
+    assert _extract_season("OVERLORD IV") is None

@@ -224,3 +224,68 @@ def test_probe_dandan_server_bad_shape() -> None:
         base_url=BASE,
     )
     assert ok is False
+
+
+def test_dandan_search_keeps_foreign_keyword_hits_without_title_filter() -> None:
+    # 外文检索词与中文标题零字符交集:无标题直击时全量放行,交由请求侧按集数
+    # 兜底(对齐 danmu_api #493)
+    def fake_get(url: str, **kwargs):
+        if url.endswith("/api/v2/search/anime"):
+            return httpx.Response(
+                200,
+                json={
+                    "animes": [
+                        {"animeId": 200, "animeTitle": "再见，拉拉"},
+                        {"animeId": 201, "animeTitle": "MyGO!!!!! 剧场版"},
+                    ]
+                },
+            )
+        if url.endswith("/api/v2/bangumi/200"):
+            return httpx.Response(
+                200,
+                json={"bangumi": {"episodes": [
+                    {"episodeId": 20001, "episodeNumber": "1", "episodeTitle": "初见"},
+                ]}},
+            )
+        if url.endswith("/api/v2/bangumi/201"):
+            return httpx.Response(
+                200,
+                json={"bangumi": {"episodes": [
+                    {"episodeId": 20101, "episodeNumber": "1", "episodeTitle": "前夜"},
+                ]}},
+            )
+        raise AssertionError(url)
+
+    items = _provider(fake_get).search("Sayonara Lara")
+
+    assert {item.url for item in items} == {
+        "dandan://episode/20001",
+        "dandan://episode/20101",
+    }
+
+
+def test_dandan_search_foreign_keyword_prefers_direct_title_hits() -> None:
+    # 标题直击存在时只保留直击条目,别名子串混入的无关系列不再展开
+    def fake_get(url: str, **kwargs):
+        if url.endswith("/api/v2/search/anime"):
+            return httpx.Response(
+                200,
+                json={
+                    "animes": [
+                        {"animeId": 300, "animeTitle": "BanG Dream! It's MyGO!!!!!"},
+                        {"animeId": 301, "animeTitle": "我女神系列 藤宫香织"},
+                    ]
+                },
+            )
+        if url.endswith("/api/v2/bangumi/300"):
+            return httpx.Response(
+                200,
+                json={"bangumi": {"episodes": [
+                    {"episodeId": 30001, "episodeNumber": "1"},
+                ]}},
+            )
+        raise AssertionError(url)
+
+    items = _provider(fake_get).search("mygo")
+
+    assert [item.url for item in items] == ["dandan://episode/30001"]

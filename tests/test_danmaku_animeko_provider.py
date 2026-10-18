@@ -230,3 +230,13 @@ def test_animeko_all_nodes_fail_with_named_error() -> None:
 
     with pytest.raises(DanmakuResolveError, match="Animeko弹幕获取失败"):
         provider.resolve("animeko://episode/4201")
+
+
+def test_animeko_default_search_nodes_include_vip_mirror() -> None:
+    # danmu_api f56b34f 迁移后的 bangumi API 镜像作为兜底节点
+    provider = AnimekoDanmakuProvider()
+    assert provider._search_nodes == (
+        "https://api.bangumi.lol",
+        "https://api.bgm.tv",
+        "https://api.bangumi.vip",
+    )

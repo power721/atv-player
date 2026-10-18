@@ -101,3 +101,18 @@ danmu_api 相对 atv-player **最大能力落差**，但 atv-player 设计列为
 1. **Spike + 恢复咪咕 AES**（第 3 条）— 验证 live；通则免 WASM 恢复已删源。
 2. **接 Bangumi-data**（第 1 条）— 动漫季号消歧，bilibili/bahamut 受益。
 3. 后续：入站繁简（第 5）、stream sniff-and-abort（第 4）、跨季对齐（第 2）。
+
+---
+
+## 2026-10-18 对齐落地记录（danmu_api ea88a15..5ef63a0，33 提交）
+
+**已对齐：**
+- **标题比对统一繁转简**（280b232/#484）：utils `_match_text` / `_simplify_name` / service `_compact_title` 接 OpenCC t2s——繁体候选（巴哈/bangumi 官方名）不再被 `should_filter_name` 相似度整批误杀；"第3話"类繁体集标也可提取。注意与本文第 5 条（弹幕**文本**入站转简）是两回事，那条仍未做。
+- **罗马数字季号 Ⅰ-Ⅻ**（280b232）：`_simplify_name` 折算为阿拉伯数、`strip_season_suffix` 认尾部罗马数字、bangumi_data `_extract_season` 同步——"无职转生Ⅲ"与"第3季/第二季"跨形互匹配，季错配仍拒。附带把"第N季"归一为裸数字基名（三种书写折到同一基名）。
+- **综艺分部尾括号形式**（b4901e4/#494）：`_VARIETY_PART_PATTERN` 增"（上/下）"结尾分支——"第2期：标题（下）"不再与（上）折叠成同一 issue key。
+- **dandan 外文检索词两级放行**（3aba4ad/#493）：无中文字符的检索词，标题直击存在时只留直击条目，全部无直击则跳过标题过滤全量放行。
+- 另：animeko 搜索镜像补 danmu_api f56b34f 迁移后的 `api.bangumi.vip` 兜底节点。
+
+**逐项核对免对齐**：8152715 弹幕排序（processing/subtitle 已按时间排）、78f7377 腾讯集标题/时长（已用 play_title/video_subtitle/timeLong）、3cbf474 爱奇艺集数补齐（mesh `itemNumber` 独立取数不靠标题）、e7fb658 B站 proto 标签 varint（atv-player 解析器本就 varint + 按 wire type 跳过）、1c9340f 模型 null 缺省（Python `get`/isinstance 无 JS 解构默认值坑）、249cbe5 TMDB 检索词（danmaku 匹配不用 TMDB）。
+
+**架构不同/无此功能判无关**：aiyifan×2、hanjutv（无此源）、merge×3（无跨源合并功能）、NipaPlay 中转×3（需登录的自建机制）、local-danmu×4（无本地弹幕管理）、cache/forward/widget/ui/ci/docs。

@@ -41,6 +41,7 @@ from atv_player.danmaku.utils import (
     similarity_score,
     strip_episode_suffix,
     strip_variety_issue_suffix,
+    to_simplified,
 )
 
 from atv_player.danmaku.discovery.bangumi_data import BangumiDataDiscovery
@@ -111,7 +112,8 @@ _PROVIDER_LABELS = {
 
 
 def _compact_title(text: str) -> str:
-    return re.sub(r"[\W_《》【】()（）]+", "", normalize_name(text).casefold())
+    compact = to_simplified(normalize_name(text)).casefold()
+    return re.sub(r"[\W_《》【】()（）]+", "", compact)
 
 
 def build_danmaku_series_key(name: str) -> str:
