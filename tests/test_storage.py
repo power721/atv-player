@@ -84,6 +84,18 @@ def test_settings_repository_round_trips_chapter_auto_skip(tmp_path: Path) -> No
     assert loaded.chapter_auto_skip_enabled is False
 
 
+def test_settings_repository_round_trips_hide_controls_during_playback(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = repo.load_config()
+    assert config.player_hide_controls_during_playback is False
+
+    config.player_hide_controls_during_playback = True
+    repo.save_config(config)
+    loaded = repo.load_config()
+
+    assert loaded.player_hide_controls_during_playback is True
+
+
 def test_settings_repository_round_trips_mpv_shader_preset(tmp_path: Path) -> None:
     repo = SettingsRepository(tmp_path / "app.db")
     config = repo.load_config()

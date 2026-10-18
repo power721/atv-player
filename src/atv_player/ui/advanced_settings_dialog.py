@@ -275,6 +275,9 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.chapter_auto_skip_enabled_checkbox = QCheckBox(
             "按章节自动跳过片头/片尾（识别片头、片尾、End Credits 等章节）"
         )
+        self.player_hide_controls_during_playback_checkbox = QCheckBox(
+            "播放中隐藏底部控制栏（暂停/停止时恢复显示，空格键暂停可唤回）"
+        )
         self.youtube_group = QGroupBox("YouTube")
         self.youtube_category_group = QGroupBox("分类配置")
         self.youtube_cookie_browser_combo = FlatComboBox()
@@ -504,6 +507,9 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.chapter_auto_skip_enabled_checkbox.setChecked(
             getattr(config, "chapter_auto_skip_enabled", True)
         )
+        self.player_hide_controls_during_playback_checkbox.setChecked(
+            getattr(config, "player_hide_controls_during_playback", False)
+        )
         self.mpv_cache_size_edit.setText(str(config.mpv_cache_size_mb))
         self.mpv_hwdec_mode_combo.setCurrentIndex(
             max(0, self.mpv_hwdec_mode_combo.findData(config.mpv_render_profile))
@@ -635,6 +641,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         playback_layout.addRow(self.bilibili_grouped_playlist_tree_enabled_checkbox)
         playback_layout.addRow(self.next_episode_preload_enabled_checkbox)
         playback_layout.addRow(self.chapter_auto_skip_enabled_checkbox)
+        playback_layout.addRow(self.player_hide_controls_during_playback_checkbox)
         playback_layout.addRow("播放缓存大小（MB）", self.mpv_cache_size_edit)
         playback_layout.addRow("渲染模式", self.mpv_hwdec_mode_combo)
         playback_layout.addRow("网络超时", self.mpv_network_timeout_edit)
@@ -1397,6 +1404,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self.bilibili_grouped_playlist_tree_enabled_checkbox.isChecked(),
             self.next_episode_preload_enabled_checkbox.isChecked(),
             self.chapter_auto_skip_enabled_checkbox.isChecked(),
+            self.player_hide_controls_during_playback_checkbox.isChecked(),
             cache_size,
             render_profile,
             timeout,
@@ -1599,6 +1607,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self._config.bilibili_grouped_playlist_tree_enabled,
             self._config.next_episode_preload_enabled,
             self._config.chapter_auto_skip_enabled,
+            self._config.player_hide_controls_during_playback,
             self._config.mpv_cache_size_mb,
             self._config.mpv_render_profile,
             self._config.mpv_network_timeout_seconds,

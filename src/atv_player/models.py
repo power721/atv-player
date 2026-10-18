@@ -90,6 +90,8 @@ class AppConfig:
     player_wide_mode: bool = False
     player_log_visible: bool = True
     player_telemetry_visible: bool = False
+    # 播放中隐藏底部控制栏(暂停/停止恢复显示;全屏语义不变,本就始终隐藏)
+    player_hide_controls_during_playback: bool = False
     # 网络直播间实时弹幕(后端 /live/danmaku 轮询)本地总开关;渲染参数由后端热下发
     live_danmaku_enabled: bool = True
     # 相关推荐区块展开状态:None=按数量自动(少量展开、超过阈值收起)

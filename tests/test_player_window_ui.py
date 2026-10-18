@@ -14274,6 +14274,7 @@ def test_player_window_builds_video_context_menu_with_track_submenus(qtbot) -> N
         "弹幕设置",
         "视频信息",
         "播放遥测",
+        "播放时隐藏控制栏",
         "播放时置顶",
         "退出播放",
     ]
@@ -15208,6 +15209,7 @@ def test_player_window_context_menu_includes_primary_and_secondary_subtitle_size
         "弹幕设置",
         "视频信息",
         "播放遥测",
+        "播放时隐藏控制栏",
         "播放时置顶",
         "退出播放",
     ]

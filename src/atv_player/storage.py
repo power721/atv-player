@@ -541,6 +541,7 @@ class SettingsRepository:
                     player_wide_mode INTEGER NOT NULL DEFAULT 0,
                     player_log_visible INTEGER NOT NULL DEFAULT 1,
                     player_telemetry_visible INTEGER NOT NULL DEFAULT 0,
+                    player_hide_controls_during_playback INTEGER NOT NULL DEFAULT 0,
                     live_danmaku_enabled INTEGER NOT NULL DEFAULT 1,
                     player_related_expanded INTEGER,
                     preferred_parse_key TEXT NOT NULL DEFAULT '',
@@ -846,6 +847,10 @@ class SettingsRepository:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN player_telemetry_visible INTEGER NOT NULL DEFAULT 0"
                 )
+            if "player_hide_controls_during_playback" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN player_hide_controls_during_playback INTEGER NOT NULL DEFAULT 0"
+                )
             if "live_danmaku_enabled" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN live_danmaku_enabled INTEGER NOT NULL DEFAULT 1"
@@ -1061,6 +1066,7 @@ class SettingsRepository:
                     player_wide_mode,
                     player_log_visible,
                     player_telemetry_visible,
+                    player_hide_controls_during_playback,
                     live_danmaku_enabled,
                     player_related_expanded,
                     preferred_parse_key,
@@ -1101,7 +1107,7 @@ class SettingsRepository:
                 )
                     VALUES (
                     1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', 0, 0, '[]', '', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 'auto', 512, 'auto-safe', 15, 20, '', '', 0, 0, 2, 'smart', 1, 1, '/', 'main', 'browse', '', '', '', '', '',
-                    0, 100, 0, 0, 1, 0, 1, NULL, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
+                    0, 100, 0, 0, 1, 0, 0, 1, NULL, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
                     NULL, NULL, NULL, NULL, 'douban', '', '', '', '[]', '360', 0, '', '', '', 30, 1, 1, 1, 1, 'poster', 1, 0, 0, 'browse'
                 )
                 ON CONFLICT(id) DO NOTHING
@@ -1220,6 +1226,7 @@ class SettingsRepository:
                     player_wide_mode,
                     player_log_visible,
                     player_telemetry_visible,
+                    player_hide_controls_during_playback,
                     live_danmaku_enabled,
                     player_related_expanded,
                     preferred_parse_key,
@@ -1330,6 +1337,7 @@ class SettingsRepository:
             player_wide_mode,
             player_log_visible,
             player_telemetry_visible,
+            player_hide_controls_during_playback,
             live_danmaku_enabled,
             player_related_expanded,
             preferred_parse_key,
@@ -1463,6 +1471,7 @@ class SettingsRepository:
             player_wide_mode=bool(player_wide_mode),
             player_log_visible=bool(player_log_visible),
             player_telemetry_visible=bool(player_telemetry_visible),
+            player_hide_controls_during_playback=bool(player_hide_controls_during_playback),
             live_danmaku_enabled=bool(live_danmaku_enabled),
             player_related_expanded=(
                 None
@@ -1594,6 +1603,7 @@ class SettingsRepository:
                     player_wide_mode = ?,
                     player_log_visible = ?,
                     player_telemetry_visible = ?,
+                    player_hide_controls_during_playback = ?,
                     live_danmaku_enabled = ?,
                     player_related_expanded = ?,
                     preferred_parse_key = ?,
@@ -1723,6 +1733,7 @@ class SettingsRepository:
                     int(config.player_wide_mode),
                     int(config.player_log_visible),
                     int(getattr(config, "player_telemetry_visible", False)),
+                    int(getattr(config, "player_hide_controls_during_playback", False)),
                     int(getattr(config, "live_danmaku_enabled", True)),
                     (
                         None

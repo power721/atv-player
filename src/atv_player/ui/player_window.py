@@ -10489,6 +10489,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         telemetry_action.setCheckable(True)
         telemetry_action.setChecked(self._telemetry_visible)
         telemetry_action.toggled.connect(self._set_telemetry_visible)
+        hide_controls_action = menu.addAction("播放时隐藏控制栏")
+        hide_controls_action.setCheckable(True)
+        hide_controls_action.setChecked(self._hide_controls_during_playback())
+        hide_controls_action.toggled.connect(self._set_hide_controls_during_playback)
         always_on_top_action = menu.addAction("播放时置顶")
         always_on_top_action.setCheckable(True)
         always_on_top_action.toggled.connect(
@@ -13478,6 +13482,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self.config.player_telemetry_visible = visible
             self._save_config()
 
+    def _set_hide_controls_during_playback(self, enabled: bool) -> None:
+        if self.config is not None and self.config.player_hide_controls_during_playback != enabled:
+            self.config.player_hide_controls_during_playback = enabled
+            self._save_config()
+        self.refresh_bottom_area_visibility()
+
     def _sync_progress_slider(self) -> None:
         if self._slider_dragging:
             return
@@ -13552,7 +13562,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         playlist_panel_visible = playlist_visible and not sidebar_hidden
         tree_mode = self._bilibili_grouped_playlist_tree_enabled()
         self._update_log_section_host_layout()
-        self.bottom_area.setHidden(is_fullscreen)
+        self.refresh_bottom_area_visibility()
         self.sidebar_actions_widget.setHidden(is_fullscreen)
         self.sidebar_container.setHidden(sidebar_hidden)
         if playlist_panel_visible:
@@ -13585,6 +13595,32 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._refresh_metadata_original_toggle()
         self._refresh_width_adaptive_control_visibility()
         self._update_log_section_max_height()
+
+    @property
+    def is_playing(self) -> bool:
+        return self._is_playing
+
+    @is_playing.setter
+    def is_playing(self, value: bool) -> None:
+        # 赋值点分散(mpv pause 事件/开窗/重放/停播/失败恢复等),经 setter 统一
+        # 同步底部控制栏可见性,避免后续新增翻转点漏同步。
+        self._is_playing = bool(value)
+        self.refresh_bottom_area_visibility()
+
+    def refresh_bottom_area_visibility(self) -> None:
+        # 全屏恒隐藏(原有语义);非全屏时按配置在播放中隐藏,暂停/停止即恢复。
+        if not hasattr(self, "bottom_area"):
+            return
+        self.bottom_area.setHidden(
+            self.isFullScreen()
+            or (self.is_playing and self._hide_controls_during_playback())
+        )
+
+    def _hide_controls_during_playback(self) -> bool:
+        # config 缺省(测试注入)时视为关闭,与 AppConfig 默认值一致。
+        return self.config is not None and bool(
+            getattr(self.config, "player_hide_controls_during_playback", False)
+        )
 
     def _refresh_width_adaptive_control_visibility(self) -> None:
         if not hasattr(self, "_width_adaptive_control_combos"):

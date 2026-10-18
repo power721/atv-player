@@ -5537,6 +5537,9 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             return
         if self.player_window is not None and hasattr(self.player_window, "refresh_runtime_video_output_settings"):
             self.player_window.refresh_runtime_video_output_settings()
+        if self.player_window is not None and hasattr(self.player_window, "refresh_bottom_area_visibility"):
+            # 设置对话框可能切换"播放中隐藏控制栏",播放中保存后立即生效。
+            self.player_window.refresh_bottom_area_visibility()
         if self.youtube_page is not None:
             self.youtube_page.reload_categories()
         self.apply_home_mode(getattr(self.config, "home_mode", "browse") or "browse")
