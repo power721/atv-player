@@ -175,6 +175,22 @@ def create_segments(
     return segments
 
 
+def sanitize_upstream_headers(headers: dict[str, str] | None) -> dict[str, str]:
+    """剥头值首尾空白:httpx/h11 严格拒绝,原样发送会抛 Illegal header value。
+
+    后端 UC/夸克直链故意下发「URL+"\\ "」作 Referer 绕 checkplay 回调(Java/okHttp
+    可原样发送)。剥掉尾部空白、保留反斜杠,绕过语义不变(实测 UC CDN 对 URL+"\\"
+    返回 206,精确 URL 或空 Referer 均 403)。
+    """
+    sanitized: dict[str, str] = {}
+    for key, value in (headers or {}).items():
+        name = str(key).strip()
+        if not name:
+            continue
+        sanitized[name] = str(value).strip()
+    return sanitized
+
+
 @dataclass(slots=True)
 class RangeProxySource:
     url: str
@@ -220,7 +236,7 @@ class RangeProxyTask:
     ) -> None:
         self.task_id = task_id
         self.url = url
-        self.headers = dict(headers or {})
+        self.headers = sanitize_upstream_headers(headers)
         self.drive_type = normalize_drive_type(drive_type)
         default_concurrency, default_chunk_size = resolve_proxy_rule(self.drive_type)
         if self.drive_type and not default_concurrency:
@@ -229,6 +245,11 @@ class RangeProxyTask:
         self.concurrency = concurrency if concurrency > 0 else default_concurrency
         self.chunk_size = chunk_size if chunk_size > 0 else default_chunk_size
         self.sources = list(sources) if sources and len(sources) > 1 else None
+        if self.sources:
+            self.sources = [
+                RangeProxySource(source.url, sanitize_upstream_headers(source.headers))
+                for source in self.sources
+            ]
         if self.sources and self.concurrency > 1:
             # 多账号分片:总并发按源数放大并封顶(与 VideoStreamProxy 一致)。
             self.concurrency = min(

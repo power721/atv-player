@@ -19,6 +19,7 @@ from atv_player.proxy.range_proxy import (
     parse_range_header,
     probe_task,
     resolve_proxy_rule,
+    sanitize_upstream_headers,
     serve_parallel_range,
 )
 from atv_player.proxy.server import LocalHlsProxyServer
@@ -69,6 +70,41 @@ def test_drive_type_rules() -> None:
     assert parse_drive_type_from_url("https://cdn-cf.115.com/file") == "pan115"
     assert resolve_proxy_rule("quark") == (20, 1024 * 1024)
     assert resolve_proxy_rule("unknown") == (0, 0)
+
+
+def test_sanitize_upstream_headers_strips_ows() -> None:
+    # 后端 UC/夸克直链的 Referer 故意带「URL+"\ "」尾巴绕 checkplay 回调;
+    # h11 拒绝尾部空白,剥掉后反斜杠保留(绕过语义不变)。
+    url = "https://dl-uf-zb.pds.uc.cn/file?Signature=x"
+    assert sanitize_upstream_headers({"Referer": url + "\\ "}) == {"Referer": url + "\\"}
+    assert sanitize_upstream_headers({" User-Agent ": " ua "}) == {"User-Agent": "ua"}
+    assert sanitize_upstream_headers({"": "x"}) == {}
+    assert sanitize_upstream_headers(None) == {}
+
+
+def test_range_proxy_task_sanitizes_task_and_source_headers() -> None:
+    url = "https://up.example/file"
+    sources = [
+        RangeProxySource(url, {"Referer": url + "\\ "}),
+        RangeProxySource(url + "2", {"Cookie": " b=2\t"}),
+    ]
+    task = RangeProxyTask(
+        "t1",
+        url,
+        {"Referer": url + "\\ ", "User-Agent": " ua "},
+        drive_type="uc",
+        sources=sources,
+    )
+
+    assert task.headers["Referer"] == url + "\\"
+    assert task.headers["User-Agent"] == "ua"
+    assert [s.headers for s in task.sources] == [
+        {"Referer": url + "\\"},
+        {"Cookie": "b=2"},
+    ]
+    # 无 sources 时分片请求复用 task.headers,同样已消毒。
+    single = RangeProxyTask("t2", url, {"Referer": url + "\\ "}, drive_type="uc")
+    assert single.source_for_segment(0, 0).headers["Referer"] == url + "\\"
 
 
 def test_probe_task_detects_range_and_total() -> None:
