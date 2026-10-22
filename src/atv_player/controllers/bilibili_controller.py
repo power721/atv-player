@@ -229,6 +229,18 @@ class BilibiliController:
     def _is_bilibili_danmaku_url(self, value: object) -> bool:
         return isinstance(value, str) and _BILIBILI_DANMAKU_URL_RE.match(value.strip()) is not None
 
+    def _extract_bilibili_danmaku_url(self, payload: dict[str, object]) -> str:
+        """弹幕字段值域:旧纯 URL 字符串 / [{"name":..., "url":...}] 列表
+        (alist-tvbox 58027b47 起对齐 TVBox 弹幕约定)。"""
+        raw = payload.get("danmaku")
+        candidates = raw if isinstance(raw, list) else [raw]
+        for entry in candidates:
+            value = entry.get("url") if isinstance(entry, dict) else entry
+            url = str(value or "").strip()
+            if self._is_bilibili_danmaku_url(url):
+                return url
+        return ""
+
     def _build_danmaku_headers(self, headers: dict[str, str]) -> dict[str, str]:
         if not headers:
             return {}
@@ -236,8 +248,8 @@ class BilibiliController:
         return {key: value for key, value in headers.items() if key.lower() in allowed and value}
 
     def _load_bilibili_danmaku(self, item: PlayItem, payload: dict[str, object]) -> None:
-        danmaku_url = str(payload.get("danmaku") or "").strip()
-        if not self._is_bilibili_danmaku_url(danmaku_url):
+        danmaku_url = self._extract_bilibili_danmaku_url(payload)
+        if not danmaku_url:
             return
         headers = self._build_danmaku_headers(item.headers)
         try:

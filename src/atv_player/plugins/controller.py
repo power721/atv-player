@@ -405,7 +405,8 @@ def _spider_danmaku_xml_valid(xml_text: str) -> bool:
 def _map_spider_danmaku_source(payload: object) -> SpiderDanmakuDirectSource | None:
     """解析 playerContent payload 的 `danmaku` 字段(直供弹幕声明)。
 
-    值域:URL 字符串 / 内联 XML 字符串 / {"url":..., "header":{...}} / {"xml":...}。
+    值域:URL 字符串 / 内联 XML 字符串 / {"url":..., "header":{...}} / {"xml":...} /
+    [{"name":..., "url":...}] 列表(TVBox 弹幕约定,取首个带 URL 条目)。
     旧 TVBox 布尔 `danmu` 不是本字段,继续被忽略。
     """
     if isinstance(payload, Mapping):
@@ -423,6 +424,16 @@ def _map_spider_danmaku_source(payload: object) -> SpiderDanmakuDirectSource | N
             return SpiderDanmakuDirectSource(xml=value)
         if value.startswith(("http://", "https://")):
             return SpiderDanmakuDirectSource(url=value)
+        _log_invalid_spider_danmaku_payload(payload)
+        return None
+    if isinstance(payload, list):
+        for entry in payload:
+            if not isinstance(entry, Mapping):
+                continue
+            url = str(entry.get("url") or "").strip()
+            if url.startswith(("http://", "https://")):
+                headers = _normalize_headers(entry.get("header"))
+                return SpiderDanmakuDirectSource(url=url, headers=headers)
         _log_invalid_spider_danmaku_payload(payload)
         return None
     return None

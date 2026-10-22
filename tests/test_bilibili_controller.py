@@ -302,6 +302,53 @@ def test_load_playback_item_loads_direct_bilibili_danmaku_xml_from_payload() -> 
     ]
 
 
+def test_load_playback_item_loads_danmaku_xml_from_tvbox_danmaku_list_payload() -> None:
+    api = FakeApiClient()
+    api.playback_payload = {
+        "url": "http://127.0.0.1:2323/dash/demo.mpd",
+        "danmaku": [
+            {"name": "哔哩哔哩弹幕", "url": "https://comment.bilibili.com/38086313137.xml"},
+        ],
+    }
+    danmaku_xml = '<?xml version="1.0"?><i><d p="1,1,25,16777215">列表弹幕</d></i>'
+
+    def fake_get(url: str, **kwargs: object) -> TextResponse:
+        return TextResponse(danmaku_xml)
+
+    controller = BilibiliController(api, http_get=fake_get)
+    item = PlayItem(title="视频", url="", vod_id="BV1xx411c7mD")
+
+    controller.load_playback_item(item)
+
+    assert item.danmaku_xml == danmaku_xml
+    assert item.selected_danmaku_provider == "bilibili"
+    assert item.selected_danmaku_url == "https://comment.bilibili.com/38086313137.xml"
+
+
+def test_load_playback_item_skips_danmaku_list_without_valid_bilibili_url() -> None:
+    api = FakeApiClient()
+    api.playback_payload = {
+        "url": "http://127.0.0.1:2323/dash/demo.mpd",
+        "danmaku": [
+            {"name": "站外弹幕", "url": "https://danmaku.example.com/1.xml"},
+            {"name": "空条目", "url": ""},
+        ],
+    }
+    seen: list[str] = []
+
+    def fake_get(url: str, **kwargs: object) -> TextResponse:
+        seen.append(url)
+        return TextResponse("<i></i>")
+
+    controller = BilibiliController(api, http_get=fake_get)
+    item = PlayItem(title="视频", url="", vod_id="BV1xx411c7mD")
+
+    controller.load_playback_item(item)
+
+    assert item.danmaku_xml == ""
+    assert seen == []
+
+
 def test_load_playback_item_maps_bilibili_subtitles_from_playback_payload() -> None:
     api = FakeApiClient()
     api.playback_payload = {

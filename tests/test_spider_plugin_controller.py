@@ -56,6 +56,33 @@ def test_spider_plugin_controller_delegates_episode_offset(tmp_path: Path) -> No
     assert item.danmaku_offset_seconds == -2.5
 
 
+def test_map_spider_danmaku_source_accepts_tvbox_danmaku_list() -> None:
+    source = controller_module._map_spider_danmaku_source(
+        [
+            {
+                "name": "哔哩哔哩弹幕",
+                "url": "https://comment.bilibili.com/38086313137.xml",
+                "header": {"Referer": "https://www.bilibili.com"},
+            },
+        ]
+    )
+
+    assert source is not None
+    assert source.url == "https://comment.bilibili.com/38086313137.xml"
+    assert source.headers == {"Referer": "https://www.bilibili.com"}
+
+
+def test_map_spider_danmaku_source_skips_list_entries_without_url() -> None:
+    source = controller_module._map_spider_danmaku_source(
+        [
+            {"name": "空条目", "url": ""},
+            "https://example.com/danmaku.xml",
+        ]
+    )
+
+    assert source is None
+
+
 class ManagerActionSpider:
     def getManagerActions(self):
         return [
