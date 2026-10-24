@@ -3013,7 +3013,11 @@ class SpiderPluginController:
                 for item in current_playlist:
                     item.detail_actions = list(collection_actions)
         if not playlists:
-            raise ValueError(f"没有可播放的项目: {detail.vod_name}")
+            # 带上备注(如爬虫标注的"未开播")说明空列表原因, 只在确有备注时追加
+            remarks = str(getattr(detail, "vod_remarks", "") or "").strip()
+            raise ValueError(
+                f"没有可播放的项目: {detail.vod_name}" + (f"（{remarks}）" if remarks else "")
+            )
         logger.info(
             "Spider plugin build request plugin=%s vod_id=%s routes=%s",
             self._plugin_name,
