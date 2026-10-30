@@ -152,6 +152,33 @@ def _map_bilibili_detail_fields(payload: object, vod_id: object | None = None) -
     return fields
 
 
+def _map_bilibili_tags_field(ext_payload: object) -> PlaybackDetailField | None:
+    if not isinstance(ext_payload, dict):
+        return None
+    raw_tags = ext_payload.get("tags")
+    if not isinstance(raw_tags, list):
+        return None
+    tags: list[str] = []
+    for raw_tag in raw_tags:
+        # 后端下发 tag 名列表;dict 形态({tag_name: ...})兜底取值,防未来后端直透上游对象
+        raw_text = raw_tag.get("tag_name") if isinstance(raw_tag, dict) else raw_tag
+        text = str(raw_text or "").strip()
+        if text:
+            tags.append(text)
+    if not tags:
+        return None
+    return PlaybackDetailField(
+        label="标签",
+        value_parts=[
+            PlaybackDetailValuePart(
+                label=tag,
+                action=PlaybackDetailFieldAction(type="category", value=f"search:{tag}", target="bilibili"),
+            )
+            for tag in tags
+        ],
+    )
+
+
 def _bilibili_link_field(label: str, display_value: str, action_value: str) -> PlaybackDetailField:
     return PlaybackDetailField(
         label=label,
@@ -362,6 +389,9 @@ class BilibiliController:
         ext_payload = payload.get("ext")
         detail.detail_fields = _map_bilibili_web_id_fields(payload.get("vod_id"), ext_payload)
         detail.detail_fields.extend(_map_bilibili_detail_fields(ext_payload, payload.get("vod_id")))
+        tags_field = _map_bilibili_tags_field(ext_payload)
+        if tags_field is not None:
+            detail.detail_fields.append(tags_field)
         detail.detail_style = "bilibili"
         return detail
 

@@ -513,6 +513,80 @@ def test_build_request_maps_bilibili_stat_ext_into_vod_detail_fields() -> None:
     ]
 
 
+def test_build_request_maps_bilibili_tags_into_clickable_detail_field() -> None:
+    api = FakeApiClient()
+    api.detail_payload = {
+        "list": [
+            {
+                "vod_id": "BV14rd3BJEDV",
+                "vod_name": "你是我的哆啦A梦-AI",
+                "vod_play_url": "正片$BV14rd3BJEDV",
+                "ext": {"reply": 962, "tags": ["搞笑", "日常:随笔", "  "]},
+            }
+        ]
+    }
+    controller = BilibiliController(api)
+
+    request = controller.build_request("BV14rd3BJEDV")
+
+    # 标签行置于统计字段之后:每个 tag 独立可点,跳 B站搜索该关键词(search: 前缀,含冒号 tag 原样);空白 tag 滤除
+    assert request.vod.detail_fields[-1] == PlaybackDetailField(
+        label="标签",
+        value_parts=[
+            PlaybackDetailValuePart(
+                label="搞笑",
+                action=PlaybackDetailFieldAction(type="category", value="search:搞笑", target="bilibili"),
+            ),
+            PlaybackDetailValuePart(
+                label="日常:随笔",
+                action=PlaybackDetailFieldAction(type="category", value="search:日常:随笔", target="bilibili"),
+            ),
+        ],
+    )
+
+
+def test_build_request_omits_tags_field_without_usable_tags() -> None:
+    for ext_payload in ({}, {"tags": []}, {"tags": ["  ", None]}, {"reply": 962}):
+        api = FakeApiClient()
+        api.detail_payload = {
+            "list": [
+                {
+                    "vod_id": "BV14rd3BJEDV",
+                    "vod_name": "你是我的哆啦A梦-AI",
+                    "vod_play_url": "正片$BV14rd3BJEDV",
+                    "ext": ext_payload,
+                }
+            ]
+        }
+        controller = BilibiliController(api)
+
+        request = controller.build_request("BV14rd3BJEDV")
+
+        assert all(field.label != "标签" for field in request.vod.detail_fields), ext_payload
+
+
+def test_build_request_maps_bilibili_dict_tags_payload() -> None:
+    # 后端未来直透上游对象形态({tag_name: ...})时同样取值成功
+    api = FakeApiClient()
+    api.detail_payload = {
+        "list": [
+            {
+                "vod_id": "BV14rd3BJEDV",
+                "vod_name": "你是我的哆啦A梦-AI",
+                "vod_play_url": "正片$BV14rd3BJEDV",
+                "ext": {"tags": [{"tag_name": "搞笑"}, {"tag_name": "猫猫"}]},
+            }
+        ]
+    }
+    controller = BilibiliController(api)
+
+    request = controller.build_request("BV14rd3BJEDV")
+
+    tags_field = request.vod.detail_fields[-1]
+    assert tags_field.label == "标签"
+    assert [part.label for part in tags_field.value_parts] == ["搞笑", "猫猫"]
+
+
 def test_build_request_keeps_ss_reply_stat_plain_without_comments_action() -> None:
     api = FakeApiClient()
     api.detail_payload = {
