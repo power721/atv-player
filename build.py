@@ -216,6 +216,24 @@ def appimage_tool_path() -> Path:
     raise FileNotFoundError("appimagetool was not found. Set APPIMAGE_TOOL or install appimagetool.")
 
 
+def render_linux_appimage_icon(svg_path: Path, png_path: Path) -> None:
+    from PySide6.QtCore import QSize, Qt
+    from PySide6.QtGui import QImage, QPainter
+    from PySide6.QtSvg import QSvgRenderer
+
+    renderer = QSvgRenderer(svg_path.read_bytes())
+    if not renderer.isValid():
+        raise ValueError(f"Invalid Linux application icon: {svg_path}")
+
+    image = QImage(QSize(256, 256), QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    renderer.render(painter)
+    painter.end()
+    if not image.save(str(png_path), "PNG"):
+        raise OSError(f"Could not write Linux application icon: {png_path}")
+
+
 def prepare_linux_appdir(bundle_path: Path, arch: str | None = None) -> Path:
     if not bundle_path.exists():
         raise FileNotFoundError(f"Missing Linux bundle directory: {bundle_path}")
@@ -238,7 +256,9 @@ def prepare_linux_appdir(bundle_path: Path, arch: str | None = None) -> Path:
     app_run_target.chmod(app_run_target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     shutil.copy2(desktop_source, appdir_path / f"{APP_NAME}.desktop")
     shutil.copy2(icon_source, appdir_path / f"{APP_NAME}.svg")
-    shutil.copy2(icon_source, appdir_path / ".DirIcon")
+    icon_png_path = appdir_path / f"{APP_NAME}.png"
+    render_linux_appimage_icon(icon_source, icon_png_path)
+    shutil.copy2(icon_png_path, appdir_path / ".DirIcon")
 
     payload_dir = appdir_path / "usr" / "lib" / APP_NAME
     payload_dir.parent.mkdir(parents=True, exist_ok=True)
