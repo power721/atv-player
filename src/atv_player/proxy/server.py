@@ -678,7 +678,7 @@ class LocalHlsProxyServer:
                 normalized_headers,
                 spade_a,
                 get=self._get,
-            )
+            ).warmup()
             if audio_url.startswith(("http://", "https://")):
                 audio_headers = normalize_media_request_headers(audio_url, headers)
                 audio_token = self._registry.create_session(audio_url, audio_headers)
@@ -689,7 +689,7 @@ class LocalHlsProxyServer:
                         audio_headers,
                         audio_spade_a or spade_a,
                         get=self._get,
-                    )
+                    ).warmup()
                     session.cenc_audio_url = (
                         f"http://{self.host}:{self.port}"
                         f"/cenc/{quote(audio_token, safe='')}.m4a"

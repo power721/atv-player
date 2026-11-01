@@ -1,5 +1,7 @@
 """下集预加载:调度守卫、解析落盘、/driver 预注册消费与失效。"""
 
+import base64
+import json
 import threading
 import time
 from pathlib import Path
@@ -101,6 +103,68 @@ def test_preload_resolves_next_item_and_records_freshness(qtbot) -> None:
     assert preload is not None
     assert preload.item is session.playlist[1]
     assert preload.prepared_url == ""
+
+
+def test_preload_prepares_cenc_proxy_url(qtbot, monkeypatch) -> None:
+    # CENC 密文流(红果 #hg-cenc= 片段):预载时即预建本地解密会话(m3u8_ad_filter
+    # 内部 create_cenc_media_url+warmup 预热索引),本地地址进 prepared_url,
+    # 切集经现成消费管线直接复用,索引构建不再落在切集时刻。
+    window = make_window(qtbot)
+    session = make_session()
+    # 片段 payload 须为合法 base64url JSON(与运行时 build_cenc_media_fragment 同构)
+    payload = base64.urlsafe_b64encode(
+        json.dumps({"spade_a": "KEY"}).encode("utf-8")
+    ).decode("ascii")
+    fragment_url = f"http://m/2.mp4#hg-cenc={payload}"
+    session.playlist[1].url = fragment_url
+    session.playback_loader = None  # url 已设,loader 早退
+    window.open_session(session)
+
+    local_url = "http://127.0.0.1:4567/cenc/tok.mp4"
+    prepare_calls: list[str] = []
+
+    def fake_prepare(url, headers=None, **kwargs):
+        prepare_calls.append(url)
+        return local_url if "#hg-cenc=" in url else ""
+
+    monkeypatch.setattr(window._m3u8_ad_filter, "prepare", fake_prepare)
+
+    window._preload_next_episode(window.session, 1)
+
+    preload = window._next_episode_preload
+    assert preload is not None
+    assert preload.item is session.playlist[1]
+    assert preload.prepared_url == local_url
+    assert preload.source_url == fragment_url
+    assert prepare_calls == [fragment_url]
+    # 切集消费:source_url 匹配直接复用本地地址
+    assert window._take_next_episode_preloaded_url(
+        session.playlist[1], fragment_url
+    ) == local_url
+
+
+def test_preload_cenc_prepare_failure_falls_back_silently(qtbot, monkeypatch) -> None:
+    # 预建失败静默:prepared_url 留空,切集走原 prepare 流程兜底
+    window = make_window(qtbot)
+    session = make_session()
+    payload = base64.urlsafe_b64encode(
+        json.dumps({"spade_a": "KEY"}).encode("utf-8")
+    ).decode("ascii")
+    session.playlist[1].url = f"http://m/2.mp4#hg-cenc={payload}"
+    session.playback_loader = None
+    window.open_session(session)
+
+    def boom(url, headers=None, **kwargs):
+        raise RuntimeError("proxy down")
+
+    monkeypatch.setattr(window._m3u8_ad_filter, "prepare", boom)
+
+    window._preload_next_episode(window.session, 1)
+
+    preload = window._next_episode_preload
+    assert preload is not None
+    assert preload.prepared_url == ""
+    assert preload.source_url == ""
 
 
 def test_preload_skips_replacement_loader_results(qtbot) -> None:

@@ -148,6 +148,7 @@ from atv_player.log_store import AppLogEvent
 from atv_player.player.bluray_iso import is_remote_iso_url
 from atv_player.player.controls import PlayerControls
 from atv_player.player.m3u8_ad_filter import M3U8AdFilter
+from atv_player.proxy.cenc import parse_cenc_media_fragment
 from atv_player.proxy.range_proxy import (
     RangeProxySource,
     normalize_drive_type,
@@ -926,7 +927,8 @@ class _PendingPlaybackLoader:
 @dataclass(slots=True)
 class _NextEpisodePreload:
     """下一集预加载结果:解析阶段直接把 url/headers 写回播放项,网盘额外预注册
-    /driver 并行代理任务并缓存本地地址,切集时消费。"""
+    /driver 并行代理任务并缓存本地地址,CENC 密文流预建解密会话(预热索引),
+    切集时消费。"""
 
     item: PlayItem
     index: int
@@ -6546,11 +6548,28 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             )
         return local_url or ""
 
+    def _prepare_cenc_proxy_url(self, current_item: PlayItem, source_url: str) -> str:
+        """CENC 密文流(如红果 #hg-cenc= 片段)预建本地解密会话。
+
+        create_cenc_media_url 本身廉价,但索引(总长探测/moov/逐样本 IV 表)懒构建
+        是串行上游往返,落在切集时刻即起播黑屏;预载线程提前建好(内部 warmup
+        预热索引),切集经 _take_next_episode_preloaded_url 直接复用本地地址。
+        非 CENC 地址或预建失败返回空串,调用方走切集时的原 prepare 流程兜底。
+        """
+        if parse_cenc_media_fragment(source_url) is None:
+            return ""
+        try:
+            return self._m3u8_ad_filter.prepare(source_url, current_item.headers)
+        except Exception:
+            logger.info("下一集 CENC 会话预建失败", exc_info=True)
+            return ""
+
     def _next_episode_preload_enabled(self) -> bool:
         return bool(getattr(self.config, "next_episode_preload_enabled", True))
 
     def _maybe_schedule_next_episode_preload(self) -> None:
-        """预加载下一集:提前跑完详情/播放地址解析并预注册网盘直链代理任务。
+        """预加载下一集:提前跑完详情/播放地址解析并预注册网盘直链代理任务,
+        CENC 密文流预建本地解密会话并预热索引。
 
         尽力而为,任何失败都静默降级,切集时仍走原有懒加载流程。
         """
@@ -6643,9 +6662,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         try:
             if not self._should_skip_playback_prepare(next_item):
                 source_url = self._playback_prepare_source_url(next_item)
-                # 只预注册网盘直链代理(/driver,切集最慢的一步);m3u8 等本地 token
-                # 创建本身很快,无需预载。
+                # 预注册切集最慢的两类本地代理:网盘直链(/driver)与 CENC 密文流
+                # (红果 #hg-cenc= 片段——会话创建廉价,但索引是懒构建的串行上游
+                # 往返,预载线程建好并预热,切集首字节即命中热索引);m3u8 等其余
+                # 本地 token 创建本身很快,仍无需预载。
                 prepared_url = self._prepare_drive_parallel_url(next_item, source_url)
+                if not prepared_url:
+                    prepared_url = self._prepare_cenc_proxy_url(next_item, source_url)
         except Exception:
             logger.info("下一集网盘直链预注册失败 index=%s", next_index, exc_info=True)
         if self.session is not session or not self._is_window_alive():
