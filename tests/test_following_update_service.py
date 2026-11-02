@@ -969,6 +969,26 @@ def test_update_service_timer_check_runs_gateway_off_main_thread(qtbot, tmp_path
     assert finished
 
 
+def test_check_due_records_from_worker_thread_restarts_timer_on_owner_thread(qtbot, tmp_path: Path) -> None:
+    # 追更页"检查更新"现跑在后台线程:check_due_records 内的定时器重启
+    # 须经队列送回服务端所属线程执行,不能跨线程直调 QTimer.start。
+    repo = FollowingRepository(tmp_path / "app.db")
+    service = FollowingUpdateService(repo, metadata_gateway=FakeMetadataGateway(), now=lambda: 200)
+    # 初始间隔取 1 小时,保证测试期内定时器自身不触发,间隔变化只能来自排队重启。
+    service._timer.start(3_600_000)
+    assert service._timer.interval() == 3_600_000
+
+    def run() -> None:
+        service.check_due_records(limit=0)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    # now=200 ≈ 北京时间 08:03,不在更新窗口 → 下一轮间隔 6 小时。
+    qtbot.waitUntil(lambda: service._timer.interval() == 21_600_000, timeout=5000)
+    worker.join(5000)
+    assert not worker.is_alive()
+
+
 def test_update_service_skips_async_check_while_previous_round_in_flight(qtbot, tmp_path: Path) -> None:
     repo = FollowingRepository(tmp_path / "app.db")
     repo.upsert(_record())

@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import replace as _replace
 from datetime import datetime
 
-from PySide6.QtCore import QObject, QTimer, Signal, Slot
+from PySide6.QtCore import QMetaObject, QObject, QThread, Qt, QTimer, Signal, Slot
 
 from atv_player.following_metadata import compute_episode_counts
 from atv_player.following_models import (
@@ -55,6 +55,9 @@ class FollowingUpdateService(QObject):
         self._timer.timeout.connect(self._on_check_timer)
         self._async_check_running = False
         self._async_check_completed.connect(self._handle_async_check_completed)
+        # 手动检查(追更页按钮,后台线程)与自动轮询共用一把互斥锁:
+        # 此前两者都经主线程天然串行,搬线程后靠它防同一记录被并发刷新。
+        self._check_lock = threading.Lock()
 
     def next_interval_seconds(self) -> int:
         return WINDOW_INTERVAL_SECONDS if is_common_update_window(self._now()) else NORMAL_INTERVAL_SECONDS
@@ -90,20 +93,34 @@ class FollowingUpdateService(QObject):
             self.update_finished.emit(results)
 
     def _check_due_records_blocking(self, limit: int = 3) -> list[FollowingUpdateResult]:
-        now = self._now()
-        return [
-            self._check_one(record, now=now)
-            for record in self._repository.load_due_records(now=now, limit=limit)
-        ]
+        with self._check_lock:
+            now = self._now()
+            return [
+                self._check_one(record, now=now)
+                for record in self._repository.load_due_records(now=now, limit=limit)
+            ]
 
     def check_due_records(self, limit: int = 3) -> list[FollowingUpdateResult]:
-        # 手动"检查更新"保持同步语义(调用方自行带 busy 态等待返回值)。
+        # 手动"检查更新"(追更页按钮)现跑在后台线程:网络部分保持同步语义,
+        # 定时器重启不能跨线程直调,排队回服务端所属线程执行。
         results = self._check_due_records_blocking(limit)
         if results:
             self.update_finished.emit(results)
+        self._reschedule_timer()
+        return results
+
+    def _reschedule_timer(self) -> None:
+        if not self._timer.isActive():
+            return
+        if QThread.currentThread() is self.thread():
+            self._timer.start(self.next_interval_seconds() * 1000)
+            return
+        QMetaObject.invokeMethod(self, "_restart_timer", Qt.ConnectionType.QueuedConnection)
+
+    @Slot()
+    def _restart_timer(self) -> None:
         if self._timer.isActive():
             self._timer.start(self.next_interval_seconds() * 1000)
-        return results
 
     def check_record(self, record_id: int) -> FollowingUpdateResult | None:
         record = self._repository.get(record_id)

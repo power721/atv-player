@@ -136,6 +136,7 @@ class FollowingPage(QWidget, AsyncGuardMixin):
     poster_loaded = Signal(object, object)
     import_progress = Signal(int, int, str)
     import_finished = Signal(object, str)
+    check_updates_finished = Signal(str)
 
     def __init__(self, controller) -> None:
         super().__init__()
@@ -149,6 +150,7 @@ class FollowingPage(QWidget, AsyncGuardMixin):
         self.card_widgets: list[FollowingCardButton] = []
         self._import_progress_dialog: QProgressDialog | None = None
         self._import_cancel_event: threading.Event | None = None
+        self._check_running = False
 
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("搜索追更...")
@@ -213,6 +215,7 @@ class FollowingPage(QWidget, AsyncGuardMixin):
         self._connect_async_signal(self.poster_loaded, self._handle_poster_loaded)
         self._connect_async_signal(self.import_progress, self._handle_import_progress)
         self._connect_async_signal(self.import_finished, self._handle_import_finished)
+        self._connect_async_signal(self.check_updates_finished, self._handle_check_updates_finished)
         self._apply_status_style()
         self._update_pagination_controls()
 
@@ -319,7 +322,30 @@ class FollowingPage(QWidget, AsyncGuardMixin):
         dialog.exec()
 
     def _check_updates(self) -> None:
-        self.controller.check_all_due()
+        if self._check_running:
+            return
+        self._check_running = True
+        self.check_updates_button.setEnabled(False)
+        self.status_label.setText("正在检查更新...")
+
+        def run() -> None:
+            # 到期检查(≤3 条 × 同步网络,单条可拖数十秒)+ 服务端追剧信号并入,
+            # 必须离主线程:此前 UI 线程直跑,订阅一多整窗"未响应"。
+            try:
+                self.controller.check_all_due()
+                error = ""
+            except Exception as exc:
+                error = str(exc) or exc.__class__.__name__
+            if self._can_deliver_async_result():
+                self.check_updates_finished.emit(error)
+
+        threading.Thread(target=run, daemon=True, name="following-manual-check").start()
+
+    def _handle_check_updates_finished(self, error: str) -> None:
+        self._check_running = False
+        self.check_updates_button.setEnabled(True)
+        if error:
+            QMessageBox.warning(self, "检查更新", f"检查失败: {error}")
         self.load_page()
         self._update_status_label(prefix="已检查更新")
 

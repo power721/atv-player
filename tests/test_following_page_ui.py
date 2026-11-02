@@ -120,10 +120,10 @@ def test_following_page_filters_updates_and_runs_manual_check(qtbot) -> None:
     page.only_updates_checkbox.setChecked(True)
     page.load_page()
     page.check_updates_button.click()
+    qtbot.waitUntil(lambda: page.status_label.text().startswith("已检查更新"), timeout=5000)
 
     assert controller.only_updates_seen[-1] is True
     assert controller.check_all_calls == 1
-    assert page.status_label.text().startswith("已检查更新")
 
 
 def test_following_page_shows_empty_status(qtbot) -> None:
@@ -225,3 +225,40 @@ def test_following_page_import_backend_runs_off_ui_thread(qtbot, monkeypatch) ->
     assert page._import_progress_dialog is None
     assert page.import_backend_button.isEnabled()
     assert len(controller.only_updates_seen) == loads_before + 1
+
+
+def test_following_page_check_updates_runs_off_ui_thread(qtbot) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    class SlowCheckController(FakeFollowingController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.worker_thread_names: list[str] = []
+
+        def check_all_due(self) -> None:
+            self.check_all_calls += 1
+            self.worker_thread_names.append(threading.current_thread().name)
+            started.set()
+            release.wait(5)
+
+    controller = SlowCheckController()
+    page = FollowingPage(controller)
+    qtbot.addWidget(page)
+    page.ensure_loaded()
+
+    page.check_updates_button.click()
+    assert started.wait(5000)
+
+    # busy 态:按钮禁用、状态提示;进行中重复触发不叠加执行。
+    assert not page.check_updates_button.isEnabled()
+    assert page.status_label.text() == "正在检查更新..."
+    page._check_updates()
+    assert controller.check_all_calls == 1
+
+    release.set()
+    qtbot.waitUntil(lambda: page.check_updates_button.isEnabled(), timeout=5000)
+
+    assert controller.worker_thread_names[0] != threading.main_thread().name
+    assert controller.check_all_calls == 1
+    assert page.status_label.text().startswith("已检查更新")
