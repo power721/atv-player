@@ -7,7 +7,6 @@ from collections.abc import Callable
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QMouseEvent, QPixmap
 from PySide6.QtWidgets import (
-    QApplication,
     QCheckBox,
     QHBoxLayout,
     QLabel,
@@ -135,6 +134,8 @@ class FollowingCardButton(QPushButton):
 class FollowingPage(QWidget, AsyncGuardMixin):
     open_detail_requested = Signal(int)
     poster_loaded = Signal(object, object)
+    import_progress = Signal(int, int, str)
+    import_finished = Signal(object, str)
 
     def __init__(self, controller) -> None:
         super().__init__()
@@ -146,6 +147,8 @@ class FollowingPage(QWidget, AsyncGuardMixin):
         self.total_items = 0
         self.records = []
         self.card_widgets: list[FollowingCardButton] = []
+        self._import_progress_dialog: QProgressDialog | None = None
+        self._import_cancel_event: threading.Event | None = None
 
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("搜索追更...")
@@ -208,6 +211,8 @@ class FollowingPage(QWidget, AsyncGuardMixin):
         self.next_page_button.clicked.connect(self.next_page)
         self.page_size_combo.currentIndexChanged.connect(self._change_page_size)
         self._connect_async_signal(self.poster_loaded, self._handle_poster_loaded)
+        self._connect_async_signal(self.import_progress, self._handle_import_progress)
+        self._connect_async_signal(self.import_finished, self._handle_import_finished)
         self._apply_status_style()
         self._update_pagination_controls()
 
@@ -332,29 +337,61 @@ class FollowingPage(QWidget, AsyncGuardMixin):
         progress.setAutoClose(False)
         progress.setAutoReset(False)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._import_progress_dialog = progress
+        self._import_cancel_event = threading.Event()
+        # 取消只置事件:真正退出要等 worker 走到下一条目边界,不打断当前条目的网络水合。
+        progress.canceled.connect(self._import_cancel_event.set)
+        progress.canceled.connect(lambda: progress.setLabelText("正在取消，等待当前条目完成..."))
         self.import_backend_button.setEnabled(False)
         progress.show()
-        QApplication.processEvents()
 
         def update_progress(current: int, total: int, message: str) -> None:
-            maximum = max(total, 0)
-            progress.setRange(0, maximum)
-            progress.setValue(current if maximum else 0)
-            progress.setLabelText(message)
-            QApplication.processEvents()
+            # worker 线程回调:只发信号回主线程,不直接碰控件。
+            if self._can_deliver_async_result():
+                self.import_progress.emit(current, total, message)
 
-        try:
-            result = self.controller.import_backend_subscriptions(
-                progress_callback=update_progress,
-                cancel_callback=lambda: progress.wasCanceled(),
-            )
-        except Exception as exc:
-            QMessageBox.warning(self, "从服务端导入", f"导入失败: {exc}")
-        else:
-            QMessageBox.information(self, "从服务端导入", result.summary_text)
-        finally:
+        def run() -> None:
+            # 导入 = 1 次订阅列表 + 每条订阅的(TMDB 搜索兜底 + 元数据水合 + 详情)同步网络链,
+            # 必须离主线程:此前在 UI 线程直跑,processEvents 只在条目间喘息,
+            # 单条拖数十秒(如 TMDB 超时)时整个窗口"未响应"。
+            try:
+                result = self.controller.import_backend_subscriptions(
+                    progress_callback=update_progress,
+                    cancel_callback=self._import_cancel_event.is_set,
+                )
+                error = ""
+            except Exception as exc:
+                result = None
+                error = str(exc) or exc.__class__.__name__
+            if self._can_deliver_async_result():
+                self.import_finished.emit(result, error)
+
+        threading.Thread(target=run, daemon=True, name="following-backend-import").start()
+
+    def _handle_import_progress(self, current: int, total: int, message: str) -> None:
+        progress = self._import_progress_dialog
+        if progress is None or progress.wasCanceled():
+            return
+        maximum = max(total, 0)
+        progress.setRange(0, maximum)
+        progress.setValue(current if maximum else 0)
+        progress.setLabelText(message)
+        # 兜底:个别平台 canceled 信号未必触发时,借进度回调把取消状态同步给 worker。
+        if self._import_cancel_event is not None and progress.wasCanceled():
+            self._import_cancel_event.set()
+
+    def _handle_import_finished(self, result, error: str) -> None:
+        progress = self._import_progress_dialog
+        self._import_progress_dialog = None
+        self._import_cancel_event = None
+        if progress is not None:
             progress.close()
-            self.import_backend_button.setEnabled(True)
+            progress.deleteLater()
+        self.import_backend_button.setEnabled(True)
+        if error:
+            QMessageBox.warning(self, "从服务端导入", f"导入失败: {error}")
+        elif result is not None:
+            QMessageBox.information(self, "从服务端导入", result.summary_text)
         self.load_page()
 
     def _apply_status_style(self) -> None:

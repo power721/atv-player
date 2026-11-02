@@ -1,5 +1,8 @@
+import threading
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QImage
+from PySide6.QtWidgets import QPushButton
 
 from atv_player.following_models import FollowingCardItem, FollowingRecord
 from atv_player.ui.following_page import FollowingPage
@@ -165,3 +168,60 @@ def test_following_page_loads_card_poster(qtbot, tmp_path) -> None:
         and not page.card_widgets[0].poster_label.pixmap().isNull(),
         timeout=1000,
     )
+
+
+def test_following_page_import_backend_runs_off_ui_thread(qtbot, monkeypatch) -> None:
+    class ImportResult:
+        summary_text = "共 1 条订阅，导入 1 条"
+
+    class ImportController(FakeFollowingController):
+        def __init__(self) -> None:
+            super().__init__()
+            self.import_calls = 0
+            self.worker_thread_names: list[str] = []
+            self.progress_seen: list[tuple[int, int, str]] = []
+
+        def backend_sync_available(self) -> bool:
+            return True
+
+        def import_backend_subscriptions(self, *, progress_callback=None, cancel_callback=None):
+            self.import_calls += 1
+            self.worker_thread_names.append(threading.current_thread().name)
+            if progress_callback is not None:
+                progress_callback(0, 1, "正在导入 测试剧...")
+            return ImportResult()
+
+    shown: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "atv_player.ui.following_page.QMessageBox.information",
+        staticmethod(lambda parent, title, text: shown.append((title, text))),
+    )
+
+    controller = ImportController()
+    page = FollowingPage(controller)
+    qtbot.addWidget(page)
+    page.ensure_loaded()
+    loads_before = len(controller.only_updates_seen)
+    received: list[tuple[int, int, str]] = []
+    page.import_progress.connect(lambda *args: received.append(args))
+
+    page.import_backend_button.click()
+    dialog = page._import_progress_dialog
+    assert dialog is not None
+    assert not page.import_backend_button.isEnabled()
+
+    # 取消走事件:点击取消按钮 → canceled 信号 → 置位,worker 侧通过回调在下一条目边界感知。
+    # (QProgressDialog.cancel() 编程调用不发 canceled,须点真实按钮。)
+    cancel_button = next(b for b in dialog.findChildren(QPushButton) if b.text() == "取消")
+    cancel_button.click()
+    assert page._import_cancel_event is not None and page._import_cancel_event.is_set()
+
+    qtbot.waitUntil(lambda: bool(shown), timeout=5000)
+
+    assert controller.import_calls == 1
+    assert controller.worker_thread_names[0] != threading.main_thread().name
+    assert received == [(0, 1, "正在导入 测试剧...")]
+    assert shown[0] == ("从服务端导入", "共 1 条订阅，导入 1 条")
+    assert page._import_progress_dialog is None
+    assert page.import_backend_button.isEnabled()
+    assert len(controller.only_updates_seen) == loads_before + 1
