@@ -667,6 +667,10 @@ class _HelpPayloadSignals(QObject):
     loaded = Signal(int, object, str, str)
 
 
+class _PluginContextRefreshSignals(QObject):
+    finished = Signal(int, str)
+
+
 class SearchInputWithHotkey(QLineEdit):
     focus_gained = Signal()
     focus_lost = Signal()
@@ -1811,6 +1815,12 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._startup_plugin_load_signals.finished,
             self._handle_startup_plugin_load_finished,
         )
+        self._plugin_context_refresh_signals = _PluginContextRefreshSignals()
+        self._connect_async_signal(
+            self._plugin_context_refresh_signals.finished,
+            self._handle_plugin_context_refresh_finished,
+        )
+        self._plugin_context_refresh_pending: set[int] = set()
         self._connect_async_signal(
             self._startup_plugin_load_signals.failed,
             self._handle_startup_plugin_load_failed,
@@ -4310,11 +4320,15 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._sync_plugin_overflow_drawer(reset_search=False)
             return True
         action_map = {
-            "refresh": self._plugin_actions.refresh_plugin,
             "rename": self._plugin_actions.rename_plugin,
             "edit_config": self._plugin_actions.edit_plugin_config,
             "toggle_enabled": self._plugin_actions.toggle_plugin_enabled,
         }
+        if action_name == "refresh":
+            # 刷新远程插件 = 强制重新下载源文件,必须离主线程
+            # (此前 UI 线程直跑,网络一慢右键菜单后整窗冻住)。
+            self._start_plugin_context_refresh(normalized_plugin_id)
+            return True
         action = action_map.get(action_name)
         if action is None:
             return False
@@ -4324,6 +4338,33 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._reload_changed_plugin_tabs([str(result.plugin_id)])
         self._sync_plugin_overflow_drawer(reset_search=False)
         return True
+
+    def _start_plugin_context_refresh(self, plugin_id: int) -> None:
+        if plugin_id in self._plugin_context_refresh_pending:
+            return
+        self._plugin_context_refresh_pending.add(plugin_id)
+
+        def run() -> None:
+            # apply_refresh 不碰控件,适合 worker 线程;报错经信号回主线程弹窗。
+            try:
+                self._plugin_actions.apply_refresh(plugin_id)
+                error = ""
+            except Exception as exc:
+                error = str(exc) or exc.__class__.__name__
+            if self._is_window_alive():
+                self._plugin_context_refresh_signals.finished.emit(plugin_id, error)
+
+        threading.Thread(target=run, daemon=True, name="plugin-context-refresh").start()
+
+    def _handle_plugin_context_refresh_finished(
+        self, plugin_id: int, error: str
+    ) -> None:
+        self._plugin_context_refresh_pending.discard(plugin_id)
+        if error:
+            QMessageBox.warning(self, "刷新失败", error)
+            return
+        self._reload_changed_plugin_tabs([str(plugin_id)])
+        self._sync_plugin_overflow_drawer(reset_search=False)
 
     def _handle_douban_search_requested(self, keyword: str) -> None:
         self.global_search_edit.setText(keyword)

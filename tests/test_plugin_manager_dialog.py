@@ -1,3 +1,4 @@
+import threading
 import types
 
 from PySide6.QtCore import QItemSelectionModel, Qt
@@ -14,6 +15,13 @@ from atv_player.models import (
 import atv_player.ui.plugin_manager_dialog as plugin_manager_dialog_module
 from atv_player.ui.plugin_manager_dialog import PluginManagerDialog
 from atv_player.ui.theme import FlatComboBox, current_tokens
+
+
+class _StubSignal:
+    """假进度对话框用的 canceled 信号桩:批量导入已改后台线程,只发信号不碰控件。"""
+
+    def connect(self, *args, **kwargs) -> None:
+        pass
 
 
 def _select_rows(dialog: PluginManagerDialog, *rows: int) -> None:
@@ -867,6 +875,11 @@ def test_plugin_manager_dialog_actions_call_manager(qtbot, monkeypatch) -> None:
     monkeypatch.setattr(dialog, "_prompt_remote_url", lambda: "https://example.com/红果短剧.py")
     dialog._add_local_plugin()
     dialog._add_remote_plugin()
+    qtbot.waitUntil(
+        lambda: manager.add_remote_calls == ["https://example.com/红果短剧.py"]
+        and not dialog._add_remote_in_progress,
+        timeout=5000,
+    )
     dialog._rename_selected()
     dialog._toggle_selected_enabled()
     dialog._move_selected(-1)
@@ -1127,20 +1140,8 @@ def test_plugin_manager_dialog_bulk_delete_keeps_remaining_selected_rows_visible
 
 def test_plugin_manager_dialog_imports_github_repository_with_progress_and_summary(qtbot, monkeypatch) -> None:
     progress_updates: list[tuple[int, int, str]] = []
-    process_event_calls: list[str] = []
-    observed: dict[str, object] = {}
 
-    class ObservingPluginManager(FakePluginManager):
-        def import_plugins(self, source_url: str, *, progress_callback=None, cancel_callback=None):
-            observed["progress_updates_before_import"] = list(progress_updates)
-            observed["process_event_calls_before_import"] = list(process_event_calls)
-            return super().import_plugins(
-                source_url,
-                progress_callback=progress_callback,
-                cancel_callback=cancel_callback,
-            )
-
-    manager = ObservingPluginManager()
+    manager = FakePluginManager()
     dialog = PluginManagerDialog(manager)
     qtbot.addWidget(dialog)
     dialog.show()
@@ -1154,6 +1155,7 @@ def test_plugin_manager_dialog_imports_github_repository_with_progress_and_summa
             self.labels: list[str] = []
             self.cancel_button = object()
             self.window_modality = None
+            self.canceled = _StubSignal()
 
         def setWindowTitle(self, title: str) -> None:
             pass
@@ -1192,19 +1194,17 @@ def test_plugin_manager_dialog_imports_github_repository_with_progress_and_summa
         def close(self) -> None:
             pass
 
+        def deleteLater(self) -> None:
+            pass
+
     monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QProgressDialog", FakeProgressDialog)
     monkeypatch.setattr(dialog, "_prompt_import_source_url", lambda: "https://d.har01d.cn/spiders_v2.json")
     monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QMessageBox.information", lambda *args: summary_messages.append(args[2]))
-    monkeypatch.setattr(
-        "atv_player.ui.plugin_manager_dialog.QApplication.processEvents",
-        lambda *args, **kwargs: process_event_calls.append("processed"),
-    )
 
     dialog._import_plugins()
+    qtbot.waitUntil(lambda: bool(summary_messages), timeout=5000)
 
     assert manager.import_calls == ["https://d.har01d.cn/spiders_v2.json"]
-    assert observed["progress_updates_before_import"] == [(0, 0, "正在准备导入...")]
-    assert observed["process_event_calls_before_import"] == ["processed"]
     assert progress_updates[0] == (0, 0, "正在准备导入...")
     assert progress_updates[-1] == (2, 2, "正在导入 py/b.txt")
     assert summary_messages == ["导入完成：新增 2 个，更新 1 个，跳过 3 个。"]
@@ -1225,6 +1225,7 @@ def test_plugin_manager_dialog_import_progress_is_modal_and_shows_cancel_text(qt
             self.cancel_text = cancel_text
             self.cancel_button = "present"
             self.window_modality = None
+            self.canceled = _StubSignal()
 
         def setWindowTitle(self, title: str) -> None:
             pass
@@ -1262,12 +1263,15 @@ def test_plugin_manager_dialog_import_progress_is_modal_and_shows_cancel_text(qt
         def close(self) -> None:
             pass
 
+        def deleteLater(self) -> None:
+            pass
+
     monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QProgressDialog", FakeProgressDialog)
     monkeypatch.setattr(dialog, "_prompt_import_source_url", lambda: "https://github.com/har01d5/tvbox")
     monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QMessageBox.information", lambda *args: None)
-    monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QApplication.processEvents", lambda *args, **kwargs: None)
 
     dialog._import_plugins()
+    qtbot.waitUntil(lambda: manager.import_calls == ["https://github.com/har01d5/tvbox"], timeout=5000)
 
     progress = captured["instance"]
     assert progress.label_text == ""
@@ -1293,7 +1297,7 @@ def test_plugin_manager_dialog_reports_cancelled_import_and_reloads_plugins(qtbo
 
     class FakeProgressDialog:
         def __init__(self, *args, **kwargs) -> None:
-            self._cancelled = False
+            self.canceled = _StubSignal()
 
         def setWindowTitle(self, title: str) -> None:
             pass
@@ -1320,11 +1324,10 @@ def test_plugin_manager_dialog_reports_cancelled_import_and_reloads_plugins(qtbo
             pass
 
         def setLabelText(self, text: str) -> None:
-            if text == "正在导入 py/a.txt":
-                self._cancelled = True
+            pass
 
         def wasCanceled(self) -> bool:
-            return self._cancelled
+            return False
 
         def show(self) -> None:
             pass
@@ -1332,14 +1335,20 @@ def test_plugin_manager_dialog_reports_cancelled_import_and_reloads_plugins(qtbo
         def close(self) -> None:
             pass
 
+        def deleteLater(self) -> None:
+            pass
+
     monkeypatch.setattr(dialog, "reload_plugins", tracked_reload)
     monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QProgressDialog", FakeProgressDialog)
     monkeypatch.setattr(dialog, "_prompt_import_source_url", lambda: "https://github.com/har01d5/tvbox")
     monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QMessageBox.information", lambda *args: info_messages.append(args[2]))
     monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QMessageBox.warning", lambda *args: warning_messages.append(args[2]))
-    monkeypatch.setattr("atv_player.ui.plugin_manager_dialog.QApplication.processEvents", lambda *args, **kwargs: None)
 
     dialog._import_plugins()
+    # 模拟用户点"取消":真实路径是进度框 canceled 信号→置位事件,worker 在条目边界感知。
+    assert dialog._import_cancel_event is not None
+    dialog._import_cancel_event.set()
+    qtbot.waitUntil(lambda: bool(info_messages), timeout=5000)
 
     assert manager.import_calls == ["https://github.com/har01d5/tvbox"]
     assert manager.cancel_callback_checks > 0
@@ -1360,6 +1369,39 @@ def test_plugin_manager_dialog_ignores_reentrant_github_import_requests(qtbot, m
     dialog._import_plugins()
 
     assert manager.import_calls == []
+
+
+def test_plugin_manager_dialog_add_remote_plugin_runs_off_ui_thread(qtbot, monkeypatch) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    worker_threads: list[str] = []
+
+    class SlowRemoteManager(FakePluginManager):
+        def add_remote_plugin(self, url: str) -> None:
+            super().add_remote_plugin(url)
+            worker_threads.append(threading.current_thread().name)
+            started.set()
+            release.wait(5)
+
+    manager = SlowRemoteManager()
+    dialog = PluginManagerDialog(manager)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    monkeypatch.setattr(dialog, "_prompt_remote_url", lambda: "https://example.com/slow.py")
+
+    dialog._add_remote_plugin()
+    assert started.wait(5000)
+
+    # busy 态:按钮禁用;进行中重复触发不叠加执行。
+    assert not dialog.add_remote_button.isEnabled()
+    dialog._add_remote_plugin()
+    assert manager.add_remote_calls == ["https://example.com/slow.py"]
+
+    release.set()
+    qtbot.waitUntil(lambda: dialog.add_remote_button.isEnabled(), timeout=5000)
+
+    assert manager.add_remote_calls == ["https://example.com/slow.py"]
+    assert worker_threads and worker_threads[0] != threading.main_thread().name
 
 
 def test_plugin_manager_dialog_dispatches_plugin_action_and_reloads_plugins(qtbot, monkeypatch) -> None:

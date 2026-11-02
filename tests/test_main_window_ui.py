@@ -3810,9 +3810,56 @@ def test_main_window_plugin_tab_context_menu_reload_refreshes_changed_plugin(qtb
     result = window._run_plugin_context_action("refresh", "1")
 
     assert result is True
-    assert manager.refresh_calls == [1]
-    assert manager.load_plugins_calls[-1] == ["1"]
+    # 刷新远程插件已移后台线程(强制重下载不再冻 UI),完成后经信号回主线程重载标签。
+    qtbot.waitUntil(lambda: manager.refresh_calls == [1], timeout=5000)
+    qtbot.waitUntil(lambda: manager.load_plugins_calls[-1] == ["1"], timeout=5000)
     assert "插件1" in [window.nav_tabs.tabText(i) for i in range(window.nav_tabs.count())]
+
+
+def test_main_window_plugin_context_refresh_runs_off_ui_thread(qtbot, monkeypatch) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    worker_threads: list[str] = []
+
+    class SlowRefreshManager(WidthAwarePluginManager):
+        def refresh_plugin(self, plugin_id: int) -> None:
+            super().refresh_plugin(plugin_id)
+            worker_threads.append(threading.current_thread().name)
+            started.set()
+            release.wait(5)
+
+    manager = SlowRefreshManager()
+    window = MainWindow(
+        douban_controller=FakeStaticController(),
+        telegram_controller=FakeStaticController(),
+        live_controller=FakeStaticController(),
+        emby_controller=FakeStaticController(),
+        jellyfin_controller=FakeStaticController(),
+        browse_controller=FakeStaticController(),
+        history_controller=FakeStaticController(),
+        player_controller=FakePlayerController(),
+        config=AppConfig(),
+        spider_plugins=manager.load_plugins(["1", "2", "3"]),
+        plugin_manager=manager,
+    )
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_available_plugin_tab_width", lambda: 600)
+    monkeypatch.setattr(window, "_plugin_tab_title_width", lambda title: 88)
+    window.show()
+    window._refresh_navigation_tabs()
+
+    assert window._run_plugin_context_action("refresh", "1") is True
+    assert started.wait(5000)
+
+    # 刷新进行中:同一插件重复触发不叠加执行。
+    window._start_plugin_context_refresh(1)
+    assert manager.refresh_calls == [1]
+
+    release.set()
+    qtbot.waitUntil(lambda: not window._plugin_context_refresh_pending, timeout=5000)
+
+    assert manager.refresh_calls == [1]
+    assert worker_threads and worker_threads[0] != threading.main_thread().name
 
 
 def test_main_window_hidden_plugin_context_menu_rename_updates_drawer_items(qtbot, monkeypatch) -> None:
@@ -3876,8 +3923,8 @@ def test_main_window_hidden_plugin_reload_keeps_active_hidden_plugin(qtbot, monk
     result = window._run_plugin_context_action("refresh", "3")
 
     assert result is True
-    assert manager.refresh_calls == [3]
-    assert manager.load_plugins_calls[-1] == ["3"]
+    qtbot.waitUntil(lambda: manager.refresh_calls == [3], timeout=5000)
+    qtbot.waitUntil(lambda: manager.load_plugins_calls[-1] == ["3"], timeout=5000)
     assert window.nav_tabs.currentWidget() is not active_before_reload
     assert window.nav_tabs.currentWidget() is window._plugin_pages[2][0]
     assert window.plugin_overflow_button.isChecked() is True

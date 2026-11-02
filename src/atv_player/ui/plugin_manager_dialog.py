@@ -9,7 +9,6 @@ from PySide6.QtCore import QItemSelectionModel, QObject, QSignalBlocker, Qt, QTi
 from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QApplication,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -61,6 +60,17 @@ class _PluginRefreshSignals(QObject):
 
 
 class _PluginDeleteSignals(QObject):
+    completed = Signal()
+    failed = Signal(str)
+
+
+class _PluginImportSignals(QObject):
+    progress = Signal(object)
+    # (result, error, cancelled):error 非空=失败;cancelled=用户取消但已有部分成果。
+    finished = Signal(object, str, bool)
+
+
+class _PluginAddRemoteSignals(QObject):
     completed = Signal()
     failed = Signal(str)
 
@@ -191,6 +201,27 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self._delete_signals = _PluginDeleteSignals(self)
         self._connect_async_signal(self._delete_signals.completed, self._handle_delete_completed)
         self._connect_async_signal(self._delete_signals.failed, self._handle_delete_failed)
+        self._import_signals = _PluginImportSignals(self)
+        self._connect_async_signal(
+            self._import_signals.progress,
+            self._handle_import_progress,
+        )
+        self._connect_async_signal(
+            self._import_signals.finished,
+            self._handle_import_finished,
+        )
+        self._add_remote_signals = _PluginAddRemoteSignals(self)
+        self._connect_async_signal(
+            self._add_remote_signals.completed,
+            self._handle_add_remote_completed,
+        )
+        self._connect_async_signal(
+            self._add_remote_signals.failed,
+            self._handle_add_remote_failed,
+        )
+        self._import_progress_dialog: QProgressDialog | None = None
+        self._import_cancel_event: threading.Event | None = None
+        self._add_remote_in_progress = False
         self._plugin_action_reload_timer = QTimer(self)
         self._plugin_action_reload_timer.setSingleShot(True)
         self._plugin_action_reload_timer.timeout.connect(self._load_pending_plugin_actions)
@@ -611,7 +642,12 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         return any(not bool(plugin.enabled) for plugin in self._selected_plugins())
 
     def _sync_action_state(self) -> None:
-        if self._refresh_in_progress or self._delete_in_progress:
+        if (
+            self._refresh_in_progress
+            or self._delete_in_progress
+            or self._add_remote_in_progress
+            or self._import_in_progress
+        ):
             self.add_local_button.setEnabled(False)
             self.add_remote_button.setEnabled(False)
             self.import_github_button.setEnabled(False)
@@ -787,13 +823,6 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         value, accepted = QInputDialog.getText(self, "批量导入", "GitHub 仓库 URL 或 spiders_v2.json URL")
         return value.strip() if accepted else ""
 
-    def _update_import_progress(self, dialog: QProgressDialog, event) -> None:
-        maximum = max(event.total, 0)
-        dialog.setRange(0, maximum)
-        dialog.setValue(event.current if maximum else 0)
-        dialog.setLabelText(event.message)
-        QApplication.processEvents()
-
     def _add_local_plugin(self) -> None:
         path = self._pick_local_plugin_path()
         if not path:
@@ -803,12 +832,40 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.reload_plugins()
 
     def _add_remote_plugin(self) -> None:
+        if self._add_remote_in_progress:
+            return
         url = self._prompt_remote_url()
         if not url:
             return
-        self.plugin_manager.add_remote_plugin(url)
+        self._add_remote_in_progress = True
+        self._sync_action_state()
+
+        def run() -> None:
+            # 远程插件 = 下载源文件 + 入库 + 强制重载(再下载一次),此前 UI 线程
+            # 直跑且无任何 busy 态,网络一慢整个对话框冻住。
+            try:
+                self.plugin_manager.add_remote_plugin(url)
+                error = ""
+            except Exception as exc:
+                error = str(exc) or exc.__class__.__name__
+            if not self._can_deliver_async_result():
+                return
+            if error:
+                self._add_remote_signals.failed.emit(error)
+            else:
+                self._add_remote_signals.completed.emit()
+
+        threading.Thread(target=run, daemon=True, name="plugin-add-remote").start()
+
+    def _handle_add_remote_completed(self) -> None:
+        self._add_remote_in_progress = False
         self.plugin_tabs_dirty = True
         self.reload_plugins()
+
+    def _handle_add_remote_failed(self, message: str) -> None:
+        self._add_remote_in_progress = False
+        self.reload_plugins()
+        QMessageBox.warning(self, "添加失败", message)
 
     def _import_plugins(self) -> None:
         if self._import_in_progress:
@@ -822,42 +879,83 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         progress.setAutoClose(False)
         progress.setAutoReset(False)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._import_progress_dialog = progress
+        self._import_cancel_event = threading.Event()
+        # 取消只置事件:真正退出要等 worker 走到下一条目边界,不打断当前条目的下载。
+        progress.canceled.connect(self._import_cancel_event.set)
+        progress.canceled.connect(lambda: progress.setLabelText("正在取消，等待当前条目完成..."))
         self._import_in_progress = True
-        self.import_github_button.setEnabled(False)
         progress.setLabelText("正在准备导入...")
         progress.show()
-        QApplication.processEvents()
-        try:
-            result = self.plugin_manager.import_plugins(
-                source_url,
-                progress_callback=lambda event: self._update_import_progress(progress, event),
-                cancel_callback=lambda: progress.wasCanceled(),
-            )
-        except SpiderPluginImportCancelled as exc:
-            result = exc.result
-            if result.imported_count or result.updated_count:
-                self.plugin_tabs_dirty = True
-            self.reload_plugins()
-            QMessageBox.information(
-                self,
-                "导入已取消",
-                f"已取消：新增 {result.imported_count} 个，更新 {result.updated_count} 个，跳过 {result.skipped_count} 个。",
-            )
-        except Exception as exc:
-            QMessageBox.warning(self, "导入失败", str(exc))
-        else:
-            if result.imported_count or result.updated_count:
-                self.plugin_tabs_dirty = True
-            self.reload_plugins()
-            QMessageBox.information(
-                self,
-                "导入完成",
-                f"导入完成：新增 {result.imported_count} 个，更新 {result.updated_count} 个，跳过 {result.skipped_count} 个。",
-            )
-        finally:
+        self._sync_action_state()
+
+        def emit_progress(event) -> None:
+            # worker 线程回调:只发信号回主线程,不直接碰控件。
+            if self._can_deliver_async_result():
+                self._import_signals.progress.emit(event)
+
+        def run() -> None:
+            # 批量导入 = 仓库解析 + manifest 拉取 + 每个插件(下载 + 强制重载)的同步
+            # 网络链,必须离主线程:此前 UI 线程直跑、processEvents 只在条目间喘息,
+            # 源多/GitHub 慢时整个窗口"未响应",取消也点不动。
+            cancelled = False
+            try:
+                result = self.plugin_manager.import_plugins(
+                    source_url,
+                    progress_callback=emit_progress,
+                    cancel_callback=self._import_cancel_event.is_set,
+                )
+                error = ""
+            except SpiderPluginImportCancelled as exc:
+                result = exc.result
+                cancelled = True
+                error = ""
+            except Exception as exc:
+                result = None
+                error = str(exc) or exc.__class__.__name__
+            if self._can_deliver_async_result():
+                self._import_signals.finished.emit(result, error, cancelled)
+
+        threading.Thread(target=run, daemon=True, name="plugin-bulk-import").start()
+
+    def _handle_import_progress(self, event) -> None:
+        dialog = self._import_progress_dialog
+        if dialog is None or dialog.wasCanceled():
+            return
+        maximum = max(event.total, 0)
+        dialog.setRange(0, maximum)
+        dialog.setValue(event.current if maximum else 0)
+        dialog.setLabelText(event.message)
+        # 兜底:个别平台 canceled 信号未必触发时,借进度回调把取消状态同步给 worker。
+        if self._import_cancel_event is not None and dialog.wasCanceled():
+            self._import_cancel_event.set()
+
+    def _handle_import_finished(self, result, error: str, cancelled: bool) -> None:
+        progress = self._import_progress_dialog
+        self._import_progress_dialog = None
+        self._import_cancel_event = None
+        if progress is not None:
             progress.close()
-            self._import_in_progress = False
-            self.import_github_button.setEnabled(True)
+            progress.deleteLater()
+        self._import_in_progress = False
+        if result is not None and (result.imported_count or result.updated_count):
+            self.plugin_tabs_dirty = True
+        self.reload_plugins()
+        if error:
+            QMessageBox.warning(self, "导入失败", error)
+            return
+        if result is None:
+            return
+        title = "导入已取消" if cancelled else "导入完成"
+        counts = (
+            f"新增 {result.imported_count} 个，更新 {result.updated_count} 个，"
+            f"跳过 {result.skipped_count} 个。"
+        )
+        QMessageBox.information(
+            self,
+            title,
+            f"{title}：{counts}" if not cancelled else f"已取消：{counts}",
+        )
 
     def _rename_selected(self) -> None:
         plugin_id = self._selected_plugin_id()
