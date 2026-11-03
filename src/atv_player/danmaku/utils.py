@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from opencc import OpenCC
 
 from atv_player.danmaku.models import DanmakuRecord, DanmakuSourceSearchResult
+from atv_player.episode_titles import extract_season_number
 from atv_player.models import PlayItem
 
 # 标题比对统一繁转简(对齐 danmu_api normalizeTitleForMatch):巴哈/bangumi 等源的
@@ -219,6 +220,60 @@ def normalize_name(name: str) -> str:
         value = re.sub(pattern, "", value, flags=re.IGNORECASE)
     value = re.sub(r"\s+", " ", value)
     return value.strip()
+
+
+def strip_trailing_title_size_suffix(value: str) -> str:
+    title = str(value or "").strip()
+    if not title:
+        return ""
+    stripped = re.sub(
+        r"\s*[\(（\[【]\s*\d+(?:\.\d+)?\s*(?:kb|mb|gb|tb)\s*[\)）\]】]\s*$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    )
+    stripped = stripped.strip()
+    return stripped or title
+
+
+def strip_trailing_title_year_suffix(value: str) -> str:
+    title = str(value or "").strip()
+    if not title:
+        return ""
+    stripped = re.sub(r"\s*[\(（\[【]\s*(?:19|20)\d{2}\s*[\)）\]】]\s*$", "", title)
+    stripped = stripped.strip()
+    return stripped or title
+
+
+def normalize_default_danmaku_search_title(value: str) -> str:
+    return strip_trailing_title_year_suffix(strip_trailing_title_size_suffix(value))
+
+
+def should_prefer_default_danmaku_search_title(
+    default_title: str,
+    preferred_title: str,
+) -> bool:
+    """季标记守卫:默认标题带季号而记忆关键词不带时,优先默认标题。
+
+    记忆关键词是“用户最后一次手动确认的意图”,但标题级 series_key 跨季共用,
+    上一季存下的纯剧名不应覆盖本季标题里的季锚点。
+    """
+    normalized_default = normalize_default_danmaku_search_title(default_title)
+    normalized_preferred = normalize_default_danmaku_search_title(preferred_title)
+    if not normalized_default or not normalized_preferred:
+        return False
+    default_season = extract_season_number(normalized_default)
+    preferred_season = extract_season_number(normalized_preferred)
+    if default_season is None or preferred_season is not None:
+        return False
+    default_base = re.sub(
+        r"(?:\s*[-:：]\s*)?(?:第\s*[0-9零一二两三四五六七八九十百千]+\s*季|season\s*\d+|s\d+)\s*$",
+        "",
+        normalize_name(normalized_default),
+        flags=re.IGNORECASE,
+    ).strip()
+    preferred_base = normalize_name(normalized_preferred)
+    return bool(default_base and default_base == preferred_base)
 
 
 def _cn_to_int(text: str) -> int | None:

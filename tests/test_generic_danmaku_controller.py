@@ -1001,3 +1001,184 @@ def test_generic_danmaku_controller_respects_user_query_override_without_ladder(
 
     # 手动指定的查询是显式意图:0 结果也不悄悄换词重搜。
     assert controller._danmaku_service.search_calls == ["自定义 查询"]
+
+
+# ---- 弹幕手动匹配两层记忆:TMDB 季级层覆盖标题级 ----
+
+
+def test_generic_danmaku_controller_tmdb_season_layer_overrides_series_preference(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # series_key 剥掉季后缀、跨季共用;TMDB 季级层的 provider/关键词应覆盖标题级,
+    # 让第二季的自动搜索沿用用户为第二季手动确认过的意图。
+
+    class RecordingDanmakuService:
+        def __init__(self) -> None:
+            self.search_calls: list[dict[str, object]] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ) -> DanmakuSourceSearchResult:
+            del reg_src, media_duration_seconds, provider_filter
+            self.search_calls.append(
+                {
+                    "name": name,
+                    "preferred_provider": preferred_provider,
+                    "preferred_page_url": preferred_page_url,
+                }
+            )
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[
+                            DanmakuSourceOption(
+                                provider="tencent", name="牧神记 第二季 5集", url="https://v.qq.com/s2e5"
+                            )
+                        ],
+                    )
+                ],
+                default_option_url="https://v.qq.com/s2e5",
+                default_provider="tencent",
+            )
+
+    _use_tmp_danmaku_cache(monkeypatch, tmp_path)
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    store.save(
+        DanmakuSeriesPreference(
+            series_key="mushenji",
+            provider="youku",
+            page_url="https://v.youku.com/s1e1",
+            title="",
+            search_title="牧神记",
+        )
+    )
+    store.save(
+        DanmakuSeriesPreference(
+            series_key="tmdb:tv:76479:s2",
+            provider="tencent",
+            page_url="https://v.qq.com/s2e1",
+            title="",
+            search_title="牧神记 第二季",
+        )
+    )
+    service = RecordingDanmakuService()
+    controller = GenericDanmakuController(service, danmaku_preference_store=store)
+    item = PlayItem(
+        title="S02E05.mkv",
+        url="https://media.example/5",
+        vod_id="item-1",
+        media_title="牧神记 第二季",
+        danmaku_tmdb_season_key="tmdb:tv:76479:s2",
+    )
+
+    controller.refresh_danmaku_sources(item, playlist=[item], force_refresh=True)
+
+    assert service.search_calls == [
+        {
+            "name": "牧神记 第二季 5集",
+            "preferred_provider": "tencent",
+            "preferred_page_url": "https://v.qq.com/s2e1",
+        }
+    ]
+
+
+def test_generic_danmaku_controller_switch_writes_tmdb_season_overlay(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # 手动选择(switch)把同一意图双写:标题级 series 层 + TMDB 季级层。
+
+    class ResolveDanmakuService:
+        def resolve_danmu(self, page_url: str) -> str:
+            del page_url
+            return '<i><d p="1,1,25,16777215">hi</d></i>'
+
+    monkeypatch.setattr(generic_danmaku_module, "load_cached_danmaku_xml", lambda _name, _url: "")
+    monkeypatch.setattr(generic_danmaku_module, "save_cached_danmaku_xml", lambda _name, _url, _xml: None)
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    controller = GenericDanmakuController(ResolveDanmakuService(), danmaku_preference_store=store)
+    item = PlayItem(
+        title="S02E01.mkv",
+        url="https://media.example/1",
+        vod_id="item-1",
+        media_title="牧神记 第二季",
+        danmaku_search_title="牧神记 第二季",
+        danmaku_search_query="牧神记 第二季 1集",
+        danmaku_tmdb_season_key="tmdb:tv:76479:s2",
+        danmaku_candidates=[
+            DanmakuSourceGroup(
+                provider="tencent",
+                provider_label="腾讯",
+                options=[
+                    DanmakuSourceOption(
+                        provider="tencent", name="牧神记 第二季 第1集", url="https://v.qq.com/s2e1"
+                    )
+                ],
+            )
+        ],
+    )
+
+    controller.switch_danmaku_source(item, "https://v.qq.com/s2e1")
+
+    overlay = store.load("tmdb:tv:76479:s2")
+    assert overlay is not None
+    assert overlay.provider == "tencent"
+    assert overlay.page_url == "https://v.qq.com/s2e1"
+    assert overlay.search_title == "牧神记 第二季"
+
+
+def test_generic_danmaku_controller_search_title_uses_season_guard(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # 默认标题带季标记而记忆关键词不带(上一季存下的纯剧名):守卫优先默认标题,
+    # 不让旧记忆把本季搜索漂回最新季。
+
+    class RecordingDanmakuService:
+        def __init__(self) -> None:
+            self.search_calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+            provider_filter: str = "",
+        ) -> DanmakuSourceSearchResult:
+            del reg_src, preferred_provider, preferred_page_url, media_duration_seconds, provider_filter
+            self.search_calls.append(name)
+            return DanmakuSourceSearchResult(groups=[])
+
+    _use_tmp_danmaku_cache(monkeypatch, tmp_path)
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    store.save(
+        DanmakuSeriesPreference(
+            series_key="mushenji",
+            provider="",
+            page_url="",
+            title="",
+            search_title="牧神记",
+        )
+    )
+    service = RecordingDanmakuService()
+    controller = GenericDanmakuController(service, danmaku_preference_store=store)
+    item = PlayItem(
+        title="第2集.mkv",
+        url="https://media.example/2",
+        vod_id="item-1",
+        media_title="牧神记 第二季",
+        danmaku_series_key="mushenji",
+        danmaku_search_episode="2集",
+    )
+
+    controller.refresh_danmaku_sources(item, playlist=[item], force_refresh=True)
+
+    assert service.search_calls[0] == "牧神记 第二季 2集"

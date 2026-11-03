@@ -7820,3 +7820,181 @@ def test_controller_rejects_stale_other_fallback_cached_danmaku_sources(monkeypa
 
     # 历史污染缓存（other 候选指向别的 reg_src）被拒用，回退到新搜索。
     assert service.search_calls == ["冷门剧 1集"]
+
+
+# ---- 弹幕手动匹配两层记忆:TMDB 季级层 ----
+
+
+def _tmdb_overlay_preference(search_title: str = "玄界之门 第二季"):
+    return controller_module.DanmakuSeriesPreference(
+        series_key="tmdb:tv:12345:s2",
+        provider="tencent",
+        page_url="https://v.qq.com/s2e1",
+        title="玄界之门 第二季 1",
+        search_title=search_title,
+        updated_at=2,
+    )
+
+
+def test_controller_refresh_danmaku_sources_tmdb_season_layer_overrides_series_search_title(tmp_path) -> None:
+    # series_key 剥掉季后缀、跨季共用;可信 TMDB 季身份存在时,季级层的关键词与
+    # provider 钉住覆盖标题级,第二季不再漂回上一季存下的意图。
+
+    class FakeDanmakuService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, str]] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            del media_duration_seconds
+            self.calls.append((name, preferred_provider, preferred_page_url))
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[DanmakuSourceOption(provider="tencent", name="候选", url="https://v.qq.com/demo")],
+                    )
+                ],
+                default_option_url="https://v.qq.com/demo",
+                default_provider="tencent",
+            )
+
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    series_key = build_danmaku_series_key("玄界之门 第二季")
+    store.save(
+        controller_module.DanmakuSeriesPreference(
+            series_key=series_key,
+            provider="youku",
+            page_url="https://v.youku.com/s1",
+            title="旧标题",
+            search_title="玄界之门",
+            updated_at=1,
+        )
+    )
+    store.save(_tmdb_overlay_preference())
+    service = FakeDanmakuService()
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="玄界之门3D版",
+        search_enabled=True,
+        danmaku_service=service,
+        danmaku_preference_store=store,
+    )
+    item = PlayItem(
+        title="第2集",
+        url="https://stream.example/2.m3u8",
+        media_title="玄界之门 第二季",
+        vod_id="2",
+        danmaku_tmdb_season_key="tmdb:tv:12345:s2",
+    )
+
+    controller.refresh_danmaku_sources(item)
+
+    assert service.calls == [("玄界之门 第二季 2集", "tencent", "https://v.qq.com/s2e1")]
+    assert item.danmaku_search_title == "玄界之门 第二季"
+
+
+def test_controller_switch_danmaku_source_writes_tmdb_season_layer(tmp_path) -> None:
+    # 手动选择(switch)双写:标题级 series 层 + TMDB 季级层(跨源复用)。
+
+    class FakeDanmakuService:
+        def resolve_danmu(self, page_url: str) -> str:
+            return '<?xml version="1.0" encoding="UTF-8"?><i><d p="1.0,1,25,16777215">ok</d></i>'
+
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    series_key = build_danmaku_series_key("玄界之门 第二季")
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="玄界之门3D版",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+        danmaku_preference_store=store,
+    )
+    item = PlayItem(
+        title="第1集",
+        url="https://stream.example/1.m3u8",
+        media_title="玄界之门 第二季",
+        vod_id="1",
+        danmaku_series_key=series_key,
+        danmaku_search_title="玄界之门 第二季",
+        danmaku_search_episode="1集",
+        danmaku_search_query="玄界之门 第二季 1集",
+        danmaku_tmdb_season_key="tmdb:tv:12345:s2",
+        danmaku_candidates=[
+            DanmakuSourceGroup(
+                provider="tencent",
+                provider_label="腾讯",
+                options=[DanmakuSourceOption(provider="tencent", name="玄界之门 第二季 第1集", url="https://v.qq.com/s2e1")],
+            )
+        ],
+    )
+
+    controller.switch_danmaku_source(item, "https://v.qq.com/s2e1")
+
+    saved = store.load(series_key)
+    assert saved is not None
+    assert saved.provider == "tencent"
+    assert saved.page_url == "https://v.qq.com/s2e1"
+    assert saved.search_title == "玄界之门 第二季"
+
+    overlay = store.load("tmdb:tv:12345:s2")
+    assert overlay is not None
+    assert overlay.provider == "tencent"
+    assert overlay.page_url == "https://v.qq.com/s2e1"
+    assert overlay.search_title == "玄界之门 第二季"
+
+
+def test_controller_search_success_alone_does_not_write_tmdb_season_layer(tmp_path) -> None:
+    # 自动搜索成功只落 series 层 search_title;TMDB 季级层只收手动选择,
+    # 防自动排名结果跨源扩散。
+
+    class FakeDanmakuService:
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="tencent",
+                        provider_label="腾讯",
+                        options=[DanmakuSourceOption(provider="tencent", name="候选", url="https://v.qq.com/demo")],
+                    )
+                ],
+                default_option_url="https://v.qq.com/demo",
+                default_provider="tencent",
+            )
+
+    store = DanmakuSeriesPreferenceStore(tmp_path / "danmaku-series.json")
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="玄界之门3D版",
+        search_enabled=True,
+        danmaku_service=FakeDanmakuService(),
+        danmaku_preference_store=store,
+    )
+    item = PlayItem(
+        title="第2集",
+        url="https://stream.example/2.m3u8",
+        media_title="玄界之门 第二季",
+        vod_id="2",
+        danmaku_tmdb_season_key="tmdb:tv:12345:s2",
+    )
+
+    controller.refresh_danmaku_sources(item, search_title_override="玄界之门 第二季")
+
+    assert store.load("tmdb:tv:12345:s2") is None
+    saved = store.load(build_danmaku_series_key("玄界之门 第二季"))
+    assert saved is not None
+    assert saved.search_title == "玄界之门 第二季"

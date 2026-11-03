@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from hashlib import sha256
 import json
 import math
@@ -13,6 +14,7 @@ from typing import Any, cast
 
 from atv_player.danmaku.models import DanmakuSeriesPreference
 from atv_player.danmaku.utils import infer_playlist_episode_number
+from atv_player.episode_titles import extract_season_number
 from atv_player.models import PlayItem
 from atv_player.paths import app_data_dir
 
@@ -23,12 +25,52 @@ def danmaku_series_preference_path() -> Path:
     return path
 
 
+def build_danmaku_tmdb_season_key(
+    media_type: object,
+    tmdb_id: object,
+    season: object,
+) -> str:
+    """Build the TMDB season-level preference key for two-layer manual match memory.
+
+    与标题级 series_key 存在同一 JSON map:``tmdb:tv:{id}:s{season}``。标题 key 由
+    ``_compact_title`` 产出、不含冒号,两者天然无碰撞。身份不完整(非剧集、缺 id、
+    季号缺失或非正)时返回空串——不可信身份不写全局层,防错配跨源扩散。
+    """
+    if str(media_type or "").strip().casefold() != "tv":
+        return ""
+    try:
+        parsed_id = int(str(tmdb_id).strip())
+        parsed_season = int(str(season).strip())
+    except (TypeError, ValueError):
+        return ""
+    if parsed_id <= 0 or parsed_season < 1:
+        return ""
+    return f"tmdb:tv:{parsed_id}:s{parsed_season}"
+
+
+def is_danmaku_tmdb_season_key(series_key: str) -> bool:
+    return str(series_key or "").startswith("tmdb:tv:")
+
+
+def _item_episode_key_season(item: PlayItem) -> int | None:
+    if getattr(item, "season_number", 0):
+        return int(item.season_number)
+    for value in (item.original_title, item.title, item.path):
+        season_number = extract_season_number(value)
+        if season_number is not None:
+            return season_number
+    return None
+
+
 def build_danmaku_episode_key(
     item: PlayItem,
     playlist: list[PlayItem] | None = None,
 ) -> str:
     number = infer_playlist_episode_number(item, playlist)
     if number is not None and number > 0:
+        season_number = _item_episode_key_season(item)
+        if season_number is not None:
+            return f"s{season_number}:episode:{number}"
         return f"episode:{number}"
     label = re.sub(r"\s+", "", item.danmaku_search_episode).casefold()
     if label:
@@ -38,6 +80,12 @@ def build_danmaku_episode_key(
         digest = sha256(identity.encode("utf-8")).hexdigest()[:16]
         return f"item:{digest}"
     return "single"
+
+
+def _legacy_danmaku_episode_key(episode_key: str) -> str:
+    if episode_key.startswith("s") and ":episode:" in episode_key:
+        return episode_key.split(":", 1)[1]
+    return ""
 
 
 def _normalize_persisted_offsets(value: object) -> dict[str, dict[str, float]]:
@@ -196,6 +244,67 @@ def _ensure_item_series_key(item: PlayItem) -> str:
     return item.danmaku_series_key
 
 
+def merged_source_preference(
+    store: DanmakuSeriesPreferenceStore | None,
+    item: PlayItem,
+    series_key: str | None = None,
+    base: DanmakuSeriesPreference | None = None,
+) -> tuple[str, DanmakuSeriesPreference | None]:
+    """两层记忆读取:标题级 series 偏好叠加 TMDB 季级覆写(仅可信身份时)。
+
+    TMDB 季级层只在 item.danmaku_tmdb_season_key 非空(播放窗口已从刮削绑定
+    解析出显式 ``tv:{id}:season:{n}``)时参与;其非空字段覆盖 series 层,因为
+    series_key 剥掉了季后缀、跨季共用,季级意图更精确。
+    """
+    series_key = series_key or _ensure_item_series_key(item)
+    if store is None:
+        return series_key, base
+    if base is None:
+        base = store.load(series_key)
+    tmdb_key = str(getattr(item, "danmaku_tmdb_season_key", "") or "").strip()
+    if not tmdb_key:
+        return series_key, base
+    overlay = store.load(tmdb_key)
+    if overlay is None:
+        return series_key, base
+    fallbacks = (
+        base
+        if base is not None
+        else DanmakuSeriesPreference(
+            series_key=series_key, provider="", page_url="", title=""
+        )
+    )
+    return series_key, replace(
+        fallbacks,
+        provider=overlay.provider or fallbacks.provider,
+        page_url=overlay.page_url or fallbacks.page_url,
+        title=overlay.title or fallbacks.title,
+        search_title=overlay.search_title or fallbacks.search_title,
+        updated_at=overlay.updated_at,
+    )
+
+
+def save_tmdb_season_overlay(
+    store: DanmakuSeriesPreferenceStore | None,
+    item: PlayItem,
+    preference: DanmakuSeriesPreference,
+) -> None:
+    """手动选择后把同一意图覆写进 TMDB 季级层(只写手动路径,不写自动搜索)。"""
+    tmdb_key = str(getattr(item, "danmaku_tmdb_season_key", "") or "").strip()
+    if store is None or not tmdb_key:
+        return
+    existing = store.load(tmdb_key)
+    store.save(
+        replace(
+            preference,
+            series_key=tmdb_key,
+            episode_source_offsets=(
+                existing.episode_source_offsets if existing is not None else {}
+            ),
+        )
+    )
+
+
 def load_item_danmaku_offset(
     store: DanmakuSeriesPreferenceStore | None,
     item: PlayItem,
@@ -207,11 +316,16 @@ def load_item_danmaku_offset(
     provider = item.selected_danmaku_provider.strip()
     if not series_key or not provider:
         return 0.0
-    return store.load_offset(
-        series_key,
-        build_danmaku_episode_key(item, playlist),
-        provider,
-    )
+    episode_key = build_danmaku_episode_key(item, playlist)
+    value = store.load_offset(series_key, episode_key, provider)
+    if value != 0.0:
+        return value
+    legacy_key = _legacy_danmaku_episode_key(episode_key)
+    if not legacy_key:
+        return value
+    # 旧版本偏移存的是无季前缀的 episode:{n} key;季感知 key 未命中时回退读取,
+    # 避免升级后同剧老偏移孤儿。
+    return store.load_offset(series_key, legacy_key, provider)
 
 
 def save_item_danmaku_offset(

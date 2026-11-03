@@ -29,7 +29,9 @@ from atv_player.danmaku.generic import normalize_danmaku_episode_url
 from atv_player.danmaku.models import DanmakuSeriesPreference, DanmakuSourceGroup, DanmakuSourceOption
 from atv_player.danmaku.preferences import (
     load_item_danmaku_offset,
+    merged_source_preference,
     save_item_danmaku_offset,
+    save_tmdb_season_overlay,
 )
 from atv_player.danmaku.service import build_danmaku_series_key
 from atv_player.danmaku.utils import (
@@ -45,8 +47,11 @@ from atv_player.danmaku.utils import (
     is_stale_other_fallback_result,
     is_variety_collection,
     match_provider,
+    normalize_default_danmaku_search_title as _normalize_default_danmaku_search_title,
     normalize_name,
+    should_prefer_default_danmaku_search_title as _should_prefer_default_danmaku_search_title,
     strip_episode_suffix,
+    strip_trailing_title_size_suffix as _strip_trailing_title_size_suffix,
 )
 from atv_player.drive_links import DRIVE_SHARE_DOMAINS, looks_like_drive_share_link
 from atv_player.controllers.browse_controller import _map_vod_item, build_drive_grouped_sources
@@ -55,7 +60,6 @@ from atv_player.controllers.douban_controller import _coerce_category_id
 from atv_player.controllers.pagination import page_count_from_payload
 from atv_player.controllers.telegram_search_controller import build_detail_playlist
 from atv_player.episode_titles import seed_original_titles
-from atv_player.episode_titles import extract_season_number
 from atv_player.metadata.query import is_short_drama_collection
 from atv_player.models import (
     CategoryFilter,
@@ -107,52 +111,6 @@ def _map_spider_page_count(
 def _format_spider_method_call_message(plugin_name: str, method_name: str, **params: object) -> str:
     args = " ".join(f"{key}={value!r}" for key, value in params.items())
     return f"Spider plugin call plugin={plugin_name} method={method_name} {args}".rstrip()
-
-
-def _strip_trailing_title_size_suffix(value: str) -> str:
-    title = str(value or "").strip()
-    if not title:
-        return ""
-    stripped = re.sub(
-        r"\s*[\(（\[【]\s*\d+(?:\.\d+)?\s*(?:kb|mb|gb|tb)\s*[\)）\]】]\s*$",
-        "",
-        title,
-        flags=re.IGNORECASE,
-    )
-    stripped = stripped.strip()
-    return stripped or title
-
-
-def _strip_trailing_title_year_suffix(value: str) -> str:
-    title = str(value or "").strip()
-    if not title:
-        return ""
-    stripped = re.sub(r"\s*[\(（\[【]\s*(?:19|20)\d{2}\s*[\)）\]】]\s*$", "", title)
-    stripped = stripped.strip()
-    return stripped or title
-
-
-def _normalize_default_danmaku_search_title(value: str) -> str:
-    return _strip_trailing_title_year_suffix(_strip_trailing_title_size_suffix(value))
-
-
-def _should_prefer_default_danmaku_search_title(default_title: str, preferred_title: str) -> bool:
-    normalized_default = _normalize_default_danmaku_search_title(default_title)
-    normalized_preferred = _normalize_default_danmaku_search_title(preferred_title)
-    if not normalized_default or not normalized_preferred:
-        return False
-    default_season = extract_season_number(normalized_default)
-    preferred_season = extract_season_number(normalized_preferred)
-    if default_season is None or preferred_season is not None:
-        return False
-    default_base = re.sub(
-        r"(?:\s*[-:：]\s*)?(?:第\s*[0-9零一二两三四五六七八九十百千]+\s*季|season\s*\d+|s\d+)\s*$",
-        "",
-        normalize_name(normalized_default),
-        flags=re.IGNORECASE,
-    ).strip()
-    preferred_base = normalize_name(normalized_preferred)
-    return bool(default_base and default_base == preferred_base)
 
 
 def _looks_like_offline_download_link(value: str) -> bool:
@@ -1602,7 +1560,8 @@ class SpiderPluginController:
                     playlist,
                     page_url=candidate.url,
                 )
-                self._save_danmaku_source_preference(item)
+                # 自动解析落库 series 层;TMDB 季级层只收手动选择,这里不写。
+                self._save_danmaku_source_preference(item, write_tmdb_overlay=False)
                 self._schedule_series_level_danmaku_source_cache_warm(item, reg_src, playlist)
                 if not is_prefetch and item.danmaku_xml:
                     danmaku_count = _count_danmaku_entries(item.danmaku_xml)
@@ -1722,7 +1681,7 @@ class SpiderPluginController:
         playlist: list[PlayItem] | None = None,
     ) -> tuple[DanmakuSeriesPreference | None, str, str] | None:
         series_key = build_danmaku_series_key(item.media_title or item.title)
-        preference = self._danmaku_preference_store.load(series_key) if self._danmaku_preference_store is not None else None
+        preference = merged_source_preference(self._danmaku_preference_store, item, series_key)[1]
         if preference is None:
             preference = self._metadata_danmaku_preference(item, series_key)
         search_title = self._resolve_danmaku_search_title(item, preference)
@@ -1846,23 +1805,33 @@ class SpiderPluginController:
             return True
         return False
 
-    def _save_danmaku_source_preference(self, item: PlayItem) -> None:
+    def _save_danmaku_source_preference(
+        self,
+        item: PlayItem,
+        *,
+        write_tmdb_overlay: bool = True,
+    ) -> None:
         if self._danmaku_preference_store is None or not item.danmaku_series_key:
             return
         existing = self._danmaku_preference_store.load(item.danmaku_series_key)
-        self._danmaku_preference_store.save(
-            DanmakuSeriesPreference(
-                series_key=item.danmaku_series_key,
-                provider=item.selected_danmaku_provider or (existing.provider if existing is not None else ""),
-                page_url=item.selected_danmaku_url or (existing.page_url if existing is not None else ""),
-                title=item.selected_danmaku_title or (existing.title if existing is not None else ""),
-                search_title=item.danmaku_search_title or (existing.search_title if existing is not None else ""),
-                updated_at=int(time.time()),
-                episode_source_offsets=(
-                    existing.episode_source_offsets if existing is not None else {}
-                ),
-            )
+        preference = DanmakuSeriesPreference(
+            series_key=item.danmaku_series_key,
+            provider=item.selected_danmaku_provider or (existing.provider if existing is not None else ""),
+            page_url=item.selected_danmaku_url or (existing.page_url if existing is not None else ""),
+            title=item.selected_danmaku_title or (existing.title if existing is not None else ""),
+            search_title=item.danmaku_search_title or (existing.search_title if existing is not None else ""),
+            updated_at=int(time.time()),
+            episode_source_offsets=(
+                existing.episode_source_offsets if existing is not None else {}
+            ),
         )
+        self._danmaku_preference_store.save(preference)
+        if not write_tmdb_overlay:
+            return
+        # 手动选择(switch/download)才写 TMDB 季级层:自动解析的排名结果不进
+        # 跨源复用层,防自动污染扩散;换源/换 vod_id 后仍能沿用本次手动确认
+        # 的关键词与来源。
+        save_tmdb_season_overlay(self._danmaku_preference_store, item, preference)
 
     def _schedule_series_level_danmaku_source_cache_warm(
         self,
@@ -2020,7 +1989,7 @@ class SpiderPluginController:
         item.danmaku_series_key = series_key
         item.danmaku_search_query = query_name
         item.danmaku_search_provider = provider_filter
-        preference = self._danmaku_preference_store.load(series_key) if self._danmaku_preference_store is not None else None
+        preference = merged_source_preference(self._danmaku_preference_store, item, series_key)[1]
         item.danmaku_search_title = self._resolve_danmaku_search_title(item, preference)
         item.danmaku_search_episode = self._resolve_danmaku_search_episode(item, playlist)
         logger.info(
@@ -2330,7 +2299,7 @@ class SpiderPluginController:
         media_duration_seconds: int = 0,
     ) -> bool:
         series_key = build_danmaku_series_key(item.media_title or item.title or item.danmaku_search_query)
-        preference = self._danmaku_preference_store.load(series_key) if self._danmaku_preference_store is not None else None
+        preference = merged_source_preference(self._danmaku_preference_store, item, series_key)[1]
         item.danmaku_search_title = self._resolve_danmaku_search_title(item, preference)
         item.danmaku_search_episode = self._resolve_danmaku_search_episode(item, playlist)
         query_name = (item.danmaku_search_query or _compose_danmaku_search_query(item.danmaku_search_title, item.danmaku_search_episode)).strip()
@@ -2426,7 +2395,7 @@ class SpiderPluginController:
             item.danmaku_search_query_overridden = True
         else:
             series_key = build_danmaku_series_key(item.media_title or item.title)
-            preference = self._danmaku_preference_store.load(series_key) if self._danmaku_preference_store is not None else None
+            preference = merged_source_preference(self._danmaku_preference_store, item, series_key)[1]
             item.danmaku_search_title = (
                 search_title_override.strip()
                 if search_title_override is not None

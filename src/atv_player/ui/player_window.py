@@ -84,6 +84,7 @@ from atv_player.chapter_skip import (
 )
 from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
 from atv_player.danmaku.generic import normalize_danmaku_episode_url
+from atv_player.danmaku.preferences import build_danmaku_tmdb_season_key, merged_source_preference
 from atv_player.danmaku.utils import extract_official_link_url, infer_playlist_episode_number
 from atv_player.subtitles.cache import save_subtitle_file
 from atv_player.subtitles.service import build_subtitle_query
@@ -4443,6 +4444,53 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                     continue
                 item.danmaku_search_title = redirect_title
 
+    def _danmaku_tmdb_season_key_for_title(self, load, base_title: str, binding_year: str) -> str:
+        """Resolve one title's trusted TMDB season key from an explicit season binding."""
+        try:
+            binding = load(base_title, binding_year)
+        except Exception:
+            return ""
+        provider = str(getattr(binding, "provider", "") or "").strip()
+        provider_id = str(getattr(binding, "provider_id", "") or "").strip()
+        if provider != "tmdb" or not provider_id:
+            return ""
+        segments = provider_id.split(":")
+        if len(segments) < 4 or segments[0] != "tv" or segments[2] != "season":
+            # 仅显式 tv:{id}:season:{n} 绑定可信;作品级绑定无季映射,不进跨源层。
+            return ""
+        return build_danmaku_tmdb_season_key("tv", segments[1], segments[3])
+
+    def _apply_danmaku_tmdb_season_keys(self) -> None:
+        """按组把可信 TMDB 季 key 盖章到播放列表 item(弹幕两层记忆)。
+
+        一个分享常含 S01/S02 多个顶层目录组,各组 media_title 不同、绑定各自独立,
+        因此按 item 的 media_title 逐组解析,而非全会话一个 key。
+        """
+        session = self.session
+        if session is None:
+            return
+        playlists = list(session.playlists or []) or [session.playlist]
+        repo = getattr(session, "metadata_binding_repository", None)
+        load = getattr(repo, "load", None)
+        if not callable(load):
+            return
+        vod_name = str(getattr(session.vod, "vod_name", "") or "").strip()
+        binding_year = str(
+            self._metadata_scrape_binding_year or getattr(session.vod, "vod_year", "") or ""
+        ).strip()
+        key_by_title: dict[str, str] = {}
+        for playlist in playlists:
+            for item in playlist:
+                base_title = str(item.media_title or "").strip() or vod_name
+                if not base_title:
+                    item.danmaku_tmdb_season_key = ""
+                    continue
+                if base_title not in key_by_title:
+                    key_by_title[base_title] = self._danmaku_tmdb_season_key_for_title(
+                        load, base_title, binding_year
+                    )
+                item.danmaku_tmdb_season_key = key_by_title[base_title]
+
     def open_session(self, session, start_paused: bool = False) -> None:
         self._pending_file_loaded_danmaku_item = None
         self._reset_auto_switched_failure_sources()
@@ -4486,6 +4534,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._metadata_scrape_binding_year = str(session.vod.vod_year or "").strip()
         self._metadata_scrape_alias_binding_key = None
         self._apply_metadata_query_redirects_to_danmaku_titles(session)
+        self._apply_danmaku_tmdb_season_keys()
         self._metadata_scrape_query_saved = False
         self._metadata_scrape_saved_title = ""
         self._metadata_scrape_saved_year = ""
@@ -4588,6 +4637,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _maybe_restore_cached_danmaku_for_current_item(self, *, allow_with_playback_loader: bool = False) -> None:
         if self.session is None:
             return
+        self._apply_danmaku_tmdb_season_keys()
         if self.session.playback_loader is not None and not allow_with_playback_loader:
             logger.info(
                 "Skip cached danmaku restore during open because playback_loader is active index=%s title=%s",
@@ -7126,6 +7176,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._danmaku_research_pending = False
         if self.session is None:
             return
+        self._apply_danmaku_tmdb_season_keys()
         controller = getattr(self.session, "danmaku_controller", None)
         current_item = self._current_play_item()
         if controller is None or current_item is None:
@@ -7162,6 +7213,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             for item in self.session.playlist:
                 if not str(item.metadata_provider_url or "").strip():
                     item.metadata_provider_url = metadata_provider_url
+        # 水合改写 media_title 后,各组标题→绑定 key 的映射可能变化,重盖 TMDB 季 key。
+        self._apply_danmaku_tmdb_season_keys()
         corrected_title = str(updated_vod.vod_name or "").strip()
         if not corrected_title:
             return
@@ -7706,6 +7759,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             group.sources[0].playlist = list(new_items)
         else:
             group.sources = [PlaybackSource(label=group.label, playlist=list(new_items))]
+        # 懒加载组的 item 是新建的,补盖 TMDB 季 key(弹幕两层记忆)。
+        self._apply_danmaku_tmdb_season_keys()
 
     def _change_playlist_source(self, source_index: int) -> None:
         if self.session is None:
@@ -7780,6 +7835,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             subgroup.sources[0].playlist[:] = playlist
         else:
             subgroup.sources = [PlaybackSource(label=subgroup.label, playlist=playlist)]
+        # 懒加载子目录组的 item 是新建的,补盖 TMDB 季 key(弹幕两层记忆)。
+        self._apply_danmaku_tmdb_season_keys()
 
     def _switch_active_playlist(
         self,
@@ -11398,6 +11455,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self.session.metadata_hydrator is None and self.session.episode_title_enhancer is not None:
             self.session.episode_titles_hydrated = False
             self._start_episode_title_enhancement()
+        # 绑定已删,重盖 TMDB 季 key 清掉失效的弹幕两层记忆身份。
+        self._apply_danmaku_tmdb_season_keys()
         self._append_log("已重置元数据缓存与手动绑定，重新开始自动搜索")
 
     def _selected_metadata_scrape_candidate(self):
@@ -11585,6 +11644,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._metadata_scrape_binding_title = save_title
             self._metadata_scrape_binding_year = save_year
             self._metadata_scrape_alias_binding_key = result.alias_binding_key
+        # 刮削绑定落地后重盖 TMDB 季 key:显式季绑定从此参与弹幕两层记忆。
+        self._apply_danmaku_tmdb_season_keys()
         metadata_log = _build_metadata_update_log(previous_vod, updated_vod)
         self._render_poster()
         self._render_metadata()
@@ -11787,6 +11848,17 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         current_item.danmaku_search_provider = self._selected_danmaku_search_provider_from_dialog()
 
+    def _danmaku_dialog_preference_search_title(self, item) -> str:
+        """对话框预填兜底:还没搜索过时,先看两层记忆里记住的关键词。"""
+        controller = getattr(self.session, "danmaku_controller", None) if self.session is not None else None
+        store = getattr(controller, "_danmaku_preference_store", None)
+        if store is None:
+            return ""
+        _, preference = merged_source_preference(store, item)
+        if preference is None:
+            return ""
+        return str(preference.search_title or "").strip()
+
     def _open_danmaku_source_dialog(self) -> None:
         current_item = self._current_play_item()
         if current_item is None:
@@ -11795,6 +11867,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             fallback_title = ""
             for candidate in (
                 str(current_item.danmaku_search_title or "").strip(),
+                self._danmaku_dialog_preference_search_title(current_item),
                 str(current_item.media_title or "").strip(),
                 str(self.session.vod.vod_name or "").strip() if self.session is not None else "",
             ):

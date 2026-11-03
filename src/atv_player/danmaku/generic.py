@@ -24,7 +24,9 @@ from atv_player.danmaku.preferences import (
     DanmakuSeriesPreferenceStore,
     _ensure_item_series_key,
     load_item_danmaku_offset,
+    merged_source_preference,
     save_item_danmaku_offset,
+    save_tmdb_season_overlay,
 )
 from atv_player.danmaku.utils import (
     _play_item_episode_number,
@@ -35,6 +37,7 @@ from atv_player.danmaku.utils import (
     is_other_fallback_only_result,
     is_stale_other_fallback_result,
     is_variety_collection,
+    should_prefer_default_danmaku_search_title,
     strip_season_suffix,
 )
 from atv_player.models import PlayItem
@@ -164,10 +167,10 @@ class GenericDanmakuController:
     def _source_preference(self, item: PlayItem) -> DanmakuSeriesPreference | None:
         if self._danmaku_preference_store is None:
             return None
-        series_key = _ensure_item_series_key(item)
+        series_key, preference = merged_source_preference(self._danmaku_preference_store, item)
         if not series_key:
             return None
-        return self._danmaku_preference_store.load(series_key)
+        return preference
 
     def _save_source_preference(self, item: PlayItem) -> None:
         if self._danmaku_preference_store is None:
@@ -180,17 +183,21 @@ class GenericDanmakuController:
         def _or_existing(current: str, attr: str) -> str:
             return current or (getattr(existing, attr) if existing is not None else "")
 
-        self._danmaku_preference_store.save(
-            DanmakuSeriesPreference(
-                series_key=series_key,
-                provider=_or_existing(item.selected_danmaku_provider, "provider"),
-                page_url=_or_existing(item.selected_danmaku_url, "page_url"),
-                title=_or_existing(item.selected_danmaku_title, "title"),
-                search_title=_or_existing(item.danmaku_search_title, "search_title"),
-                updated_at=int(time.time()),
-                episode_source_offsets=existing.episode_source_offsets if existing is not None else {},
-            )
+        preference = DanmakuSeriesPreference(
+            series_key=series_key,
+            provider=_or_existing(item.selected_danmaku_provider, "provider"),
+            page_url=_or_existing(item.selected_danmaku_url, "page_url"),
+            title=_or_existing(item.selected_danmaku_title, "title"),
+            search_title=_or_existing(item.danmaku_search_title, "search_title"),
+            updated_at=int(time.time()),
+            episode_source_offsets=(
+                existing.episode_source_offsets if existing is not None else {}
+            ),
         )
+        self._danmaku_preference_store.save(preference)
+        # 手动选择(switch/download)才走到这里:同一意图覆写进 TMDB 季级层,
+        # 让换源/换 vod_id 后仍能沿用本次手动确认的关键词与来源。
+        save_tmdb_season_overlay(self._danmaku_preference_store, item, preference)
 
     def _log_danmaku_event(self, event: str, item: PlayItem | None = None, detail: str = "") -> None:
         handler = self._danmaku_log_handler
@@ -211,7 +218,21 @@ class GenericDanmakuController:
             logger.exception("Danmaku log handler failed event=%s", event)
 
     def _search_title(self, item: PlayItem) -> str:
-        return item.danmaku_search_title.strip() or item.media_title.strip() or item.title.strip()
+        if item.danmaku_search_title.strip():
+            return item.danmaku_search_title.strip()
+        default_title = item.media_title.strip() or item.title.strip()
+        preference = self._source_preference(item)
+        if preference is not None and preference.search_title.strip():
+            preferred_title = preference.search_title.strip()
+            # 季标记守卫内部自行归一化(年份/体积后缀),这里保持 generic 默认标题
+            # 原样,与既有搜索词行为一致。
+            prefer_default = should_prefer_default_danmaku_search_title(
+                default_title,
+                preferred_title,
+            )
+            if not prefer_default:
+                return preferred_title
+        return default_title
 
     def _search_episode(self, item: PlayItem, playlist: list[PlayItem] | None = None) -> str:
         return item.danmaku_search_episode.strip() or _default_episode_label(item, playlist).strip()

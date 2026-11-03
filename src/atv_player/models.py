@@ -284,6 +284,11 @@ class PlayItem:
     type_name: str = ""
     category_name: str = ""
     metadata_provider_url: str = ""
+    # 分集标题对齐(或文件名季标记)解析出的季号;0=未知,未知≠第 1 季。
+    season_number: int = 0
+    # TMDB 季级弹幕偏好 key(`tmdb:tv:{id}:s{n}`),由播放窗口从刮削绑定盖章;
+    # 空=身份不可信,不参与弹幕两层记忆的跨源复用。
+    danmaku_tmdb_season_key: str = ""
 
 
 @dataclass(slots=True)
