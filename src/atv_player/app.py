@@ -90,6 +90,13 @@ from atv_player.metadata.discovery import TMDBDiscoveryService
 from atv_player.metadata.bindings import is_query_redirect_binding
 from atv_player.metadata.matching import is_confident_match, score_match
 from atv_player.metadata.models import MetadataMatch
+from atv_player.metadata.season_alignment import (
+    ALIGNMENT_FLAT,
+    ALIGNMENT_TITLE_MARKER,
+    ALIGNMENT_UNIQUE_SEASON,
+    extract_playlist_item_seasons,
+    resolve_season_alignment,
+)
 from atv_player.metadata.providers.bangumi import BangumiMetadataProvider
 from atv_player.metadata.providers.bangumi_client import BangumiClient
 from atv_player.metadata.providers.bilibili import BilibiliMetadataProvider
@@ -1085,12 +1092,13 @@ class AppCoordinator(QObject):
                 re.IGNORECASE,
             ) is not None
 
-        def _guess_season_number(vod: VodItem) -> int:
+        def _guess_season_number(vod: VodItem) -> int | None:
+            """标题里的季标记;解析不出返回 None——"无法判断"不等于第 1 季。"""
             for value in (vod.vod_name, vod.vod_remarks, vod.category_name):
                 season_number = extract_season_number(value)
                 if season_number is not None:
                     return season_number
-            return 1
+            return None
 
         def _search_tv_cached(client: TMDBClient, title: str, year: str = "") -> list[dict[str, object]]:
             cache_key = f"{title}\x1f{year}"
@@ -1134,6 +1142,51 @@ class AppCoordinator(QObject):
             detail = dict(client.get_tv_season_detail(tmdb_id, season_number))
             cache.save_payload("tmdb_episode_season_detail", cache_key, detail)
             return detail
+
+        def _get_tv_season_counts_cached(client: TMDBClient, tmdb_id: str) -> dict[int, int]:
+            """TMDB 条目各非特别季的集数(season → episode_count),供季对齐验证用。"""
+            cache_key = f"{tmdb_id}:season_counts"
+            payload = cache.load_payload(
+                "tmdb_episode_season_detail",
+                cache_key,
+                ttl_seconds=_METADATA_DETAIL_CACHE_TTL_SECONDS,
+            )
+            counts: dict[int, int] = {}
+            if isinstance(payload, Mapping):
+                for raw_season, raw_count in payload.items():
+                    try:
+                        counts[int(raw_season)] = int(raw_count)
+                    except (TypeError, ValueError):
+                        continue
+                if counts:
+                    return counts
+            try:
+                detail = dict(client.get_tv_detail(tmdb_id))
+            except Exception:
+                detail = {}
+            for season in detail.get("seasons") or []:
+                if not isinstance(season, Mapping):
+                    continue
+                try:
+                    season_number = int(season.get("season_number") or 0)
+                    episode_count = int(season.get("episode_count") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if season_number >= 1 and episode_count > 0:
+                    counts[season_number] = episode_count
+            if not counts:
+                # tv detail 拿不到季结构时退而探测第 1 季(结果进同一详情缓存,
+                # 后续正式标题加载直接复用)。
+                try:
+                    first_season = _get_tv_season_detail_cached(client, tmdb_id, 1)
+                except Exception:
+                    first_season = {}
+                episodes = first_season.get("episodes")
+                if isinstance(episodes, list) and episodes:
+                    counts[1] = len(episodes)
+            if counts:
+                cache.save_payload("tmdb_episode_season_detail", cache_key, counts)
+            return counts
 
         def _select_tmdb_search_match(
             search_results: list[dict[str, object]],
@@ -1257,22 +1310,22 @@ class AppCoordinator(QObject):
                     )
             return titles_by_season_episode
 
-        def _season_episode_pairs(playlist: list[PlayItem], default_season: int) -> list[tuple[int, int] | None]:
-            pairs: list[tuple[int, int] | None] = []
+        def _playlist_item_episodes(playlist: list[PlayItem]) -> list[int | None]:
+            episodes: list[int | None] = []
             for item in playlist:
-                season_number = None
-                for value in (item.original_title, item.title, item.path):
-                    season_number = extract_season_number(value)
-                    if season_number is not None:
-                        break
                 episode_number = infer_playlist_episode_number(item, playlist)
                 if episode_number is None:
                     episode_number = _extract_quality_variant_episode_number(item)
-                if episode_number is None:
-                    pairs.append(None)
-                    continue
-                pairs.append((season_number or default_season, episode_number))
-            return pairs
+                episodes.append(episode_number)
+            return episodes
+
+        def _season_episode_pairs(playlist: list[PlayItem], default_season: int | None) -> list[tuple[int, int] | None]:
+            alignment = resolve_season_alignment(
+                extract_playlist_item_seasons(playlist),
+                _playlist_item_episodes(playlist),
+                marker_season=default_season,
+            )
+            return alignment.pairs
 
         def _finalize_episode_playlist(
             playlist: list[PlayItem],
@@ -1496,7 +1549,11 @@ class AppCoordinator(QObject):
                         continue
                     requested_season = _guess_season_number(session_vod)
                     candidate_season = extract_season_number(getattr(candidate, "title", ""))
-                    if requested_season > 1 and candidate_season != requested_season:
+                    if (
+                        requested_season is not None
+                        and requested_season > 1
+                        and candidate_season != requested_season
+                    ):
                         continue
                     candidates.append(candidate)
             return candidates
@@ -1661,7 +1718,9 @@ class AppCoordinator(QObject):
                         except (TypeError, ValueError):
                             season_number = None
                     if season_number is None:
-                        season_number = extract_season_number(candidate.title) or _guess_season_number(session_vod)
+                        # 绑定/候选标题都没有显式季号时不猜季(旧逻辑兜底第 1 季),
+                        # 返回不带 episodes 的 candidate,标题对齐交给后续验证链。
+                        season_number = extract_season_number(candidate.title)
                     if not tmdb_id or season_number is None:
                         return candidate
                     try:
@@ -1838,7 +1897,9 @@ class AppCoordinator(QObject):
                     if pair is None:
                         continue
                     requested_seasons.add(pair[0])
-                if not requested_seasons:
+                if not requested_seasons and default_season is not None:
+                    # 无本地季信息时不再默认第 1 季;仅保留季标记给打分器,
+                    # 真正的对齐交给 matched 之后的计数感知验证。
                     requested_seasons.add(default_season)
                 # TMDB's flat season/episode model cannot represent variety shows
                 # (期上/中/下 + 加更 + 陪看 + 纯享), and its direct title assignment would
@@ -1864,6 +1925,39 @@ class AppCoordinator(QObject):
                     )
                     tmdb_id = str(matched.get("id") or "").strip()
                     if tmdb_id:
+                        # 用 TMDB 条目结构对齐做计数感知校验/补全:
+                        # 唯一季推断、显式季集合校验、平铺跨季偏移(总数精确+覆盖 100%)。
+                        # 本地信号已全部解析出季时不需要条目结构,跳过计数请求。
+                        alignment = resolve_season_alignment(
+                            extract_playlist_item_seasons(playlist),
+                            _playlist_item_episodes(playlist),
+                            marker_season=default_season,
+                        )
+                        if None in alignment.item_seasons:
+                            try:
+                                season_counts = _get_tv_season_counts_cached(tmdb_client, tmdb_id)
+                            except Exception:
+                                season_counts = {}
+                            if season_counts:
+                                alignment = resolve_season_alignment(
+                                    extract_playlist_item_seasons(playlist),
+                                    _playlist_item_episodes(playlist),
+                                    marker_season=default_season,
+                                    tmdb_season_episode_counts=season_counts,
+                                )
+                        if alignment.mode not in (ALIGNMENT_TITLE_MARKER, ALIGNMENT_FLAT):
+                            logger.info(
+                                "Episode title enhancer season alignment tmdb_id=%s "
+                                "mode=%s reason=%s resolved_pairs=%s",
+                                tmdb_id,
+                                alignment.mode,
+                                alignment.reason,
+                                sum(1 for pair in alignment.pairs if pair is not None),
+                            )
+                        season_episode_pairs = alignment.pairs
+                        requested_seasons = {
+                            pair[0] for pair in season_episode_pairs if pair is not None
+                        }
                         include_season_prefix = len(requested_seasons) > 1
                         titles_by_season_episode = _load_tmdb_titles_by_season_episode(
                             tmdb_client,
@@ -1882,6 +1976,9 @@ class AppCoordinator(QObject):
                             and has_season_marker
                             and search_title != session_vod.vod_name
                         ):
+                            # 老特例曾把 default_season 未解析集无条件映射到裸剧名条目的
+                            # 第 1 季;现改为对裸条目跑同一套对齐验证,只有通过
+                            # 唯一季/显式/平铺偏移检验的映射才被采纳。
                             raw_search_results = _search_tv_cached(tmdb_client, session_vod.vod_name, year="")
                             raw_matched = _select_tmdb_search_match(
                                 raw_search_results,
@@ -1891,25 +1988,42 @@ class AppCoordinator(QObject):
                                 tmdb_client,
                             )
                             raw_tmdb_id = str((raw_matched or {}).get("id") or "").strip()
-                            if raw_tmdb_id:
-                                season_map = {
-                                    pair[0]: 1
-                                    for pair in unresolved_pairs
-                                    if pair[0] == default_season
-                                }
-                                if season_map:
+                            if raw_tmdb_id and raw_tmdb_id != tmdb_id:
+                                try:
+                                    raw_season_counts = _get_tv_season_counts_cached(tmdb_client, raw_tmdb_id)
+                                except Exception:
+                                    raw_season_counts = {}
+                                # 裸条目把我们的内容建模为它自己的季:只对"标记填充出的
+                                # 未解析集"做无标记对齐(显式季文件属于第一个条目的世界,
+                                # 不参与),实际季必须通过唯一季验证,不再写死第 1 季。
+                                raw_marker_episodes = [
+                                    pair[1]
+                                    for pair in season_episode_pairs
+                                    if pair is not None
+                                    and pair not in titles_by_season_episode
+                                    and pair[0] == default_season
+                                ]
+                                raw_alignment = resolve_season_alignment(
+                                    [None] * len(raw_marker_episodes),
+                                    raw_marker_episodes,
+                                    marker_season=None,
+                                    tmdb_season_episode_counts=raw_season_counts or None,
+                                )
+                                if raw_alignment.mode == ALIGNMENT_UNIQUE_SEASON and raw_marker_episodes:
+                                    actual_season = raw_alignment.item_seasons[0]
                                     titles_by_season_episode.update(
                                         _load_tmdb_titles_by_season_episode(
                                             tmdb_client,
                                             session_vod,
                                             tmdb_id=raw_tmdb_id,
-                                            season_map=season_map,
+                                            season_map={default_season: actual_season},
                                             include_season_prefix=include_season_prefix,
                                         )
                                     )
                         for index, pair in enumerate(season_episode_pairs):
                             if pair is None:
                                 continue
+                            playlist[index].season_number = pair[0]
                             candidate = titles_by_season_episode.get(pair)
                             if candidate:
                                 playlist[index].episode_display_title = candidate

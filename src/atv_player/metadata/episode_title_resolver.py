@@ -20,6 +20,7 @@ from atv_player.episode_titles import (
 from atv_player.metadata.models import MetadataQuery
 from atv_player.metadata.query import infer_metadata_category_name_from_title, normalize_metadata_title
 from atv_player.metadata.providers.tmdb import infer_tmdb_media_type
+from atv_player.metadata.season_alignment import extract_playlist_item_seasons
 from atv_player.models import PlayItem, VodItem
 
 METADATA_EPISODE_TITLE_SOURCE_PRIORITY = ["manual", "plugin", "bangumi", "bilibili", "tmdb", "tencent", "iqiyi"]
@@ -93,7 +94,10 @@ def build_provider_episode_playlist(
     provider = str(getattr(candidate, "provider", "") or "").strip()
     provider_id = str(getattr(candidate, "provider_id", "") or "").strip()
     raw = dict(getattr(candidate, "raw", {}) or {})
-    if not _candidate_supports_episode_title_rewrite(vod, provider, provider_id, raw):
+    rewrite_supported = _candidate_supports_episode_title_rewrite(
+        vod, provider, provider_id, raw, playlist=playlist
+    )
+    if not rewrite_supported:
         return None
     copied = seed_original_titles([replace(item) for item in playlist])
     titles_by_index = _titles_by_index_for_provider(vod, copied, provider, raw)
@@ -105,11 +109,33 @@ def build_provider_episode_playlist(
     return _sort_episode_title_playlist(vod, copied)
 
 
+def _candidate_season_number(
+    provider: str,
+    provider_id: str,
+    raw: dict[str, object],
+) -> int | None:
+    if provider == "tmdb":
+        segments = provider_id.split(":")
+        if len(segments) >= 4 and segments[2] == "season":
+            try:
+                return int(segments[3])
+            except (TypeError, ValueError):
+                return None
+        raw_season = raw.get("season_number")
+        try:
+            return int(raw_season) if raw_season else None
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def _candidate_supports_episode_title_rewrite(
     vod: VodItem,
     provider: str,
     provider_id: str,
     raw: dict[str, object],
+    *,
+    playlist: list[PlayItem] | None = None,
 ) -> bool:
     vod_media_type = infer_tmdb_media_type(
         MetadataQuery(
@@ -129,6 +155,18 @@ def _candidate_supports_episode_title_rewrite(
         return False
     if provider == "bilibili" and not _is_confirmed_bilibili_anime_candidate(raw):
         return False
+    if playlist:
+        # 跨季硬拒绝:文件自身声明了别的季(S01E05 ≠ S02E05),候选季不同
+        # 时不做标题重写,防进度/标题错季。
+        candidate_season = _candidate_season_number(provider, provider_id, raw)
+        if candidate_season is not None:
+            known_seasons = {
+                season
+                for season in extract_playlist_item_seasons(playlist)
+                if season is not None
+            }
+            if known_seasons and candidate_season not in known_seasons:
+                return False
     return not _raw_indicates_movie_category(raw)
 
 
@@ -506,7 +544,11 @@ def _season_episode_pairs(vod: VodItem, playlist: list[PlayItem]) -> list[tuple[
         if episode_number is None or episode_number <= 0:
             pairs.append(None)
             continue
-        pairs.append((season_numbers[index], episode_number))
+        season_number = season_numbers[index]
+        # 排序专用:未知季按第 1 季排序保持历史展示顺序;对齐/前缀语义仍走
+        # _resolved_season_numbers 的 None(未知≠第 1 季)。
+        sort_season = season_number if season_number is not None else 1
+        pairs.append((sort_season, episode_number))
     return pairs
 
 
@@ -545,25 +587,29 @@ def _sort_episode_title_playlist(vod: VodItem, playlist: list[PlayItem]) -> list
     return sorted_playlist
 
 
-def _resolved_season_numbers(vod: VodItem, playlist: list[PlayItem]) -> dict[int, int]:
+def _resolved_season_numbers(
+    vod: VodItem,
+    playlist: list[PlayItem],
+) -> dict[int, int | None]:
     default_season = _guess_default_season(vod)
-    resolved: dict[int, int] = {}
+    resolved: dict[int, int | None] = {}
     for index, item in enumerate(playlist):
         season_number = None
         for value in (item.original_title, item.title, item.path):
             season_number = extract_season_number(value)
             if season_number is not None:
                 break
-        resolved[index] = season_number or default_season
+        resolved[index] = season_number if season_number is not None else default_season
     return resolved
 
 
-def _guess_default_season(vod: VodItem) -> int:
+def _guess_default_season(vod: VodItem) -> int | None:
+    """标题季标记;解析不出返回 None——"无法判断"不等于第 1 季。"""
     for value in (vod.vod_name, vod.vod_remarks, vod.category_name):
         season_number = extract_season_number(value)
         if season_number is not None:
             return season_number
-    return 1
+    return None
 
 
 def _iqiyi_titles_match_vod(vod: VodItem, candidate) -> bool:
@@ -576,7 +622,8 @@ def _iqiyi_titles_match_vod(vod: VodItem, candidate) -> bool:
     if vod_year and candidate_year and vod_year != candidate_year:
         return False
     candidate_season = extract_season_number(getattr(candidate, "title", ""))
-    if candidate_season is not None and candidate_season != _guess_default_season(vod):
+    vod_season = _guess_default_season(vod)
+    if candidate_season is not None and vod_season is not None and candidate_season != vod_season:
         return False
     return True
 
@@ -608,11 +655,15 @@ def _bilibili_episode_title(episode: dict[str, object]) -> str:
 
 
 def _format_episode_title(
-    season_number: int,
+    season_number: int | None,
     episode_number: int,
     episode_title: str,
     *,
     include_season_prefix: bool,
 ) -> str:
-    prefix = f"第{season_number}季 " if include_season_prefix else ""
+    prefix = (
+        f"第{season_number}季 "
+        if include_season_prefix and season_number is not None
+        else ""
+    )
     return f"{prefix}第{episode_number}集 {episode_title}".strip()

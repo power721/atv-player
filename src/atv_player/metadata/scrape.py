@@ -297,7 +297,9 @@ class MetadataScrapeService:
         if not tmdb_id:
             return candidate
         if season_number is None:
-            for value in (raw.get("season_number"), getattr(candidate, "title", ""), vod.vod_name):
+            # 季号链:provider_id 显式季 → raw 季号 → 候选标题季标记。
+            # 不再用 vod_name 猜季兜底——"无法判断"不是第 1 季,解析不出就不挂集表。
+            for value in (raw.get("season_number"), getattr(candidate, "title", "")):
                 parsed = extract_season_number(value)
                 if parsed is not None:
                     season_number = parsed

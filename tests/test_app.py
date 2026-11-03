@@ -9142,7 +9142,9 @@ def test_app_coordinator_episode_title_enhancer_falls_back_from_tmdb_404_to_tenc
     assert updated is not None
     assert updated[0].episode_title_source == "tencent"
     assert updated[0].episode_display_title == "第1集 第01话 金银米小圈1"
-    assert "Skip TMDB season episode title enhancement fallback to provider metadata" in caplog.text
+    # 季/集对齐方法论(2026-11):文件与标题都没有季信号时不再猜"第 1 季"去拉
+    # TMDB 季详情,因此不再出现"猜季→404→Skip"日志;TMDB 不可用时 provider
+    # 兜底行为本身不变(上面两条断言)。
 
 
 def test_app_coordinator_build_plugin_metadata_payload_uses_metadata_block_and_raw_fallbacks() -> None:
@@ -11314,3 +11316,150 @@ def test_main_window_restore_last_player_routes_plugin_detail_to_plugin_controll
     assert session["playback_history_loader"] is not None
     assert session["playback_history_loader"]().position == 45000
     assert window.player_window.opened[0][1] is True
+
+
+# ---- TMDB 季/集对齐方法论(本地对齐层)在分集标题增强器中的行为 ----
+
+
+def _alignment_enhancer_harness(monkeypatch, tmp_path, *, fake_client_cls, vod, playlist):
+    class FakeRepo(_FakeRepoBase):
+        def load_config(self) -> AppConfig:
+            return AppConfig(
+                metadata_enhancement_enabled=True,
+                metadata_tmdb_api_key="tmdb-key",
+                episode_title_enhancement_enabled=True,
+            )
+
+    monkeypatch.setattr(app_module, "TMDBClient", fake_client_cls)
+    monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
+    coordinator = AppCoordinator(FakeRepo())
+    factory = coordinator._build_episode_title_enhancer_factory(object())
+    enhance = factory(source_kind="plugin", vod=vod)
+    return enhance(
+        SimpleNamespace(vod=vod, playlist=playlist)
+    )
+
+
+def test_episode_title_enhancer_no_marker_multi_season_entry_keeps_filenames(tmp_path, monkeypatch) -> None:
+    # 无任何本地季信号 + TMDB 多季条目:"无法判断"不是第 1 季,不对齐、保留原文件名。
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
+            del api_key, proxy_decider
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            return [{"id": 42, "name": "超能路人甲", "first_air_date": "2026-01-01"}]
+
+        def get_tv_detail(self, tmdb_id: str | int) -> dict[str, object]:
+            assert tmdb_id == "42"
+            return {
+                "seasons": [
+                    {"season_number": 1, "episode_count": 12},
+                    {"season_number": 2, "episode_count": 12},
+                ]
+            }
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            raise AssertionError("未对齐时不应拉任何季详情")
+
+    vod = VodItem(vod_id="v1", vod_name="超能路人甲", vod_year="2026", category_name="电视剧")
+    playlist = [
+        PlayItem(title="第01集.mkv", url="http://m/1.mp4", original_title="第01集.mkv"),
+        PlayItem(title="第02集.mkv", url="http://m/2.mp4", original_title="第02集.mkv"),
+    ]
+
+    updated = _alignment_enhancer_harness(
+        monkeypatch,
+        tmp_path,
+        fake_client_cls=FakeTMDBClient,
+        vod=vod,
+        playlist=playlist,
+    )
+
+    assert updated is None or all(not item.episode_display_title for item in updated)
+
+
+def test_episode_title_enhancer_unique_season_entry_still_rewrites(tmp_path, monkeypatch) -> None:
+    # TMDB 条目只有唯一非特别季:无标记文件安全推断为该季,照常重写(回归保护)。
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
+            del api_key, proxy_decider
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            return [{"id": 42, "name": "超能路人甲", "first_air_date": "2026-01-01"}]
+
+        def get_tv_detail(self, tmdb_id: str | int) -> dict[str, object]:
+            return {"seasons": [{"season_number": 1, "episode_count": 2}]}
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            assert (tmdb_id, season_number) == ("42", 1)
+            return {
+                "episodes": [
+                    {"episode_number": 1, "name": "星门初启"},
+                    {"episode_number": 2, "name": "星火初燃"},
+                ]
+            }
+
+    vod = VodItem(vod_id="v1", vod_name="超能路人甲", vod_year="2026", category_name="电视剧")
+    playlist = [
+        PlayItem(title="第01集.mkv", url="http://m/1.mp4", original_title="第01集.mkv"),
+        PlayItem(title="第02集.mkv", url="http://m/2.mp4", original_title="第02集.mkv"),
+    ]
+
+    updated = _alignment_enhancer_harness(
+        monkeypatch, tmp_path, fake_client_cls=FakeTMDBClient, vod=vod, playlist=playlist
+    )
+
+    assert updated is not None
+    assert [item.episode_display_title for item in updated] == ["第1集 星门初启", "第2集 星火初燃"]
+    assert [item.season_number for item in updated] == [1, 1]
+
+
+def test_episode_title_enhancer_flat_offset_maps_sequential_playlist(tmp_path, monkeypatch) -> None:
+    # 平铺 1..3 恰等于 S1(2)+S2(1):总数精确 → 按偏移分配跨季标题并盖章季号。
+
+    class FakeTMDBClient:
+        def __init__(self, api_key: str, proxy_decider=None) -> None:
+            del api_key, proxy_decider
+
+        def search_tv(self, title: str, year: str = "") -> list[dict[str, object]]:
+            return [{"id": 42, "name": "超能路人甲", "first_air_date": "2026-01-01"}]
+
+        def get_tv_detail(self, tmdb_id: str | int) -> dict[str, object]:
+            return {
+                "seasons": [
+                    {"season_number": 1, "episode_count": 2},
+                    {"season_number": 2, "episode_count": 1},
+                ]
+            }
+
+        def get_tv_season_detail(self, tmdb_id: str | int, season_number: int) -> dict[str, object]:
+            assert tmdb_id == "42"
+            if season_number == 1:
+                return {
+                    "episodes": [
+                        {"episode_number": 1, "name": "甲"},
+                        {"episode_number": 2, "name": "乙"},
+                    ]
+                }
+            return {"episodes": [{"episode_number": 1, "name": "丙"}]}
+
+    vod = VodItem(vod_id="v1", vod_name="超能路人甲", vod_year="2026", category_name="电视剧")
+    playlist = [
+        PlayItem(title="第01集.mkv", url="http://m/1.mp4", original_title="第01集.mkv"),
+        PlayItem(title="第02集.mkv", url="http://m/2.mp4", original_title="第02集.mkv"),
+        PlayItem(title="第03集.mkv", url="http://m/3.mp4", original_title="第03集.mkv"),
+    ]
+
+    updated = _alignment_enhancer_harness(
+        monkeypatch, tmp_path, fake_client_cls=FakeTMDBClient, vod=vod, playlist=playlist
+    )
+
+    assert updated is not None
+    assert [item.episode_display_title for item in updated] == [
+        "第1季 第1集 甲",
+        "第1季 第2集 乙",
+        "第2季 第1集 丙",
+    ]
+    assert [item.season_number for item in updated] == [1, 1, 2]
