@@ -200,7 +200,7 @@ def is_local_search_key(health_key: str) -> bool:
 
 
 class _SearchCallable(Protocol):
-    def __call__(self, keyword: str, page: int) -> tuple[list, int]: ...
+    def search_items(self, keyword: str, page: int) -> tuple[list, int]: ...
 
 
 def run_search_with_health(
@@ -224,9 +224,9 @@ def run_search_with_health(
         store = None  # 本地查询不记健康、不看门狗
     started = time.monotonic()
     if store is None:
-        return controller(keyword, page)
+        return controller.search_items(keyword, page)
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="src-health")
-    future = executor.submit(controller, keyword, page)
+    future = executor.submit(controller.search_items, keyword, page)
     try:
         items, page_count = future.result(timeout=timeout_seconds)
     except FutureTimeoutError:

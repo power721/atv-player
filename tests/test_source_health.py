@@ -205,7 +205,9 @@ def test_run_search_with_health_records_success_count_and_cost() -> None:
     store = SourceHealthStore(Path(tempfile.mkdtemp()) / "sh.json")
 
     class Controller:
-        def __call__(self, keyword: str, page: int) -> tuple[list, int]:
+        # 与真实控制器同形:暴露 search_items 方法而非 __call__,
+        # 防止 run_search_with_health 退化回"把控制器当函数调"。
+        def search_items(self, keyword: str, page: int) -> tuple[list, int]:
             return [{"id": 1}, {"id": 2}], 1
 
     items, page_count = run_search_with_health(
@@ -226,7 +228,7 @@ def test_run_search_with_health_records_empty_and_failure() -> None:
     store = SourceHealthStore(Path(tempfile.mkdtemp()) / "sh.json")
 
     class EmptyController:
-        def __call__(self, keyword: str, page: int) -> tuple[list, int]:
+        def search_items(self, keyword: str, page: int) -> tuple[list, int]:
             return [], 0
 
     items, _ = run_search_with_health(
@@ -236,7 +238,7 @@ def test_run_search_with_health_records_empty_and_failure() -> None:
     assert store.get("search:telegram").search_empty == 1
 
     class FailingController:
-        def __call__(self, keyword: str, page: int) -> tuple[list, int]:
+        def search_items(self, keyword: str, page: int) -> tuple[list, int]:
             raise RuntimeError("网络错误: 无法连接")
 
     try:
@@ -260,7 +262,7 @@ def test_run_search_with_health_watchdog_times_out_hung_source() -> None:
     release = threading.Event()
 
     class HungController:
-        def __call__(self, keyword: str, page: int) -> tuple[list, int]:
+        def search_items(self, keyword: str, page: int) -> tuple[list, int]:
             release.wait(timeout=30)
             return [], 0
 
@@ -292,7 +294,7 @@ def test_run_search_with_health_skips_watchdog_for_local_sources() -> None:
     calls: list[tuple[str, int]] = []
 
     class SlowLocal:
-        def __call__(self, keyword: str, page: int) -> tuple[list, int]:
+        def search_items(self, keyword: str, page: int) -> tuple[list, int]:
             # 本地源即使超过 timeout 也不应被看门狗打断
             time.sleep(0.3)
             calls.append((keyword, page))
