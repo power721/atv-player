@@ -169,10 +169,15 @@ def find_libmpv(target_platform: str) -> list[tuple[Path, str]]:
         raise FileNotFoundError("libmpv was not found on Linux")
 
     if platform_id == "macos":
+        # Homebrew(ARM /opt/homebrew, Intel /usr/local)优先;MacPorts(/opt/local)
+        # 用于 CI 的 Intel 构建——Homebrew 已停发 macOS x86_64 bottle,Intel 侧
+        # 只有 MacPorts 提供预编译 libmpv(见 .github/workflows/build.yml)。
         for candidate in (
             Path("/opt/homebrew/lib/libmpv.dylib"),
+            Path("/opt/local/lib/libmpv.dylib"),
             Path("/usr/local/lib/libmpv.dylib"),
             Path("/opt/homebrew/lib/libmpv.2.dylib"),
+            Path("/opt/local/lib/libmpv.2.dylib"),
             Path("/usr/local/lib/libmpv.2.dylib"),
         ):
             if candidate.exists():
