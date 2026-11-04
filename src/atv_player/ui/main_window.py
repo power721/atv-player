@@ -1502,6 +1502,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             episode_title_override_repository=None,
             danmaku_preference_store=None,
             source_health_store=None,
+            metadata_comments_provider=None,
             vod_token_options: list[str] | None = None,
             can_select_vod_token: bool = False,
             on_vod_token_changed=None,
@@ -1527,6 +1528,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._episode_title_override_repository = episode_title_override_repository
         self._danmaku_preference_store = danmaku_preference_store
         self._source_health_store = source_health_store
+        self._metadata_comments_provider = metadata_comments_provider
         self.config = config
         self._plugin_definitions = list(spider_plugins or [])
         self._plugin_loader_task = plugin_loader_task
@@ -7005,6 +7007,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             "following_progress_reporter": self._report_player_item_following_progress,
             "heat_controller": self._heat_controller,
             "source_health_store": self._source_health_store,
+            "metadata_comments_provider": self._metadata_comments_provider,
         }
         try:
             parameters = inspect.signature(PlayerWindow).parameters

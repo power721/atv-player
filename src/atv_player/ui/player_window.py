@@ -808,6 +808,11 @@ class _MetadataScrapeSignals(QObject):
     failed = Signal(int, str)
 
 
+class _MetadataCommentsSignals(QObject):
+    resolved = Signal(object)  # list[CommentsSource]
+    failed = Signal(str)
+
+
 class _EpisodeTitleEnhancementSignals(QObject):
     succeeded = Signal(int, object)
     failed = Signal(int, str)
@@ -1117,6 +1122,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         heat_controller=None,
         drive_link_loader=None,
         source_health_store=None,
+        metadata_comments_provider=None,
     ) -> None:
         super().__init__(
             title="alist-tvbox 播放器",
@@ -1143,6 +1149,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         )
         self._heat_controller = heat_controller
         self._source_health_store = source_health_store
+        self._metadata_comments_provider = metadata_comments_provider
         self._pending_play_health_key: str | None = None
         self._drive_link_loader = drive_link_loader
         self._heat_summary_request_id = 0
@@ -1353,6 +1360,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             self._handle_metadata_scrape_apply_succeeded,
         )
         self._connect_async_signal(self._metadata_scrape_signals.failed, self._handle_metadata_scrape_failed)
+        self._metadata_comments_signals = _MetadataCommentsSignals()
+        self._connect_async_signal(
+            self._metadata_comments_signals.resolved,
+            self._handle_metadata_comments_resolved,
+        )
+        self._connect_async_signal(
+            self._metadata_comments_signals.failed,
+            self._handle_metadata_comments_failed,
+        )
         self._episode_title_enhancement_signals = _EpisodeTitleEnhancementSignals()
         self._connect_async_signal(
             self._episode_title_enhancement_signals.succeeded,
@@ -1690,6 +1706,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.favorite_button.clicked.connect(self._toggle_current_favorite)
         self.following_button = self._create_icon_button("following.svg", "加入追更")
         self.following_button.clicked.connect(self._toggle_current_following)
+        self.metadata_comments_button = self._create_icon_button("comment.svg", "评论")
+        self.metadata_comments_button.clicked.connect(self._open_metadata_comments)
         self.follow_streamer_button = self._create_icon_button("favorite.svg", "关注主播")
         self.follow_streamer_button.clicked.connect(self._toggle_current_follow_streamer)
         self.detail_actions_widget = QWidget()
@@ -1725,6 +1743,9 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         )
         self._metadata_heading_row.addWidget(
             self.following_button, 0, Qt.AlignmentFlag.AlignVCenter
+        )
+        self._metadata_heading_row.addWidget(
+            self.metadata_comments_button, 0, Qt.AlignmentFlag.AlignVCenter
         )
         self._metadata_heading_row.addWidget(
             self.follow_streamer_button, 0, Qt.AlignmentFlag.AlignVCenter
@@ -2669,8 +2690,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.favorite_button.setStyleSheet(qss)
         self.following_button.setStyleSheet(qss)
         self.follow_streamer_button.setStyleSheet(qss)
+        self.metadata_comments_button.setStyleSheet(qss)
         self._refresh_favorite_button()
         self._refresh_following_button()
+        self._refresh_metadata_comments_button()
         self._refresh_follow_streamer_button()
 
     def _create_icon_button(
@@ -3725,6 +3748,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._clear_detail_action_buttons()
         self._refresh_favorite_button()
         self._refresh_following_button()
+        self._refresh_metadata_comments_button()
         self._refresh_follow_streamer_button()
         actions = self._current_detail_actions()
         self.detail_actions_widget.setHidden(not actions)
@@ -3797,6 +3821,81 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.following_button.setAccessibleName(tooltip)
         self.following_button.setProperty("following_active", active)
         self._set_following_button_icon(active)
+
+    def _metadata_comments_ready(self) -> bool:
+        """刮削成功后才提供评论:有豆瓣/Bangumi 外部 ID,或元数据被增强过(点击现搜兜底)。"""
+        vod = getattr(self.session, "vod", None)
+        if vod is None:
+            return False
+        identity = heat_identity_from_vod(vod, self._current_play_item())
+        external_ids = getattr(identity, "external_ids", {}) if identity is not None else {}
+        if external_ids.get("douban") or external_ids.get("bangumi"):
+            return True
+        return bool(getattr(vod, "metadata_field_sources", None))
+
+    def _refresh_metadata_comments_button(self) -> None:
+        visible = (
+            self._metadata_comments_provider is not None
+            and self._metadata_comments_ready()
+            and not self._hides_local_favorite_buttons()
+            and not self._current_session_is_live()
+        )
+        self.metadata_comments_button.setHidden(not visible)
+        self._set_metadata_comments_button_icon()
+
+    def _set_metadata_comments_button_icon(self) -> None:
+        """与收藏/追更同款染色(text_secondary),避免 SVG currentColor 黑色原图直出。"""
+        tokens = current_theme_manager().tokens_for(current_resolved_theme())
+        self.metadata_comments_button.setProperty("icon_name", "comment.svg")
+        self.metadata_comments_button.setIcon(
+            tint_icon(
+                load_icon(self._icons_dir / "comment.svg"),
+                tokens.text_secondary,
+                size=self.metadata_comments_button.iconSize(),
+            )
+        )
+
+    def _open_metadata_comments(self) -> None:
+        provider = self._metadata_comments_provider
+        vod = getattr(self.session, "vod", None)
+        if provider is None or vod is None:
+            return
+        item = self._current_play_item()
+        self.metadata_comments_button.setEnabled(False)
+
+        def work() -> None:
+            try:
+                sources = provider.resolve(vod, item)
+                self._metadata_comments_signals.resolved.emit(sources)
+            except Exception as exc:  # noqa: BLE001 - 解析失败统一转文案
+                self._metadata_comments_signals.failed.emit(str(exc) or type(exc).__name__)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _handle_metadata_comments_resolved(self, sources: object) -> None:
+        self.metadata_comments_button.setEnabled(True)
+        entries = [
+            (str(source.key), str(source.label), source.loader)
+            for source in (sources or [])
+            if hasattr(source, "key") and hasattr(source, "loader")
+        ]
+        if not entries:
+            self._append_log("评论加载失败[comments]: 未找到豆瓣/Bangumi 对应条目")
+            return
+        title = entries[0][1] if len(entries) == 1 else "评论"
+        dialog = BilibiliCommentsDialog(
+            "",
+            entries[0][2],
+            parent=self,
+            read_only=True,
+            title=title,
+            sources=entries,
+        )
+        dialog.exec()
+
+    def _handle_metadata_comments_failed(self, message: str) -> None:
+        self.metadata_comments_button.setEnabled(True)
+        self._append_log(f"评论加载失败[comments]: {message}")
 
     def _live_follow_api(self):
         """控制器上的 api_client 且带直播关注三件套;老服务端没有时按钮退场。"""
@@ -3950,6 +4049,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         self._following_toggle(item)
         self._refresh_following_button()
+        self._refresh_metadata_comments_button()
 
     def _set_startup_state(self, state: PlaybackStartupState) -> None:
         self._startup_state = state
@@ -5718,9 +5818,11 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if vod is None:
             self.metadata_view.clear()
             self._render_related_entries()
+            self._refresh_metadata_comments_button()
             return
         self.metadata_view.setHtml(self._format_metadata_html(vod))
         self._render_related_entries()
+        self._refresh_metadata_comments_button()
 
     def _apply_resolved_vod(self, resolved_vod: VodItem) -> None:
         if self.session is None:

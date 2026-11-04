@@ -634,3 +634,80 @@ def test_own_comment_shows_self_tag_instead_of_author(qtbot) -> None:
     assert "[作者]" in up
     assert "[我]" not in up
     assert "[我]" not in dialog.card_by_rpid("1003").meta_label.text()
+
+
+# --- 只读模式(豆瓣/Bangumi 复用) --------------------------------------------
+
+
+def _make_read_only_dialog(qtbot, loader, sources=None, title="豆瓣短评") -> BilibiliCommentsDialog:
+    dialog = BilibiliCommentsDialog(
+        "",
+        loader,
+        read_only=True,
+        title=title,
+        sources=sources,
+    )
+    qtbot.addWidget(dialog)
+    return dialog
+
+
+def test_read_only_dialog_hides_interactive_controls(qtbot) -> None:
+    loader = FakeLoader(payloads=[_main_payload([_comment("1", "如小果", badge="★★★★")])])
+    dialog = _make_read_only_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog)
+
+    assert dialog.post_composer.isHidden() is True
+    assert dialog.mode_hot_button.isHidden() is True
+    assert dialog.mode_latest_button.isHidden() is True
+    card = dialog.card_by_rpid("1")
+    assert card.like_button is None
+    assert card.reply_button is None
+    # 评分角标渲染进 meta 行
+    assert "★★★★" in card.meta_label.text()
+    assert dialog.windowTitle() == "豆瓣短评"
+
+
+def test_read_only_dialog_title_shows_count(qtbot) -> None:
+    loader = FakeLoader(payloads=[_main_payload([_comment("1", "u")], count=671332)])
+    dialog = _make_read_only_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog)
+    assert dialog.title_label.text() == "豆瓣短评 · 67.1万条"
+
+
+def test_read_only_multi_source_switch_reloads(qtbot) -> None:
+    douban_loader = FakeLoader(payloads=[_main_payload([_comment("d1", "豆瓣用户")], count=10)])
+    bangumi_loader = FakeLoader(payloads=[_main_payload([_comment("b1", "Bangumi用户")], count=5)])
+    sources = [
+        ("douban", "豆瓣短评", douban_loader),
+        ("bangumi", "Bangumi 吐槽", bangumi_loader),
+    ]
+    dialog = _make_read_only_dialog(qtbot, douban_loader, sources=sources, title="评论")
+    _wait_until_cards(qtbot, dialog)
+    assert dialog.card_by_rpid("d1") is not None
+
+    dialog._set_source("bangumi")
+    qtbot.waitUntil(lambda: dialog.card_by_rpid("b1") is not None, timeout=5000)
+    assert dialog.card_by_rpid("d1") is None
+    assert dialog._source_buttons["douban"].isChecked() is False
+    assert dialog._source_buttons["bangumi"].isChecked() is True
+
+
+def test_read_only_single_source_has_no_switch_buttons(qtbot) -> None:
+    loader = FakeLoader(payloads=[_main_payload([_comment("1", "u")])])
+    dialog = _make_read_only_dialog(qtbot, loader, sources=[("douban", "豆瓣短评", loader)])
+    assert dialog._source_buttons == {}
+
+
+def test_read_only_main_list_deduplicates_rpid_pages(qtbot) -> None:
+    duplicated = _comment("same", "同名用户", message="重复条目")
+    loader = FakeLoader(
+        payloads=[
+            _main_payload([_comment("1", "u1"), duplicated], count=99),
+            _main_payload([duplicated, _comment("2", "u2")], count=99),
+        ]
+    )
+    dialog = _make_read_only_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog, 2)
+    dialog.load_more_button.click()
+    _wait_until_cards(qtbot, dialog, 3)
+    assert [card.comment.rpid for card in dialog.cards()] == ["1", "same", "2"]

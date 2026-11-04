@@ -24,7 +24,6 @@ from atv_player.ui.async_guard import AsyncGuardMixin
 from atv_player.ui.poster_loader import (
     load_remote_poster_image,
     poster_cache_path,
-    poster_load_slot,
 )
 from atv_player.ui.theme import current_tokens
 from atv_player.ui.window_chrome import ThemedDialogBase
@@ -62,6 +61,8 @@ class BilibiliComment:
     is_self: bool = False
     liked: bool = False
     parent_uname: str = ""
+    # 评分角标(豆瓣 ★★★★/Bangumi 9分);只读源由适配器预格式化,B站恒空
+    badge: str = ""
     # 正文内嵌表情 [{text:"[doge]", url, size 1小/2大}] 与图片评论 [{url,width,height}]
     emotes: list[dict[str, object]] = field(default_factory=list)
     pictures: list[dict[str, object]] = field(default_factory=list)
@@ -89,6 +90,7 @@ def parse_bilibili_comment(payload: object) -> BilibiliComment:
         is_self=bool(payload.get("is_self")),
         liked=bool(payload.get("liked")),
         parent_uname=str(payload.get("parent_uname") or "").strip(),
+        badge=str(payload.get("badge") or "").strip(),
         emotes=[dict(entry) for entry in payload.get("emotes") or [] if isinstance(entry, dict)],
         pictures=[dict(entry) for entry in payload.get("pictures") or [] if isinstance(entry, dict)],
         preview=preview,
@@ -167,6 +169,8 @@ def _meta_html(comment: BilibiliComment) -> str:
     parts: list[str] = []
     name_color = tokens.accent if comment.is_up else tokens.text_primary
     parts.append(f'<span style="font-weight:600; color:{name_color};">{comment.uname}</span>')
+    if comment.badge:
+        parts.append(f'<span style="color:{tokens.accent};">{html.escape(comment.badge)}</span>')
     if comment.top:
         parts.append(f'<span style="color:{tokens.accent};">[置顶]</span>')
     if comment.is_up:
@@ -296,21 +300,25 @@ class _ReplyRow(QWidget):
         layout.addWidget(self.meta_label)
         layout.addWidget(self.message_label)
         dialog.add_pictures(comment, layout)
-        actions = QHBoxLayout()
-        actions.setContentsMargins(0, 0, 0, 0)
-        actions.setSpacing(16)
-        self.like_button = _LikeButton(comment, dialog, self)
-        actions.addWidget(self.like_button)
-        self.reply_button = QPushButton("回复")
-        self.reply_button.setObjectName("bilibiliCommentReplyButton")
-        self.reply_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.reply_button.setFlat(True)
-        self.reply_button.clicked.connect(
-            lambda _checked=False: dialog.show_reply_composer(card, self)
-        )
-        actions.addWidget(self.reply_button)
-        actions.addStretch(1)
-        layout.addLayout(actions)
+        if not dialog._read_only:
+            actions = QHBoxLayout()
+            actions.setContentsMargins(0, 0, 0, 0)
+            actions.setSpacing(16)
+            self.like_button = _LikeButton(comment, dialog, self)
+            actions.addWidget(self.like_button)
+            self.reply_button = QPushButton("回复")
+            self.reply_button.setObjectName("bilibiliCommentReplyButton")
+            self.reply_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.reply_button.setFlat(True)
+            self.reply_button.clicked.connect(
+                lambda _checked=False: dialog.show_reply_composer(card, self)
+            )
+            actions.addWidget(self.reply_button)
+            actions.addStretch(1)
+            layout.addLayout(actions)
+        else:
+            self.like_button = None
+            self.reply_button = None
 
 
 class _CommentCard(QFrame):
@@ -358,8 +366,11 @@ class _CommentCard(QFrame):
         footer = QHBoxLayout()
         footer.setContentsMargins(0, 0, 0, 0)
         footer.setSpacing(16)
-        self.like_button = _LikeButton(comment, dialog, self)
-        footer.addWidget(self.like_button)
+        if not dialog._read_only:
+            self.like_button = _LikeButton(comment, dialog, self)
+            footer.addWidget(self.like_button)
+        else:
+            self.like_button = None
         self.toggle_reply_button = QPushButton(self._toggle_button_text())
         self.toggle_reply_button.setObjectName("bilibiliCommentRepliesButton")
         self.toggle_reply_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -367,14 +378,17 @@ class _CommentCard(QFrame):
         self.toggle_reply_button.setVisible(comment.rcount > 0)
         self.toggle_reply_button.clicked.connect(self._toggle_floor)
         footer.addWidget(self.toggle_reply_button)
-        self.reply_button = QPushButton("回复")
-        self.reply_button.setObjectName("bilibiliCommentReplyButton")
-        self.reply_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.reply_button.setFlat(True)
-        self.reply_button.clicked.connect(
-            lambda _checked=False: dialog.show_reply_composer(self, None)
-        )
-        footer.addWidget(self.reply_button)
+        if not dialog._read_only:
+            self.reply_button = QPushButton("回复")
+            self.reply_button.setObjectName("bilibiliCommentReplyButton")
+            self.reply_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.reply_button.setFlat(True)
+            self.reply_button.clicked.connect(
+                lambda _checked=False: dialog.show_reply_composer(self, None)
+            )
+            footer.addWidget(self.reply_button)
+        else:
+            self.reply_button = None
         footer.addStretch(1)
         content.addLayout(footer)
 
@@ -506,19 +520,39 @@ class _CommentCard(QFrame):
 
 
 class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
-    """B站评论对话框:热门/最新切换、游标分页、楼中楼行内展开(左侧竖线)。"""
+    """B站评论对话框:热门/最新切换、游标分页、楼中楼行内展开(左侧竖线)。
 
-    def __init__(self, bvid: str, loader: CommentsLoader, parent: QWidget | None = None) -> None:
-        super().__init__(title="评论", parent=parent, resizable=True)
+    read_only=True 时作为通用只读评论面板复用(豆瓣/Bangumi):隐藏发表框、
+    点赞/回复按钮与热门/最新切换;sources=[(key,label,loader),...] 提供多于
+    一个源时,header 右侧出现源切换按钮(复用 mode 按钮样式),切换即重置加载。
+    """
+
+    def __init__(
+        self,
+        bvid: str,
+        loader: CommentsLoader,
+        parent: QWidget | None = None,
+        *,
+        read_only: bool = False,
+        title: str = "评论",
+        sources: list[tuple[str, str, CommentsLoader]] | None = None,
+    ) -> None:
+        super().__init__(title=title, parent=parent, resizable=True)
         self._init_async_guard()
         self.bvid = bvid
         self._loader = loader
+        self._read_only = read_only
+        self._title = title
+        self._sources = [(key, label, source_loader) for key, label, source_loader in (sources or [])]
+        self._source_buttons: dict[str, QPushButton] = {}
         self._mode = 3
         self._next_offset = ""
         self._is_end = True
         self._count: int | None = None
         self._epoch = 0
-        self._avatar_semaphore = poster_load_slot()
+        # 头像/表情/图片评论都是小图,用独立并发闸:共享 poster_load_slot 会与主窗口
+        # 海报批量加载互相排队,首开评论时头像可能被几十张海报饿死(重开才经缓存显示)
+        self._avatar_semaphore = threading.BoundedSemaphore(4)
         self._cards: list[_CommentCard] = []
         self._active_composer: _ReplyComposer | None = None
         self._signals = _LoaderSignals()
@@ -529,7 +563,7 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
         self._emote_signals = _EmoteSignals()
         self._connect_async_signal(self._emote_signals.loaded, self._handle_emote_loaded)
 
-        self.title_label = QLabel("评论")
+        self.title_label = QLabel(title)
         self.title_label.setObjectName("bilibiliCommentsTitle")
         self.mode_hot_button = QPushButton("热门")
         self.mode_latest_button = QPushButton("最新")
@@ -543,12 +577,29 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
         header.setSpacing(10)
         header.addWidget(self.title_label)
         header.addStretch(1)
+        # 只读多源(豆瓣/Bangumi)用源切换按钮顶替热门/最新的位置
+        if len(self._sources) > 1:
+            for key, label, _source_loader in self._sources:
+                button = QPushButton(label)
+                button.setCheckable(True)
+                button.setCursor(Qt.CursorShape.PointingHandCursor)
+                button.clicked.connect(lambda _checked=False, next_key=key: self._set_source(next_key))
+                self._source_buttons[key] = button
+                header.addWidget(button)
         header.addWidget(self.mode_hot_button)
         header.addWidget(self.mode_latest_button)
+        if self._read_only:
+            self.mode_hot_button.setVisible(False)
+            self.mode_latest_button.setVisible(False)
+            active_key = next((key for key, _label, source_loader in self._sources if source_loader is loader), "")
+            for key, button in self._source_buttons.items():
+                button.setChecked(key == active_key)
 
         # 顶部常驻发表框:直接评论视频(root/parent 空)
         self.post_composer = _ReplyComposer("发表评论...", self, cancellable=False)
         self.post_composer.submitted.connect(self._submit_post)
+        if self._read_only:
+            self.post_composer.setVisible(False)
 
         self.status_label = QLabel("")
         self.status_label.setObjectName("bilibiliCommentsStatus")
@@ -686,6 +737,26 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
         if mode == self._mode:
             return
         self._mode = mode
+        self._load_main(reset=True)
+
+    def _set_source(self, key: str) -> None:
+        """只读多源切换:换 loader 重置加载;epoch 自增自动丢弃旧源的过期响应。"""
+        loader = None
+        for source_key, _label, source_loader in self._sources:
+            if source_key == key:
+                loader = source_loader
+                break
+        if loader is None:
+            return
+        if loader is self._loader:
+            # 点击当前源:恢复勾选态即可,不重复加载
+            button = self._source_buttons.get(key)
+            if button is not None:
+                button.setChecked(True)
+            return
+        self._loader = loader
+        for button_key, button in self._source_buttons.items():
+            button.setChecked(button_key == key)
         self._load_main(reset=True)
 
     def _load_main(self, reset: bool) -> None:
@@ -877,18 +948,31 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
             self._count = int(payload["count"])
         self._is_end = bool(payload.get("is_end"))
         self._next_offset = str(payload.get("next_offset") or "")
-        self.title_label.setText(f"评论 · {_format_stat_value(self._count)}条" if self._count is not None else "评论")
+        self.title_label.setText(
+            f"{self._title} · {_format_stat_value(self._count)}条"
+            if self._count is not None
+            else self._title
+        )
         comments = [parse_bilibili_comment(entry) for entry in payload.get("comments") or []]
         if comments or self._cards:
             if self.status_label.text() == "加载中..." or self.status_label.text().startswith("加载更多失败"):
                 self.status_label.setText("")
         else:
             self.status_label.setText("暂无评论")
+        # 热门排序实时波动,翻页边界可能重复同一条;按 rpid 去重
+        existing_rpids = {card.comment.rpid for card in self._cards if card.comment.rpid}
+        appended = False
         for comment in comments:
+            if comment.rpid and comment.rpid in existing_rpids:
+                continue
+            existing_rpids.add(comment.rpid)
             card = _CommentCard(comment, self, self.comments_widget)
             card.replies_requested.connect(self._request_replies)
             self._cards.append(card)
             self.comments_layout.insertWidget(self.comments_layout.count() - 1, card)
+            appended = True
+        if not appended and not self._cards:
+            self.status_label.setText("暂无评论")
         self.load_more_button.setVisible(bool(self._cards) and not self._is_end)
         self.load_more_button.setEnabled(True)
 
@@ -1035,6 +1119,8 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
         mode_button_qss = self._mode_button_qss()
         self.mode_hot_button.setStyleSheet(mode_button_qss)
         self.mode_latest_button.setStyleSheet(mode_button_qss)
+        for button in self._source_buttons.values():
+            button.setStyleSheet(mode_button_qss)
         for card in self._cards:
             card.meta_label.setText(_meta_html(card.comment))
             card.toggle_reply_button.setText(card._toggle_button_text())

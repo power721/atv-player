@@ -37,6 +37,9 @@ from atv_player.controllers.following_controller import FollowingController
 from atv_player.controllers.douban_controller import DoubanController
 from atv_player.controllers.global_catalog_controller import GlobalCatalogController
 from atv_player.controllers.media_detail_controller import MediaDetailController
+from atv_player.comments import MetadataCommentsProvider
+from atv_player.comments.bangumi import BangumiCommentsClient
+from atv_player.comments.douban import DoubanCommentsClient
 from atv_player.controllers.bilibili_controller import BilibiliController
 from atv_player.controllers.emby_controller import EmbyController
 from atv_player.controllers.feiniu_controller import FeiniuController
@@ -2528,6 +2531,10 @@ class AppCoordinator(QObject):
             HeatService(),
             installation_id=app_identity.installation_id,
         )
+        metadata_comments_provider = MetadataCommentsProvider(
+            DoubanCommentsClient(proxy_decider=self._build_proxy_decider()),
+            BangumiCommentsClient(proxy_decider=self._build_proxy_decider()),
+        )
         self._stop_playback_sync_service()
         if self._playback_history_repository is not None:
             self._playback_sync_service = PlaybackHistorySyncService(
@@ -2616,6 +2623,7 @@ class AppCoordinator(QObject):
             yt_dlp_service=self._yt_dlp_service,
             smart_search_controller=smart_search_controller,
             heat_controller=heat_controller,
+            metadata_comments_provider=metadata_comments_provider,
             youtube_category_text_loader=getattr(self._api_client, "get_text", None),
             metadata_hydrator_factory=metadata_hydrator_factory,
             metadata_scrape_service_factory=metadata_scrape_service_factory,

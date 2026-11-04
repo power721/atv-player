@@ -28272,3 +28272,102 @@ def test_player_window_comments_action_field_renders_external_link_style(qtbot) 
     assert 'href="atv-player://detail-field?' in rendered
     assert "text-decoration:none" in rendered
     assert "font-weight:600" in rendered
+
+
+# --- 影片详情「评论」图标(豆瓣/Bangumi 只读评论) -----------------------------
+
+
+class StubCommentsProvider:
+    def __init__(self, sources) -> None:
+        self.sources = sources
+        self.calls: list[tuple[object, object]] = []
+
+    def resolve(self, vod, item=None):
+        self.calls.append((vod, item))
+        return self.sources
+
+
+class StubCommentsSource:
+    def __init__(self, key: str, label: str) -> None:
+        self.key = key
+        self.label = label
+        self.loader = lambda query: {"count": 0, "comments": []}
+
+
+def _scraped_session() -> PlayerSession:
+    session = make_player_session()
+    session.vod = VodItem(vod_id="movie-1", vod_name="Movie", vod_year="1994", dbid=1292052)
+    return session
+
+
+def test_player_window_metadata_comments_button_hidden_without_provider(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+    window.open_session(_scraped_session())
+    assert window.metadata_comments_button.isHidden() is True
+
+
+def test_player_window_metadata_comments_button_visible_after_metadata(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController(), metadata_comments_provider=StubCommentsProvider([]))
+    qtbot.addWidget(window)
+    # 未刮削(无外部 ID 且元数据未增强)不显示
+    window.open_session(make_player_session())
+    assert window.metadata_comments_button.isHidden() is True
+    # 刮削成功(拿到豆瓣 ID)后显示
+    window.open_session(_scraped_session())
+    assert window.metadata_comments_button.isHidden() is False
+    # B站会话有自己的评论入口,本地评论按钮让位
+    window.open_session(make_bilibili_grouped_session())
+    assert window.metadata_comments_button.isHidden() is True
+
+
+def test_player_window_metadata_comments_click_opens_read_only_dialog(qtbot, monkeypatch) -> None:
+    created: dict[str, object] = {}
+
+    class StubCommentsDialog:
+        def __init__(self, bvid, loader, parent=None, **kwargs) -> None:
+            created["bvid"] = bvid
+            created["loader"] = loader
+            created["parent"] = parent
+            created.update(kwargs)
+            created["exec_called"] = False
+
+        def exec(self):
+            created["exec_called"] = True
+            return 0
+
+    monkeypatch.setattr(player_window_module, "BilibiliCommentsDialog", StubCommentsDialog)
+    provider = StubCommentsProvider([StubCommentsSource("douban", "豆瓣短评")])
+    window = PlayerWindow(FakePlayerController(), metadata_comments_provider=provider)
+    qtbot.addWidget(window)
+    window.open_session(_scraped_session())
+
+    window._open_metadata_comments()
+    qtbot.waitUntil(lambda: created.get("exec_called") is True, timeout=5000)
+
+    assert created["bvid"] == ""
+    assert created["parent"] is window
+    assert created["read_only"] is True
+    assert created["title"] == "豆瓣短评"
+    assert [key for key, _label, _loader in created["sources"]] == ["douban"]
+    assert len(provider.calls) == 1
+    assert window.metadata_comments_button.isEnabled() is True
+
+
+def test_player_window_metadata_comments_no_sources_logs(qtbot, monkeypatch) -> None:
+    opened: list[object] = []
+
+    class ForbiddenDialog:
+        def __init__(self, *args, **kwargs) -> None:
+            opened.append(args)
+
+    monkeypatch.setattr(player_window_module, "BilibiliCommentsDialog", ForbiddenDialog)
+    logs: list[str] = []
+    window = PlayerWindow(FakePlayerController(), metadata_comments_provider=StubCommentsProvider([]))
+    qtbot.addWidget(window)
+    window._append_log = logs.append
+    window.open_session(_scraped_session())
+
+    window._open_metadata_comments()
+    qtbot.waitUntil(lambda: any("未找到豆瓣/Bangumi" in line for line in logs), timeout=5000)
+    assert opened == []
