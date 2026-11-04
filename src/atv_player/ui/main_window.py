@@ -6766,6 +6766,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             detail_action_runner=request.detail_action_runner,
             detail_field_runner=request.detail_field_runner,
             bilibili_comments_loader=request.bilibili_comments_loader,
+            spider_comments_loader=getattr(request, "spider_comments_loader", None),
             metadata_hydrator=request.metadata_hydrator,
             metadata_scrape_service=request.metadata_scrape_service,
             subtitle_search_service=self._subtitle_search_service,

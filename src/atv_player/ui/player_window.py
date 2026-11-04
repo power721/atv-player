@@ -95,6 +95,7 @@ from atv_player.danmaku.utils import extract_official_link_url, infer_playlist_e
 from atv_player.subtitles.cache import save_subtitle_file
 from atv_player.subtitles.service import build_subtitle_query
 from atv_player.heat import has_required_heat_external_id, heat_identity_from_vod
+from atv_player.comments import CommentsSource
 from atv_player.metadata.bindings import (
     bilibili_season_binding_title,
     normalize_metadata_binding_title,
@@ -3822,8 +3823,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self.following_button.setProperty("following_active", active)
         self._set_following_button_icon(active)
 
+    def _session_spider_comments_loader(self):
+        """爬虫本集评论 loader(插件支持 commentsContent 时由 build_request 注入)。"""
+        return getattr(self.session, "spider_comments_loader", None) if self.session is not None else None
+
     def _metadata_comments_ready(self) -> bool:
-        """刮削成功后才提供评论:有豆瓣/Bangumi 外部 ID,或元数据被增强过(点击现搜兜底)。"""
+        """评论入口可见性:爬虫源(插件 commentsContent)不依赖刮削;豆瓣/Bangumi 源
+        需刮削成功——有外部 ID,或元数据被增强过(点击现搜兜底)。"""
+        if self._session_spider_comments_loader() is not None:
+            return True
         vod = getattr(self.session, "vod", None)
         if vod is None:
             return False
@@ -3835,7 +3843,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
 
     def _refresh_metadata_comments_button(self) -> None:
         visible = (
-            self._metadata_comments_provider is not None
+            (self._metadata_comments_provider is not None or self._session_spider_comments_loader() is not None)
             and self._metadata_comments_ready()
             and not self._hides_local_favorite_buttons()
             and not self._current_session_is_live()
@@ -3858,14 +3866,26 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
     def _open_metadata_comments(self) -> None:
         provider = self._metadata_comments_provider
         vod = getattr(self.session, "vod", None)
-        if provider is None or vod is None:
+        spider_loader = self._session_spider_comments_loader()
+        if (provider is None or vod is None) and spider_loader is None:
             return
         item = self._current_play_item()
         self.metadata_comments_button.setEnabled(False)
 
         def work() -> None:
             try:
-                sources = provider.resolve(vod, item)
+                sources = []
+                if spider_loader is not None and item is not None:
+                    # 爬虫本集评论:打开瞬间以当前集锚点快照(对话框生命周期内不换集)
+                    def spider_comments_loader(query: dict, _loader=spider_loader, _item=item) -> dict:
+                        payload = _loader(_item, str(query.get("next") or ""))
+                        if not isinstance(payload, dict):
+                            raise RuntimeError("上游未返回评论")
+                        return payload
+
+                    sources.append(CommentsSource("spider", "本集评论", spider_comments_loader))
+                if provider is not None and vod is not None:
+                    sources.extend(provider.resolve(vod, item))
                 self._metadata_comments_signals.resolved.emit(sources)
             except Exception as exc:  # noqa: BLE001 - 解析失败统一转文案
                 self._metadata_comments_signals.failed.emit(str(exc) or type(exc).__name__)

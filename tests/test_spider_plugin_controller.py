@@ -7998,3 +7998,59 @@ def test_controller_search_success_alone_does_not_write_tmdb_season_layer(tmp_pa
     saved = store.load(build_danmaku_series_key("玄界之门 第二季"))
     assert saved is not None
     assert saved.search_title == "玄界之门 第二季"
+
+
+# --- 本集评论(commentsContent 插件直供) --------------------------------------
+
+
+class CommentsContentSpider(FakeSpider):
+    """红果形态 + commentsContent 本集评论直供。"""
+
+    def detailContent(self, ids):
+        return {
+            "list": [
+                {
+                    "vod_id": ids[0],
+                    "vod_name": "归途",
+                    "vod_pic": "poster-detail",
+                    "type_name": "短剧",
+                    "vod_play_from": "红果线路",
+                    "vod_play_url": "第1集$/play/1#第2集$/play/2",
+                }
+            ]
+        }
+
+    def commentsContent(self, flag, id, cursor=""):
+        self.comments_content_calls = getattr(self, "comments_content_calls", []) + [(flag, id, cursor)]
+        if cursor == "fail":
+            return None
+        return {"is_end": True, "next_offset": "", "comments": [{"rpid": "c1", "uname": "用户3940", "message": "好看"}]}
+
+
+def test_controller_build_request_wires_spider_comments_loader() -> None:
+    spider = CommentsContentSpider()
+    controller = SpiderPluginController(spider, plugin_name="红果App[短]", search_enabled=True)
+
+    request = controller.build_request("/detail/1")
+
+    assert request.spider_comments_loader is not None
+    first = request.playlist[0]
+    payload = request.spider_comments_loader(first, "cursor-1")
+    assert payload == {"is_end": True, "next_offset": "", "comments": [{"rpid": "c1", "uname": "用户3940", "message": "好看"}]}
+    assert spider.comments_content_calls == [("红果线路", "/play/1", "cursor-1")]
+
+
+def test_controller_spider_comments_loader_none_when_unsupported() -> None:
+    controller = SpiderPluginController(FakeSpider(), plugin_name="普通插件", search_enabled=True)
+    assert controller._comments_content_supported is False
+    request = controller.build_request("/detail/1")
+    assert request.spider_comments_loader is None
+    assert controller.load_spider_comments(request.playlist[0]) is None
+
+
+def test_controller_spider_comments_loader_failure_returns_none() -> None:
+    spider = CommentsContentSpider()
+    controller = SpiderPluginController(spider, plugin_name="红果App[短]", search_enabled=True)
+    request = controller.build_request("/detail/1")
+
+    assert request.spider_comments_loader(request.playlist[0], "fail") is None

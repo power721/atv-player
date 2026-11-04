@@ -846,6 +846,9 @@ class SpiderPluginController:
         self._danmaku_content_supported = (
             self._probe_danmaku_content_support() if self._spider_initialized else False
         )
+        self._comments_content_supported = (
+            self._probe_comments_content_support() if self._spider_initialized else False
+        )
         self._danmaku_lock = threading.Lock()
         self._pending_danmaku_item_ids: set[int] = set()
         self._warming_danmaku_source_cache_keys: set[str] = set()
@@ -895,6 +898,7 @@ class SpiderPluginController:
                 self._spider_initializer()
             self._danmaku_enabled = bool(getattr(self._spider, "danmaku", lambda: False)())
             self._danmaku_content_supported = self._probe_danmaku_content_support()
+            self._comments_content_supported = self._probe_comments_content_support()
             self._spider_initialized = True
 
     def _probe_danmaku_content_support(self) -> bool:
@@ -909,6 +913,35 @@ class SpiderPluginController:
                 )
                 return False
         return callable(getattr(self._spider, "danmakuContent", None))
+
+    def _probe_comments_content_support(self) -> bool:
+        if hasattr(self._spider, "hasMethod"):
+            try:
+                return bool(self._spider.hasMethod("commentsContent"))
+            except Exception:
+                logger.exception(
+                    "Spider plugin commentsContent support probe failed plugin=%s",
+                    self._plugin_name,
+                )
+                return False
+        return callable(getattr(self._spider, "commentsContent", None))
+
+    def load_spider_comments(self, item: PlayItem, cursor: str = "") -> dict | None:
+        """调插件 commentsContent 拉本集评论;返回评论加载器协议 dict,失败/不支持返回 None。"""
+        if not self._comments_content_supported:
+            return None
+        self._log_spider_method_call("commentsContent", flag=item.play_source, id=item.vod_id, cursor=cursor)
+        try:
+            result = self._spider.commentsContent(item.play_source, item.vod_id, cursor)
+        except Exception as exc:
+            logger.warning(
+                "Spider plugin commentsContent failed plugin=%s vod_id=%s error=%s",
+                self._plugin_name,
+                item.vod_id,
+                exc,
+            )
+            return None
+        return result if isinstance(result, dict) else None
 
     def _direct_danmaku_available(self, item: PlayItem) -> bool:
         if item.danmaku_source is not None:
@@ -3071,6 +3104,12 @@ class SpiderPluginController:
                 raw_detail=raw_detail,
             )
 
+        spider_comments_loader = None
+        if self._comments_content_supported:
+
+            def spider_comments_loader(item: PlayItem, cursor: str = "") -> dict | None:
+                return self.load_spider_comments(item, cursor)
+
         return OpenPlayerRequest(
             vod=detail,
             playlist=playlist,
@@ -3099,4 +3138,5 @@ class SpiderPluginController:
             ),
             playback_history_loader=history_loader,
             playback_history_saver=history_saver,
+            spider_comments_loader=spider_comments_loader,
         )

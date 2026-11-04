@@ -28371,3 +28371,57 @@ def test_player_window_metadata_comments_no_sources_logs(qtbot, monkeypatch) -> 
     window._open_metadata_comments()
     qtbot.waitUntil(lambda: any("未找到豆瓣/Bangumi" in line for line in logs), timeout=5000)
     assert opened == []
+
+
+def test_player_window_spider_comments_source_without_metadata(qtbot, monkeypatch) -> None:
+    """爬虫源(插件 commentsContent)不依赖刮削:未刮削 vod 也有评论入口。"""
+    calls: list[tuple[object, str]] = []
+
+    def spider_loader(item, cursor=""):
+        calls.append((item, cursor))
+        return {"is_end": True, "next_offset": "", "comments": []}
+
+    window = PlayerWindow(FakePlayerController(), metadata_comments_provider=None)
+    qtbot.addWidget(window)
+    session = make_player_session()
+    session.spider_comments_loader = spider_loader
+    window.open_session(session)
+    assert window.metadata_comments_button.isHidden() is False
+
+
+def test_player_window_spider_comments_opens_dialog_with_spider_source_first(qtbot, monkeypatch) -> None:
+    created: dict[str, object] = {}
+    calls: list[tuple[object, str]] = []
+
+    class StubCommentsDialog:
+        def __init__(self, bvid, loader, parent=None, **kwargs) -> None:
+            created["bvid"] = bvid
+            created["loader"] = loader
+            created.update(kwargs)
+            created["exec_called"] = False
+
+        def exec(self):
+            created["exec_called"] = True
+            return 0
+
+    monkeypatch.setattr(player_window_module, "BilibiliCommentsDialog", StubCommentsDialog)
+
+    def spider_loader(item, cursor=""):
+        calls.append((item, cursor))
+        return {"is_end": True, "next_offset": "", "comments": []}
+
+    provider = StubCommentsProvider([StubCommentsSource("douban", "豆瓣短评")])
+    window = PlayerWindow(FakePlayerController(), metadata_comments_provider=provider)
+    qtbot.addWidget(window)
+    session = _scraped_session()
+    session.spider_comments_loader = spider_loader
+    window.open_session(session)
+
+    window._open_metadata_comments()
+    qtbot.waitUntil(lambda: created.get("exec_called") is True, timeout=5000)
+    keys = [key for key, _label, _loader in created["sources"]]
+    assert keys == ["spider", "douban"]
+    assert created["sources"][0][1] == "本集评论"
+    # loader 走 session 注入的爬虫管道,查询 dict 的 next 透传为游标
+    created["loader"]({"kind": "main", "next": "cursor-abc"})
+    assert calls == [(session.playlist[1], "cursor-abc")]

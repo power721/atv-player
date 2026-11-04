@@ -621,6 +621,8 @@ class OpenPlayerRequest:
     detail_field_runner: Callable[[PlayItem, PlaybackDetailFieldAction], None] | None = None
     # B站评论加载(loader 协议见 ui/bilibili_comments_dialog.CommentsLoader),由播放窗口评论对话框调用
     bilibili_comments_loader: Callable[[dict[str, object]], dict[str, object]] | None = None
+    # 爬虫本集评论(SpiderPluginController.load_spider_comments 包装,协议同上;None=插件不支持)
+    spider_comments_loader: Callable[..., dict | None] | None = None
     metadata_hydrator: Callable[[object], VodItem | None] | None = None
     metadata_scrape_service: object | None = None
     metadata_binding_repository: object | None = None
