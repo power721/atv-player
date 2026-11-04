@@ -24,6 +24,7 @@ from atv_player.ai import (
     SmartSearchIntentParser,
 )
 from atv_player.danmaku.cache import purge_stale_danmaku_cache
+from atv_player.source_health import SourceHealthStore, purge_stale_source_health
 from atv_player.danmaku.direct_parse import load_direct_parse_danmaku
 from atv_player.danmaku.generic import GenericDanmakuController
 from atv_player.danmaku.preferences import DanmakuSeriesPreferenceStore
@@ -419,6 +420,7 @@ def build_application() -> tuple[QApplication, SettingsRepository, AppLogService
     install_theme(app, ThemeManager(), config.theme_mode)
     purge_stale_poster_cache()
     threading.Thread(target=purge_stale_danmaku_cache, daemon=True).start()
+    threading.Thread(target=purge_stale_source_health, daemon=True).start()
     logger.info(
         "Application initialized data_dir=%s",
         data_dir,
@@ -493,6 +495,7 @@ class AppCoordinator(QObject):
             config_loader=self.repo.load_config,
         )
         self._danmaku_preference_store = DanmakuSeriesPreferenceStore()
+        self._source_health_store = SourceHealthStore()
         self._subtitle_search_service = create_default_subtitle_service(
             get=self._proxy_http_get(),
             post=self._proxy_http_post(),
@@ -2622,6 +2625,7 @@ class AppCoordinator(QObject):
             metadata_binding_repository=self._metadata_binding_repository,
             episode_title_override_repository=self._episode_title_override_repository,
             danmaku_preference_store=self._danmaku_preference_store,
+            source_health_store=self._source_health_store,
         )
         self.main_window.logout_requested.connect(self._handle_logout_requested)
         if following_update_service is not None:

@@ -376,6 +376,14 @@ def _normalize_playback_auto_switch_source_on_failure(value: object) -> bool:
     return bool(value)
 
 
+def _normalize_source_health_learning_enabled(value: object) -> bool:
+    return bool(value)
+
+
+def _normalize_source_health_sort_enabled(value: object) -> bool:
+    return bool(value)
+
+
 def _normalize_bilibili_grouped_playlist_tree_enabled(value: object) -> bool:
     return bool(value)
 
@@ -522,6 +530,8 @@ class SettingsRepository:
                     mpv_extra_options TEXT NOT NULL DEFAULT '',
                     mpv_shader_preset TEXT NOT NULL DEFAULT '',
                     playback_auto_switch_source_on_failure INTEGER NOT NULL DEFAULT 0,
+                    source_health_learning_enabled INTEGER NOT NULL DEFAULT 1,
+                    source_health_sort_enabled INTEGER NOT NULL DEFAULT 1,
                     bilibili_grouped_playlist_tree_enabled INTEGER NOT NULL DEFAULT 0,
                     m3u_proxy_segment_prefetch_size INTEGER NOT NULL DEFAULT 2,
                     m3u8_ad_filter_mode TEXT NOT NULL DEFAULT 'smart',
@@ -772,6 +782,14 @@ class SettingsRepository:
             if "playback_auto_switch_source_on_failure" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN playback_auto_switch_source_on_failure INTEGER NOT NULL DEFAULT 0"
+                )
+            if "source_health_learning_enabled" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN source_health_learning_enabled INTEGER NOT NULL DEFAULT 1"
+                )
+            if "source_health_sort_enabled" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN source_health_sort_enabled INTEGER NOT NULL DEFAULT 1"
                 )
             if "bilibili_grouped_playlist_tree_enabled" not in columns:
                 conn.execute(
@@ -1047,6 +1065,8 @@ class SettingsRepository:
                     mpv_extra_options,
                     mpv_shader_preset,
                     playback_auto_switch_source_on_failure,
+                    source_health_learning_enabled,
+                    source_health_sort_enabled,
                     bilibili_grouped_playlist_tree_enabled,
                     m3u_proxy_segment_prefetch_size,
                     m3u8_ad_filter_mode,
@@ -1106,7 +1126,7 @@ class SettingsRepository:
                     home_mode
                 )
                     VALUES (
-                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', 0, 0, '[]', '', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 'auto', 512, 'auto-safe', 15, 20, '', '', 0, 0, 2, 'smart', 1, 1, '/', 'main', 'browse', '', '', '', '', '',
+                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', 0, 0, '[]', '', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 'auto', 512, 'auto-safe', 15, 20, '', '', 0, 1, 1, 0, 2, 'smart', 1, 1, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, 0, 0, 1, NULL, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
                     NULL, NULL, NULL, NULL, 'douban', '', '', '', '[]', '360', 0, '', '', '', 30, 1, 1, 1, 1, 'poster', 1, 0, 0, 'browse'
                 )
@@ -1207,6 +1227,8 @@ class SettingsRepository:
                     mpv_extra_options,
                     mpv_shader_preset,
                     playback_auto_switch_source_on_failure,
+                    source_health_learning_enabled,
+                    source_health_sort_enabled,
                     bilibili_grouped_playlist_tree_enabled,
                     m3u_proxy_segment_prefetch_size,
                     m3u8_ad_filter_mode,
@@ -1318,6 +1340,8 @@ class SettingsRepository:
             mpv_extra_options,
             mpv_shader_preset,
             playback_auto_switch_source_on_failure,
+            source_health_learning_enabled,
+            source_health_sort_enabled,
             bilibili_grouped_playlist_tree_enabled,
             m3u_proxy_segment_prefetch_size,
             m3u8_ad_filter_mode,
@@ -1444,6 +1468,10 @@ class SettingsRepository:
             playback_auto_switch_source_on_failure=_normalize_playback_auto_switch_source_on_failure(
                 playback_auto_switch_source_on_failure
             ),
+            source_health_learning_enabled=_normalize_source_health_learning_enabled(
+                source_health_learning_enabled
+            ),
+            source_health_sort_enabled=_normalize_source_health_sort_enabled(source_health_sort_enabled),
             bilibili_grouped_playlist_tree_enabled=_normalize_bilibili_grouped_playlist_tree_enabled(
                 bilibili_grouped_playlist_tree_enabled
             ),
@@ -1584,6 +1612,8 @@ class SettingsRepository:
                     mpv_extra_options = ?,
                     mpv_shader_preset = ?,
                     playback_auto_switch_source_on_failure = ?,
+                    source_health_learning_enabled = ?,
+                    source_health_sort_enabled = ?,
                     bilibili_grouped_playlist_tree_enabled = ?,
                     m3u_proxy_segment_prefetch_size = ?,
                     m3u8_ad_filter_mode = ?,
@@ -1714,6 +1744,8 @@ class SettingsRepository:
                     _normalize_mpv_extra_options(config.mpv_extra_options),
                     str(getattr(config, "mpv_shader_preset", "") or "").strip(),
                     int(config.playback_auto_switch_source_on_failure),
+                    int(getattr(config, "source_health_learning_enabled", True)),
+                    int(getattr(config, "source_health_sort_enabled", True)),
                     int(config.bilibili_grouped_playlist_tree_enabled),
                     _normalize_m3u_proxy_segment_prefetch_size(config.m3u_proxy_segment_prefetch_size),
                     _normalize_m3u8_ad_filter_mode(config.m3u8_ad_filter_mode),

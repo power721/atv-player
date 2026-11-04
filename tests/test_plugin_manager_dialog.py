@@ -288,6 +288,35 @@ def test_plugin_manager_local_picker_accepts_js(qtbot, monkeypatch) -> None:
     assert "*.py" in seen["filter"]
 
 
+def test_plugin_manager_dialog_shows_health_badge_from_store(qtbot, tmp_path) -> None:
+    from atv_player.source_health import PLAY_OUTCOME_FAIL, PLAY_OUTCOME_SUCCESS, SourceHealthStore
+
+    store = SourceHealthStore(tmp_path / "source-health.json")
+    for _ in range(5):
+        store.record_play("search:plugin:1", "success")
+    for _ in range(6):
+        store.record_play("search:plugin:2", "fail", error="x")
+    del PLAY_OUTCOME_SUCCESS, PLAY_OUTCOME_FAIL
+
+    dialog = PluginManagerDialog(
+        FakePluginManager(),
+        source_health_store=store,
+    )
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    health_0 = dialog.plugin_table.item(0, 7)
+    health_1 = dialog.plugin_table.item(1, 7)
+    assert health_0 is not None and health_0.text() == "●"
+    assert health_1 is not None and health_1.text() == "●"
+    # 第一行(健康)绿色,第二行(异常)红色
+    from PySide6.QtGui import QColor
+
+    assert health_0.foreground().color() == QColor("#0B8043")
+    assert health_1.foreground().color() == QColor("#C62828")
+    assert "搜索 成功" in health_0.toolTip()
+
+
 def test_plugin_manager_dialog_renders_rows_and_status(qtbot) -> None:
     dialog = PluginManagerDialog(FakePluginManager())
     qtbot.addWidget(dialog)

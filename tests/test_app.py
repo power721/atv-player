@@ -4741,11 +4741,15 @@ def test_build_application_starts_async_danmaku_cache_cleanup(monkeypatch, tmp_p
     monkeypatch.setattr(app_module, "app_data_dir", lambda: tmp_path / "app-data")
     monkeypatch.setattr(app_module, "app_cache_dir", lambda: tmp_path / "app-cache")
     monkeypatch.setattr(app_module, "purge_stale_danmaku_cache", lambda: cleanup_calls.append("cleaned"))
+    monkeypatch.setattr(
+        app_module, "purge_stale_source_health", lambda: cleanup_calls.append("health-cleaned")
+    )
     monkeypatch.setattr(app_module.threading, "Thread", FakeThread)
 
     app_module.build_application()
 
-    assert cleanup_calls == ["started", "cleaned"]
+    # 弹幕缓存清理与源健康度清理各起一个 daemon 线程(顺序:弹幕→健康度)
+    assert cleanup_calls == ["started", "cleaned", "started", "health-cleaned"]
 
 
 def test_build_application_installs_crash_diagnostics(monkeypatch, tmp_path) -> None:
@@ -11463,3 +11467,21 @@ def test_episode_title_enhancer_flat_offset_maps_sequential_playlist(tmp_path, m
         "第2季 第1集 丙",
     ]
     assert [item.season_number for item in updated] == [1, 1, 2]
+
+
+def test_advanced_settings_dialog_round_trips_source_health_flags(qtbot) -> None:
+    from atv_player.ui.advanced_settings_dialog import AdvancedSettingsDialog
+
+    config = AppConfig()
+    dialog = AdvancedSettingsDialog(config, save_config=lambda: None)
+    qtbot.addWidget(dialog)
+
+    assert dialog.source_health_learning_enabled_checkbox.isChecked() is True
+    assert dialog.source_health_sort_enabled_checkbox.isChecked() is True
+
+    dialog.source_health_learning_enabled_checkbox.setChecked(False)
+    dialog.source_health_sort_enabled_checkbox.setChecked(False)
+    dialog._save()
+
+    assert config.source_health_learning_enabled is False
+    assert config.source_health_sort_enabled is False

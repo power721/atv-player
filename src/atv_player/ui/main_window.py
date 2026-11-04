@@ -70,6 +70,7 @@ from atv_player.heat import (
     heat_identity_from_vod,
 )
 from atv_player.log_store import AppLogFilter
+from atv_player.source_health import run_search_with_health, search_health_key
 from atv_player.models import (
     AppConfig,
     BuiltinTabOverrides,
@@ -1500,6 +1501,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             metadata_binding_repository=None,
             episode_title_override_repository=None,
             danmaku_preference_store=None,
+            source_health_store=None,
             vod_token_options: list[str] | None = None,
             can_select_vod_token: bool = False,
             on_vod_token_changed=None,
@@ -1524,6 +1526,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         self._metadata_binding_repository = metadata_binding_repository
         self._episode_title_override_repository = episode_title_override_repository
         self._danmaku_preference_store = danmaku_preference_store
+        self._source_health_store = source_health_store
         self.config = config
         self._plugin_definitions = list(spider_plugins or [])
         self._plugin_loader_task = plugin_loader_task
@@ -5018,8 +5021,24 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             if self._is_window_alive():
                 self._global_search_signals.failed.emit(request_id, definition.key)
             return
+        health_store = (
+            self._source_health_store
+            if bool(getattr(self.config, "source_health_learning_enabled", True))
+            and self._source_health_store is not None
+            else None
+        )
         try:
-            items, page_count = controller.search_items(keyword, page_number)
+            if health_store is not None:
+                # 计时+成败/空结果记录+Python插件超时看门狗(治挂死"搜索中...")。
+                items, page_count = run_search_with_health(
+                    controller,
+                    keyword,
+                    page_number,
+                    search_health_key(definition.key),
+                    health_store,
+                )
+            else:
+                items, page_count = controller.search_items(keyword, page_number)
         except Exception:
             if self._is_window_alive():
                 self._global_search_signals.failed.emit(request_id, definition.key)
@@ -5515,6 +5534,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
         dialog = PluginManagerDialog(
             self._plugin_manager,
             self,
+            source_health_store=self._source_health_store,
             builtin_tabs=[
                 {"key": definition.key, "title": definition.title}
                 for definition in self._builtin_tab_default_definitions()
@@ -6984,6 +7004,7 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             "following_toggle": self._toggle_player_item_following,
             "following_progress_reporter": self._report_player_item_following_progress,
             "heat_controller": self._heat_controller,
+            "source_health_store": self._source_health_store,
         }
         try:
             parameters = inspect.signature(PlayerWindow).parameters

@@ -72,6 +72,21 @@ def test_settings_repository_round_trips_next_episode_preload(tmp_path: Path) ->
     assert loaded.next_episode_preload_enabled is False
 
 
+def test_settings_repository_round_trips_source_health_flags(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = repo.load_config()
+    assert config.source_health_learning_enabled is True
+    assert config.source_health_sort_enabled is True
+
+    config.source_health_learning_enabled = False
+    config.source_health_sort_enabled = False
+    repo.save_config(config)
+    loaded = repo.load_config()
+
+    assert loaded.source_health_learning_enabled is False
+    assert loaded.source_health_sort_enabled is False
+
+
 def test_settings_repository_round_trips_chapter_auto_skip(tmp_path: Path) -> None:
     repo = SettingsRepository(tmp_path / "app.db")
     config = repo.load_config()

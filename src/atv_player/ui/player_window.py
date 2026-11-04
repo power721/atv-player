@@ -85,6 +85,12 @@ from atv_player.chapter_skip import (
 from atv_player.danmaku.cache import load_or_create_danmaku_ass_cache
 from atv_player.danmaku.generic import normalize_danmaku_episode_url
 from atv_player.danmaku.preferences import build_danmaku_tmdb_season_key, merged_source_preference
+from atv_player.source_health import (
+    PLAY_OUTCOME_FAIL,
+    PLAY_OUTCOME_SUCCESS,
+    playback_line_health_key,
+    rank_candidates,
+)
 from atv_player.danmaku.utils import extract_official_link_url, infer_playlist_episode_number
 from atv_player.subtitles.cache import save_subtitle_file
 from atv_player.subtitles.service import build_subtitle_query
@@ -1110,6 +1116,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         following_progress_reporter=None,
         heat_controller=None,
         drive_link_loader=None,
+        source_health_store=None,
     ) -> None:
         super().__init__(
             title="alist-tvbox 播放器",
@@ -1135,6 +1142,8 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             lambda *_args, **_kwargs: None
         )
         self._heat_controller = heat_controller
+        self._source_health_store = source_health_store
+        self._pending_play_health_key: str | None = None
         self._drive_link_loader = drive_link_loader
         self._heat_summary_request_id = 0
         self._heat_summary_text = ""
@@ -3984,6 +3993,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         return sum(len(group.sources) for group in self._session_source_groups()) > 1
 
     def _show_failed_startup_state(self, message: str) -> None:
+        self._record_pending_play_failure(error=message)
         self._set_startup_state(
             self._startup_coordinator.failed(
                 message=message,
@@ -4000,18 +4010,79 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return None
         return (self.session.source_group_index, self.session.source_index)
 
+    def _active_source_health_store(self):
+        if not bool(getattr(self.config, "source_health_learning_enabled", True)):
+            return None
+        return self._source_health_store
+
+    def _current_playback_health_key(self) -> str:
+        session = self.session
+        if session is None:
+            return ""
+        source_groups = self._session_source_groups()
+        route_label = ""
+        if 0 <= session.source_group_index < len(source_groups):
+            group = source_groups[session.source_group_index]
+            if 0 <= session.source_index < len(group.sources):
+                route_label = str(group.sources[session.source_index].label or "").strip()
+        return playback_line_health_key(
+            session.source_kind,
+            session.source_key,
+            route_label,
+            drive_share_key=getattr(session, "drive_resource_id", ""),
+            vod_id=getattr(session.vod, "vod_id", ""),
+        )
+
+    def _arm_pending_play_health(self) -> None:
+        # 每次起播布防一次:首个失败信号记 fail、首帧可见记 success,之后不再记。
+        self._pending_play_health_key = self._current_playback_health_key() or None
+
+    def _record_pending_play_failure(self, error: object = "") -> None:
+        key = self._pending_play_health_key
+        self._pending_play_health_key = None
+        store = self._active_source_health_store()
+        if key and store is not None:
+            store.record_play(key, PLAY_OUTCOME_FAIL, error=error)
+
+    def _record_pending_play_success(self) -> None:
+        key = self._pending_play_health_key
+        self._pending_play_health_key = None
+        store = self._active_source_health_store()
+        if key and store is not None:
+            store.record_play(key, PLAY_OUTCOME_SUCCESS)
+
     def _next_source_after_failure(self) -> tuple[int, int] | None:
         if self.session is None:
             return None
         source_groups = self._session_source_groups()
         if not source_groups:
             return None
-        active_group = source_groups[self.session.source_group_index]
-        if self.session.source_index + 1 < len(active_group.sources):
-            return (self.session.source_group_index, self.session.source_index + 1)
-        if self.session.source_group_index + 1 < len(source_groups):
-            return (self.session.source_group_index + 1, 0)
-        return None
+        session = self.session
+        current_key = (session.source_group_index, session.source_index)
+        candidates: list[tuple[int, int]] = []
+        for group_index, group in enumerate(source_groups):
+            for source_index in range(len(group.sources)):
+                candidate = (group_index, source_index)
+                if candidate == current_key or candidate in self._auto_switched_failure_sources:
+                    continue
+                candidates.append(candidate)
+        if not candidates:
+            return None
+        if not bool(getattr(self.config, "source_health_sort_enabled", True)):
+            return candidates[0]
+        store = self._active_source_health_store()
+        ranked = rank_candidates(
+            candidates,
+            store,
+            key_of=lambda candidate: playback_line_health_key(
+                session.source_kind,
+                session.source_key,
+                str(source_groups[candidate[0]].sources[candidate[1]].label or "").strip(),
+                drive_share_key=getattr(session, "drive_resource_id", ""),
+                vod_id=getattr(session.vod, "vod_id", ""),
+            ),
+        )
+        return ranked[0] if ranked else candidates[0]
 
     def _should_auto_switch_source_after_failure(self) -> bool:
         return bool(getattr(self.config, "playback_auto_switch_source_on_failure", False))
@@ -5491,6 +5562,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if not self.session.playlist:
             self._append_log("加载目录失败，请在目录下拉框中选择其他目录")
             return
+        self._arm_pending_play_health()
         if self.current_index >= len(self.session.playlist):
             self.current_index = max(0, len(self.session.playlist) - 1)
         self._reset_playback_observation()
@@ -6098,6 +6170,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         elif state in {"visible", "audio-cover"}:
             self._set_startup_state(self._startup_coordinator.playing())
             self._reset_auto_switched_failure_sources()
+            self._record_pending_play_success()
         if state in {"visible", "audio-cover"}:
             self._video_surface_ready = True
             self.video_poster_overlay.hide()

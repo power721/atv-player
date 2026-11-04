@@ -6,7 +6,7 @@ from functools import partial
 import threading
 
 from PySide6.QtCore import QItemSelectionModel, QObject, QSignalBlocker, Qt, QTimer, Signal
-from PySide6.QtGui import QShowEvent
+from PySide6.QtGui import QColor, QShowEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -95,6 +95,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         builtin_tabs=None,
         builtin_tab_overrides_json: str = "",
         save_builtin_tab_overrides=None,
+        source_health_store=None,
     ) -> None:
         super().__init__(title="源管理", parent=parent)
         self._init_async_guard()
@@ -103,6 +104,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.plugin_tabs_dirty = False
         self.builtin_tabs_dirty = False
         self._save_builtin_tab_overrides = save_builtin_tab_overrides or (lambda _payload: None)
+        self._source_health_store = source_health_store
         self.changed_plugin_ids: list[int] = []
         self._import_in_progress = False
         self._refresh_in_progress = False
@@ -154,8 +156,10 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.empty_state_label = QLabel("没有匹配的插件", self)
         self.empty_state_label.hide()
 
-        self.plugin_table = QTableWidget(0, 7, self)
-        self.plugin_table.setHorizontalHeaderLabels(["名称", "来源", "版本", "地址", "启用", "状态", "最近加载"])
+        self.plugin_table = QTableWidget(0, 8, self)
+        self.plugin_table.setHorizontalHeaderLabels(
+            ["名称", "来源", "版本", "地址", "启用", "状态", "最近加载", "健康"]
+        )
         self.plugin_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.plugin_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.plugin_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -173,6 +177,7 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
         self.plugin_table.setColumnWidth(4, 64)
         self.plugin_table.setColumnWidth(5, 160)
         self.plugin_table.setColumnWidth(6, 168)
+        self.plugin_table.setColumnWidth(7, 64)
         self.add_local_button = QPushButton("添加本地插件")
         self.add_remote_button = QPushButton("添加远程插件")
         self.import_github_button = QPushButton("批量导入")
@@ -578,9 +583,42 @@ class PluginManagerDialog(ThemedDialogBase, AsyncGuardMixin):
             if plugin.last_loaded_at:
                 loaded_at = datetime.fromtimestamp(plugin.last_loaded_at).strftime("%Y-%m-%d %H:%M:%S")
             self.plugin_table.setItem(row, 6, QTableWidgetItem(loaded_at))
+            self.plugin_table.setItem(row, 7, self._build_plugin_health_item(plugin))
         self.empty_state_label.setVisible(len(plugins) == 0)
         self._restore_selection(selected_plugin_ids)
         self._sync_action_state()
+
+    def _build_plugin_health_item(self, plugin) -> QTableWidgetItem:
+        # 只读健康指示(源健康度学习):搜索成败学习出绿/黄/红,无样本灰;
+        # 不参与排序——用户手动顺序不受影响(WebHTV 展示护栏)。
+        item = QTableWidgetItem("—")
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        store = self._source_health_store
+        if store is None:
+            return item
+        from atv_player.source_health import health_state
+
+        record = store.get(f"search:plugin:{plugin.id}")
+        state = health_state(record)
+        labels = {
+            "good": ("●", QColor("#0B8043"), "良好"),
+            "warn": ("●", QColor("#B8860B"), "波动"),
+            "bad": ("●", QColor("#C62828"), "异常"),
+        }
+        if state in labels:
+            dot, color, text = labels[state]
+            item.setText(dot)
+            item.setForeground(color)
+            tooltip = f"健康: {text}"
+            if record is not None:
+                tooltip += (
+                    f"\n搜索 成功{record.search_success} 失败{record.search_fail} 空{record.search_empty}"
+                    f"\n播放 成功{record.play_success} 失败{record.play_fail}"
+                )
+                if record.last_error:
+                    tooltip += f"\n最近错误: {record.last_error}"
+            item.setToolTip(tooltip)
+        return item
 
     def _plugin_snapshot(self, plugins) -> dict[int, tuple]:
         snapshot: dict[int, tuple] = {}

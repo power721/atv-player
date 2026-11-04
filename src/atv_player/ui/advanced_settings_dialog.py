@@ -268,6 +268,12 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         )
         self.following_backend_hint_label.setWordWrap(True)
         self.playback_auto_switch_source_on_failure_checkbox = QCheckBox("播放失败自动切换线路")
+        self.source_health_learning_enabled_checkbox = QCheckBox(
+            "学习源健康度(记录线路播放与源搜索成败)"
+        )
+        self.source_health_sort_enabled_checkbox = QCheckBox(
+            "自动换源候选按源健康度排序"
+        )
         self.bilibili_grouped_playlist_tree_enabled_checkbox = QCheckBox("B站播放列表显示为分组树")
         self.next_episode_preload_enabled_checkbox = QCheckBox(
             "预加载下一集（提前解析播放地址并预热网盘直链）"
@@ -498,6 +504,12 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.playback_auto_switch_source_on_failure_checkbox.setChecked(
             config.playback_auto_switch_source_on_failure
         )
+        self.source_health_learning_enabled_checkbox.setChecked(
+            bool(getattr(config, "source_health_learning_enabled", True))
+        )
+        self.source_health_sort_enabled_checkbox.setChecked(
+            bool(getattr(config, "source_health_sort_enabled", True))
+        )
         self.bilibili_grouped_playlist_tree_enabled_checkbox.setChecked(
             config.bilibili_grouped_playlist_tree_enabled
         )
@@ -638,6 +650,8 @@ class AdvancedSettingsDialog(ThemedDialogBase):
 
         playback_layout = QFormLayout()
         playback_layout.addRow(self.playback_auto_switch_source_on_failure_checkbox)
+        playback_layout.addRow(self.source_health_learning_enabled_checkbox)
+        playback_layout.addRow(self.source_health_sort_enabled_checkbox)
         playback_layout.addRow(self.bilibili_grouped_playlist_tree_enabled_checkbox)
         playback_layout.addRow(self.next_episode_preload_enabled_checkbox)
         playback_layout.addRow(self.chapter_auto_skip_enabled_checkbox)
@@ -1326,7 +1340,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
 
     def _validated_playback_values(
         self,
-    ) -> tuple[bool, bool, bool, bool, int, str, int, int, int, str, str] | None:
+    ) -> tuple[bool, bool, bool, bool, int, str, int, int, int, str, str, bool, bool] | None:
         def parse_int(text: str, *, label: str, minimum: int, maximum: int) -> int | None:
             try:
                 value = int(text.strip())
@@ -1412,6 +1426,8 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             prefetch_size,
             self.m3u8_ad_filter_mode_combo.currentData(),
             "\n".join(normalized_lines),
+            self.source_health_learning_enabled_checkbox.isChecked(),
+            self.source_health_sort_enabled_checkbox.isChecked(),
         )
 
     def _validated_ai_values(self) -> tuple[bool, str, str, str, int] | None:
@@ -1615,6 +1631,8 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self._config.m3u_proxy_segment_prefetch_size,
             self._config.m3u8_ad_filter_mode,
             self._config.mpv_extra_options,
+            self._config.source_health_learning_enabled,
+            self._config.source_health_sort_enabled,
         ) = playback_values
         self._save_config()
         if self._can_select_vod_token and callable(self._on_vod_token_changed):

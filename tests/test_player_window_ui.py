@@ -7311,6 +7311,150 @@ def test_player_window_auto_switches_to_next_source_when_first_open_fails(qtbot)
     assert "播放失败，自动切换线路" in window.log_view.toPlainText()
 
 
+def test_player_window_auto_switch_prefers_healthy_source(qtbot, tmp_path) -> None:
+    # 健康排序:线路2 已学为 BAD、线路3 已学为 GOOD,失败后应跳过线路2 先切线路3。
+    from atv_player.source_health import PLAY_OUTCOME_FAIL, PLAY_OUTCOME_SUCCESS, SourceHealthStore
+
+    store = SourceHealthStore(tmp_path / "source-health.json")
+    for _ in range(6):
+        store.record_play("plugin:7:route:线路2", PLAY_OUTCOME_FAIL, error="x")
+    for _ in range(5):
+        store.record_play("plugin:7:route:线路3", PLAY_OUTCOME_SUCCESS)
+    failing = [PlayItem(title="第1集", url="", vod_id="line-1", play_source="线路1")]
+    bad = [PlayItem(title="第1集", url="http://line2/1.m3u8", vod_id="line-2", play_source="线路2")]
+    good = [PlayItem(title="第1集", url="http://line3/1.m3u8", vod_id="line-3", play_source="线路3")]
+    session = PlayerSession(
+        vod=VodItem(vod_id="vod-h", vod_name="剧集"),
+        playlist=failing,
+        playlists=[failing, bad, good],
+        playlist_index=0,
+        source_groups=[
+            PlaybackSourceGroup(
+                label="线路",
+                sources=[
+                    PlaybackSource(label="线路1", playlist=failing),
+                    PlaybackSource(label="线路2", playlist=bad),
+                    PlaybackSource(label="线路3", playlist=good),
+                ],
+            )
+        ],
+        source_kind="spider_plugin",
+        source_key="7",
+        source_group_index=0,
+        source_index=0,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(playback_auto_switch_source_on_failure=True),
+        save_config=lambda: None,
+        source_health_store=store,
+    )
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+
+    assert window.session is not None
+    assert window.session.source_index == 2
+    assert window.video.load_calls[-1][0] == "http://line3/1.m3u8"
+
+
+def test_player_window_auto_switch_keeps_index_order_when_health_sort_disabled(qtbot, tmp_path) -> None:
+    from atv_player.source_health import PLAY_OUTCOME_FAIL, PLAY_OUTCOME_SUCCESS, SourceHealthStore
+
+    store = SourceHealthStore(tmp_path / "source-health.json")
+    for _ in range(6):
+        store.record_play("plugin:7:route:线路2", PLAY_OUTCOME_FAIL, error="x")
+    for _ in range(5):
+        store.record_play("plugin:7:route:线路3", PLAY_OUTCOME_SUCCESS)
+    failing = [PlayItem(title="第1集", url="", vod_id="line-1", play_source="线路1")]
+    bad = [PlayItem(title="第1集", url="http://line2/1.m3u8", vod_id="line-2", play_source="线路2")]
+    session = PlayerSession(
+        vod=VodItem(vod_id="vod-h", vod_name="剧集"),
+        playlist=failing,
+        playlists=[failing, bad],
+        playlist_index=0,
+        source_groups=[
+            PlaybackSourceGroup(
+                label="线路",
+                sources=[
+                    PlaybackSource(label="线路1", playlist=failing),
+                    PlaybackSource(label="线路2", playlist=bad),
+                ],
+            )
+        ],
+        source_kind="spider_plugin",
+        source_key="7",
+        source_group_index=0,
+        source_index=0,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(
+            playback_auto_switch_source_on_failure=True,
+            source_health_sort_enabled=False,
+        ),
+        save_config=lambda: None,
+        source_health_store=store,
+    )
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+
+    assert window.session is not None
+    assert window.session.source_index == 1
+    assert window.video.load_calls[-1][0] == "http://line2/1.m3u8"
+
+
+def test_player_window_records_play_health_once_per_attempt(qtbot, tmp_path) -> None:
+    from atv_player.source_health import PLAY_OUTCOME_FAIL, PLAY_OUTCOME_SUCCESS, SourceHealthStore
+
+    store = SourceHealthStore(tmp_path / "source-health.json")
+    session = PlayerSession(
+        vod=VodItem(vod_id="vod-r", vod_name="剧集"),
+        playlist=[PlayItem(title="第1集", url="", vod_id="line-1", play_source="线路1")],
+        source_kind="spider_plugin",
+        source_key="9",
+        source_group_index=0,
+        source_index=0,
+        start_index=0,
+        start_position_seconds=0,
+        speed=1.0,
+    )
+    window = PlayerWindow(
+        FakePlayerController(),
+        config=AppConfig(playback_auto_switch_source_on_failure=False),
+        save_config=lambda: None,
+        source_health_store=store,
+    )
+    qtbot.addWidget(window)
+    window.video = RecordingVideo()
+
+    window.open_session(session)
+
+    # 失败信号可能多次汇聚(解析失败/装载失败),但每次起播只记一次 fail
+    record = store.get("plugin:9:route:线路1")
+    assert record is not None
+    assert record.play_fail == 1
+
+    # 布防后首帧可见记一次成功,重复状态变化不重复记
+    window._arm_pending_play_health()
+    window._handle_video_picture_state_changed("visible")
+    window._handle_video_picture_state_changed("visible")
+
+    record = store.get("plugin:9:route:线路1")
+    assert record is not None
+    assert record.play_success == 1
+    assert record.play_fail == 1
+
+
 def test_player_window_auto_switches_to_first_source_of_next_group_when_current_group_is_exhausted(qtbot) -> None:
     first = [PlayItem(title="第1集", url="", vod_id="line-1", play_source="组1线路1")]
     second = [PlayItem(title="第1集", url="http://group2/1.m3u8", play_source="组2线路1")]

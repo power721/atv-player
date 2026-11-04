@@ -57,6 +57,10 @@ class AppConfig:
     mpv_extra_options: str = ""
     mpv_shader_preset: str = ""
     playback_auto_switch_source_on_failure: bool = False
+    # 源健康度:学习(记录播放线路/搜索源成败)默认开;纯本地统计。
+    source_health_learning_enabled: bool = True
+    # 源健康度:自动换源候选按健康分排序(展示顺序不受影响)。默认开。
+    source_health_sort_enabled: bool = True
     bilibili_grouped_playlist_tree_enabled: bool = False
     m3u_proxy_segment_prefetch_size: int = 2
     m3u8_ad_filter_mode: str = "smart"
