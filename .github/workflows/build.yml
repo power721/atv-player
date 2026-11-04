@@ -27,6 +27,10 @@ jobs:
             platform: linux
           - os: macos-latest
             platform: macos
+            macos_runtime: homebrew
+          - os: macos-15-intel
+            platform: macos
+            macos_runtime: macports
           - os: windows-latest
             platform: windows
 
@@ -76,8 +80,35 @@ jobs:
           echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"
 
       - name: Install macOS system dependencies
-        if: matrix.platform == 'macos'
+        if: matrix.macos_runtime == 'homebrew'
         run: brew install mpv
+
+      # Intel macOS: Homebrew 已停发 x86_64 bottle,改用 MacPorts 官方预编译
+      # 归档(darwin_24/Sequoia,最低系统 15.0)。整个 /opt/local 结果缓存,
+      # 命中即跳过安装。mpv 0.41 为最后一个带 libmpv 默认变体的稳定线。
+      - name: Cache MacPorts libmpv (macOS Intel)
+        if: matrix.macos_runtime == 'macports'
+        uses: actions/cache@v6
+        with:
+          path: /opt/local
+          key: macports-mpv-darwin24-x86_64-v1
+
+      - name: Install macOS Intel libmpv (MacPorts)
+        if: matrix.macos_runtime == 'macports'
+        run: |
+          MACPORTS_PKG_URL="https://github.com/macports/macports-base/releases/download/v2.12.7/MacPorts-2.12.7-15-Sequoia.pkg"
+          MACPORTS_PKG_SHA256="87b2e87ed7adc4aca947b42eb7ff991614cc0edfccb486237f2bbc75f28aae63"
+          if [ -f /opt/local/lib/libmpv.dylib ]; then
+            echo "Using cached MacPorts libmpv"
+          else
+            curl -fsSL -o "$RUNNER_TEMP/MacPorts.pkg" "$MACPORTS_PKG_URL"
+            echo "$MACPORTS_PKG_SHA256  $RUNNER_TEMP/MacPorts.pkg" | shasum -a 256 -c -
+            sudo installer -pkg "$RUNNER_TEMP/MacPorts.pkg" -target /
+            sudo /opt/local/bin/port -q sync
+            sudo /opt/local/bin/port -N install mpv
+          fi
+          test -f /opt/local/lib/libmpv.dylib
+          file /opt/local/lib/libmpv.dylib | grep -q x86_64
 
       - name: Install Windows system dependencies
         if: matrix.platform == 'windows'
@@ -160,7 +191,8 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.platform }}-bundle
+          # 用 os 而非 platform 命名:两个 macOS job(arm64/x64)会撞名
+          name: ${{ matrix.os }}-bundle
           path: dist/${{ env.ARCHIVE_NAME }}
           retention-days: 7
 

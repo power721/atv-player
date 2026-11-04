@@ -275,7 +275,13 @@ Windows 打包时，`build.py` 会优先从这些位置查找 `mpv` 运行库：
 - 仓库根目录下的 `mpv/`
 - 当前 `PATH`
 
-GitHub Actions 会为 Pull Request 和手动触发构建 Linux、macOS、Windows 制品；推送以 `v` 开头的标签时，还会创建 GitHub Release 并上传产物。
+GitHub Actions 会为 Pull Request 和手动触发构建 Linux、macOS（Apple Silicon `arm64` 与 Intel `x64` 双架构）、Windows 制品；推送以 `v` 开头的标签时，还会创建 GitHub Release 并上传产物。
+
+macOS 双架构说明：
+
+- Apple Silicon 构建通过 Homebrew 安装 `mpv`（产物要求 macOS 26+，随 Homebrew bottle 的最低系统版本浮动）
+- Intel 构建跑在 `macos-15-intel` runner 上，`libmpv` 来自 MacPorts 官方预编译归档（产物要求 macOS 15+），整个 `/opt/local` 由 CI 缓存
+- macOS 侧 `build.py` 按 `/opt/homebrew` → `/opt/local` → `/usr/local` 的顺序探测 `libmpv`
 
 ## 环境变量
 

@@ -74,6 +74,26 @@ def test_data_mapping_uses_platform_specific_separator() -> None:
     assert build.data_mapping(source, "atv_player/icons", "windows") == r"/tmp/icons;atv_player/icons"
 
 
+def test_find_libmpv_macos_uses_macports_prefix(monkeypatch) -> None:
+    macports = Path("/opt/local/lib/libmpv.dylib")
+
+    def fake_exists(self):
+        return self == macports
+
+    monkeypatch.setattr(Path, "exists", fake_exists)
+
+    assert build.find_libmpv("macos") == [(macports, ".")]
+
+
+def test_find_libmpv_macos_prefers_homebrew_over_macports_and_usr_local(monkeypatch) -> None:
+    homebrew = Path("/opt/homebrew/lib/libmpv.dylib")
+    existing = {homebrew, Path("/opt/local/lib/libmpv.dylib"), Path("/usr/local/lib/libmpv.dylib")}
+
+    monkeypatch.setattr(Path, "exists", lambda self: self in existing)
+
+    assert build.find_libmpv("macos") == [(homebrew, ".")]
+
+
 def test_find_libmpv_uses_explicit_windows_runtime_dir(monkeypatch, tmp_path) -> None:
     runtime_dir = tmp_path / "mpv"
     runtime_dir.mkdir()
@@ -428,6 +448,23 @@ def test_github_workflow_builds_all_target_platforms() -> None:
     assert "windows-latest" in workflow
     assert "uv run python build.py ${{ matrix.platform }}" in workflow
     assert "actions/upload-artifact@v4" in workflow
+
+
+def test_github_workflow_builds_macos_intel_bundle_via_macports() -> None:
+    workflow = Path(".github/workflows/build.yml").read_text(encoding="utf-8")
+
+    assert "macos-15-intel" in workflow
+    assert "port -N install mpv" in workflow
+    # Intel 构建不得走 Homebrew(x86_64 已无 bottle,会整树源码编译)
+    assert "if: matrix.macos_runtime == 'homebrew'" in workflow
+    assert "if: matrix.macos_runtime == 'macports'" in workflow
+
+
+def test_github_workflow_artifact_names_are_unique_per_job() -> None:
+    workflow = Path(".github/workflows/build.yml").read_text(encoding="utf-8")
+
+    # 两个 macOS job 共用 platform=macos,须用 os 区分 artifact 名
+    assert "name: ${{ matrix.os }}-bundle" in workflow
 
 
 def test_github_workflow_releases_only_for_version_tags() -> None:
