@@ -28415,13 +28415,14 @@ def test_player_window_spider_comments_opens_dialog_with_spider_source_first(qtb
     qtbot.addWidget(window)
     session = _scraped_session()
     session.spider_comments_loader = spider_loader
+    session.source_display_name = "红果App[短]"
     window.open_session(session)
 
     window._open_metadata_comments()
     qtbot.waitUntil(lambda: created.get("exec_called") is True, timeout=5000)
     keys = [key for key, _label, _loader in created["sources"]]
     assert keys == ["spider", "douban"]
-    assert created["sources"][0][1] == "本集评论"
+    assert created["sources"][0][1] == "红果App[短]评论"
     # loader 走 session 注入的爬虫管道,查询 dict 的 next 透传为游标
     created["loader"]({"kind": "main", "next": "cursor-abc"})
     assert calls == [(session.playlist[1], "cursor-abc")]

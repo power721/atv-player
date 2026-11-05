@@ -3876,14 +3876,18 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             try:
                 sources = []
                 if spider_loader is not None and item is not None:
-                    # 爬虫本集评论:打开瞬间以当前集锚点快照(对话框生命周期内不换集)
+                    # 爬虫评论(红果为整剧维度):打开瞬间以当前集锚点快照;label 带源名
+                    source_label = (
+                        f"{str(getattr(self.session, 'source_display_name', '') or '').strip()}评论"
+                        or "源站评论"
+                    )
                     def spider_comments_loader(query: dict, _loader=spider_loader, _item=item) -> dict:
                         payload = _loader(_item, str(query.get("next") or ""))
                         if not isinstance(payload, dict):
                             raise RuntimeError("上游未返回评论")
                         return payload
 
-                    sources.append(CommentsSource("spider", "本集评论", spider_comments_loader))
+                    sources.append(CommentsSource("spider", source_label, spider_comments_loader))
                 if provider is not None and vod is not None:
                     sources.extend(provider.resolve(vod, item))
                 self._metadata_comments_signals.resolved.emit(sources)
