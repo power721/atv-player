@@ -3880,15 +3880,20 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                     # 切集即换)+ 剧评(整剧);label 带源名
                     display_name = str(getattr(self.session, "source_display_name", "") or "").strip()
 
-                    def make_spider_loader(scope: str, _loader=spider_loader, _item=item):
+                    def make_spider_loader(scope: str, _loader=spider_loader, _item=item, _window=self):
                         def spider_comments_loader(query: dict) -> dict:
+                            # 每次请求动态取当前集:对话框开着时自动连播换集,
+                            # 刷新/翻页即跟随新集(模态对话框不阻止播放推进);
+                            # 会话边界取不到条目时回退打开瞬间的快照
+                            current = _window._current_play_item()
+                            active_item = current if current is not None else _item
                             if str(query.get("kind") or "") == "replies":
                                 # 楼中楼:页码转数字偏移(红果评论页大小 20,与爬虫 COMMENT_PAGE_COUNT 对齐)
                                 root = str(query.get("root") or "")
                                 page = int(query.get("page") or 1)
-                                payload = _loader(_item, str(max(page - 1, 0) * 20), root, scope)
+                                payload = _loader(active_item, str(max(page - 1, 0) * 20), root, scope)
                             else:
-                                payload = _loader(_item, str(query.get("next") or ""), "", scope)
+                                payload = _loader(active_item, str(query.get("next") or ""), "", scope)
                             if not isinstance(payload, dict):
                                 raise RuntimeError("上游未返回评论")
                             return payload

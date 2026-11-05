@@ -28428,6 +28428,10 @@ def test_player_window_spider_comments_opens_dialog_with_spider_source_first(qtb
     created["loader"]({"kind": "main", "next": "cursor-abc"})
     assert calls[-1][:2] == (session.playlist[1], "cursor-abc")
     assert calls[-1][3] == "episode"
-    # 楼中楼:页码转数字偏移(页大小 20)+root+scope 透传
+    # 对话框开着时自动连播换集:loader 动态取当前集(不固守打开瞬间快照)
+    window.current_index = 2
+    created["loader"]({"kind": "main", "next": ""})
+    assert calls[-1][0] is session.playlist[2]
+    # 楼中楼:页码转数字偏移(页大小 20)+root+scope 透传(仍跟随当前集)
     created["loader"]({"kind": "replies", "root": "7698768176077374233", "page": 2})
-    assert calls[-1] == (session.playlist[1], "20", "7698768176077374233", "episode")
+    assert calls[-1] == (session.playlist[2], "20", "7698768176077374233", "episode")
