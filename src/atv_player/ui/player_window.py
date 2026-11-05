@@ -3876,24 +3876,29 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             try:
                 sources = []
                 if spider_loader is not None and item is not None:
-                    # 爬虫评论(红果为整剧维度):打开瞬间以当前集锚点快照;label 带源名
-                    source_label = (
-                        f"{str(getattr(self.session, 'source_display_name', '') or '').strip()}评论"
-                        or "源站评论"
-                    )
-                    def spider_comments_loader(query: dict, _loader=spider_loader, _item=item) -> dict:
-                        if str(query.get("kind") or "") == "replies":
-                            # 楼中楼:页码转数字偏移(红果评论页大小 20,与爬虫 COMMENT_PAGE_COUNT 对齐)
-                            root = str(query.get("root") or "")
-                            page = int(query.get("page") or 1)
-                            payload = _loader(_item, str(max(page - 1, 0) * 20), root)
-                        else:
-                            payload = _loader(_item, str(query.get("next") or ""))
-                        if not isinstance(payload, dict):
-                            raise RuntimeError("上游未返回评论")
-                        return payload
+                    # 爬虫双维度评论(红果同款两个 tab):本集评论(当前集锚点快照,
+                    # 切集即换)+ 剧评(整剧);label 带源名
+                    display_name = str(getattr(self.session, "source_display_name", "") or "").strip()
 
-                    sources.append(CommentsSource("spider", source_label, spider_comments_loader))
+                    def make_spider_loader(scope: str, _loader=spider_loader, _item=item):
+                        def spider_comments_loader(query: dict) -> dict:
+                            if str(query.get("kind") or "") == "replies":
+                                # 楼中楼:页码转数字偏移(红果评论页大小 20,与爬虫 COMMENT_PAGE_COUNT 对齐)
+                                root = str(query.get("root") or "")
+                                page = int(query.get("page") or 1)
+                                payload = _loader(_item, str(max(page - 1, 0) * 20), root, scope)
+                            else:
+                                payload = _loader(_item, str(query.get("next") or ""), "", scope)
+                            if not isinstance(payload, dict):
+                                raise RuntimeError("上游未返回评论")
+                            return payload
+
+                        return spider_comments_loader
+
+                    sources.append(CommentsSource("spider-episode", "本集评论", make_spider_loader("episode")))
+                    sources.append(
+                        CommentsSource("spider", f"{display_name}剧评" if display_name else "剧评", make_spider_loader("series"))
+                    )
                 if provider is not None and vod is not None:
                     sources.extend(provider.resolve(vod, item))
                 self._metadata_comments_signals.resolved.emit(sources)
