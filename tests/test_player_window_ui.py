@@ -28377,8 +28377,8 @@ def test_player_window_spider_comments_source_without_metadata(qtbot, monkeypatc
     """爬虫源(插件 commentsContent)不依赖刮削:未刮削 vod 也有评论入口。"""
     calls: list[tuple[object, str]] = []
 
-    def spider_loader(item, cursor=""):
-        calls.append((item, cursor))
+    def spider_loader(item, cursor="", root=""):
+        calls.append((item, cursor, root))
         return {"is_end": True, "next_offset": "", "comments": []}
 
     window = PlayerWindow(FakePlayerController(), metadata_comments_provider=None)
@@ -28406,8 +28406,8 @@ def test_player_window_spider_comments_opens_dialog_with_spider_source_first(qtb
 
     monkeypatch.setattr(player_window_module, "BilibiliCommentsDialog", StubCommentsDialog)
 
-    def spider_loader(item, cursor=""):
-        calls.append((item, cursor))
+    def spider_loader(item, cursor="", root=""):
+        calls.append((item, cursor, root))
         return {"is_end": True, "next_offset": "", "comments": []}
 
     provider = StubCommentsProvider([StubCommentsSource("douban", "豆瓣短评")])
@@ -28425,4 +28425,7 @@ def test_player_window_spider_comments_opens_dialog_with_spider_source_first(qtb
     assert created["sources"][0][1] == "红果App[短]评论"
     # loader 走 session 注入的爬虫管道,查询 dict 的 next 透传为游标
     created["loader"]({"kind": "main", "next": "cursor-abc"})
-    assert calls == [(session.playlist[1], "cursor-abc")]
+    assert calls[-1][:2] == (session.playlist[1], "cursor-abc")
+    # 楼中楼:页码转数字偏移(页大小 20)+root 透传
+    created["loader"]({"kind": "replies", "root": "7698768176077374233", "page": 2})
+    assert calls[-1] == (session.playlist[1], "20", "7698768176077374233")

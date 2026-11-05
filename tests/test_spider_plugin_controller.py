@@ -8020,8 +8020,8 @@ class CommentsContentSpider(FakeSpider):
             ]
         }
 
-    def commentsContent(self, flag, id, cursor=""):
-        self.comments_content_calls = getattr(self, "comments_content_calls", []) + [(flag, id, cursor)]
+    def commentsContent(self, flag, id, cursor="", root=""):
+        self.comments_content_calls = getattr(self, "comments_content_calls", []) + [(flag, id, cursor, root)]
         if cursor == "fail":
             return None
         return {"is_end": True, "next_offset": "", "comments": [{"rpid": "c1", "uname": "用户3940", "message": "好看"}]}
@@ -8037,7 +8037,7 @@ def test_controller_build_request_wires_spider_comments_loader() -> None:
     first = request.playlist[0]
     payload = request.spider_comments_loader(first, "cursor-1")
     assert payload == {"is_end": True, "next_offset": "", "comments": [{"rpid": "c1", "uname": "用户3940", "message": "好看"}]}
-    assert spider.comments_content_calls == [("红果线路", "/play/1", "cursor-1")]
+    assert spider.comments_content_calls == [("红果线路", "/play/1", "cursor-1", "")]
 
 
 def test_controller_spider_comments_loader_none_when_unsupported() -> None:

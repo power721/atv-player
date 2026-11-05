@@ -3882,7 +3882,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
                         or "源站评论"
                     )
                     def spider_comments_loader(query: dict, _loader=spider_loader, _item=item) -> dict:
-                        payload = _loader(_item, str(query.get("next") or ""))
+                        if str(query.get("kind") or "") == "replies":
+                            # 楼中楼:页码转数字偏移(红果评论页大小 20,与爬虫 COMMENT_PAGE_COUNT 对齐)
+                            root = str(query.get("root") or "")
+                            page = int(query.get("page") or 1)
+                            payload = _loader(_item, str(max(page - 1, 0) * 20), root)
+                        else:
+                            payload = _loader(_item, str(query.get("next") or ""))
                         if not isinstance(payload, dict):
                             raise RuntimeError("上游未返回评论")
                         return payload

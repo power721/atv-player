@@ -926,13 +926,13 @@ class SpiderPluginController:
                 return False
         return callable(getattr(self._spider, "commentsContent", None))
 
-    def load_spider_comments(self, item: PlayItem, cursor: str = "") -> dict | None:
-        """调插件 commentsContent 拉本集评论;返回评论加载器协议 dict,失败/不支持返回 None。"""
+    def load_spider_comments(self, item: PlayItem, cursor: str = "", root: str = "") -> dict | None:
+        """调插件 commentsContent 拉评论(主列表/楼中楼);返回评论加载器协议 dict,失败/不支持返回 None。"""
         if not self._comments_content_supported:
             return None
-        self._log_spider_method_call("commentsContent", flag=item.play_source, id=item.vod_id, cursor=cursor)
+        self._log_spider_method_call("commentsContent", flag=item.play_source, id=item.vod_id, cursor=cursor, root=root)
         try:
-            result = self._spider.commentsContent(item.play_source, item.vod_id, cursor)
+            result = self._spider.commentsContent(item.play_source, item.vod_id, cursor, root)
         except Exception as exc:
             logger.warning(
                 "Spider plugin commentsContent failed plugin=%s vod_id=%s error=%s",
@@ -3107,8 +3107,8 @@ class SpiderPluginController:
         spider_comments_loader = None
         if self._comments_content_supported:
 
-            def spider_comments_loader(item: PlayItem, cursor: str = "") -> dict | None:
-                return self.load_spider_comments(item, cursor)
+            def spider_comments_loader(item: PlayItem, cursor: str = "", root: str = "") -> dict | None:
+                return self.load_spider_comments(item, cursor, root)
 
         return OpenPlayerRequest(
             vod=detail,
