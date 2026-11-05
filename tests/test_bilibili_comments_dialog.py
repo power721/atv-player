@@ -662,9 +662,21 @@ def test_read_only_dialog_hides_interactive_controls(qtbot) -> None:
     card = dialog.card_by_rpid("1")
     assert card.like_button is None
     assert card.reply_button is None
+    # 只读模式点赞数以 👍 N 展示(like=12 的评论)
+    like_label = card.findChild(QLabel, "bilibiliCommentLikeCount")
+    assert like_label is not None
+    assert like_label.text() == "👍 12"
     # 评分角标渲染进 meta 行
     assert "★★★★" in card.meta_label.text()
     assert dialog.windowTitle() == "豆瓣短评"
+
+
+def test_read_only_dialog_hides_zero_like(qtbot) -> None:
+    loader = FakeLoader(payloads=[_main_payload([_comment("0like", "零赞用户", like=0)])])
+    dialog = _make_read_only_dialog(qtbot, loader)
+    _wait_until_cards(qtbot, dialog)
+    card = dialog.card_by_rpid("0like")
+    assert card.findChild(QLabel, "bilibiliCommentLikeCount") is None
 
 
 def test_read_only_dialog_title_shows_count(qtbot) -> None:

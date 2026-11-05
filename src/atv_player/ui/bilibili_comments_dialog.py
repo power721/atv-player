@@ -201,6 +201,15 @@ class _EmoteSignals(QObject):
     loaded = Signal(object, object)  # message QLabel, BilibiliComment(表情到货后重渲)
 
 
+def _like_count_label(comment: BilibiliComment, parent: QWidget) -> QLabel | None:
+    """只读模式的点赞数展示(👍 N,0 赞不占位),位置与 B 站点赞按钮一致。"""
+    if comment.like <= 0:
+        return None
+    label = QLabel(f"👍 {_format_stat_value(comment.like)}", parent)
+    label.setObjectName("bilibiliCommentLikeCount")
+    return label
+
+
 class _LikeButton(QPushButton):
     """评论点赞按钮(主评论与楼中楼行共用):点赞中禁用防连点,状态文案由 dialog 回填。"""
 
@@ -319,6 +328,13 @@ class _ReplyRow(QWidget):
         else:
             self.like_button = None
             self.reply_button = None
+            like_count = _like_count_label(comment, self)
+            if like_count is not None:
+                row = QHBoxLayout()
+                row.setContentsMargins(0, 0, 0, 0)
+                row.addWidget(like_count)
+                row.addStretch(1)
+                layout.addLayout(row)
 
 
 class _CommentCard(QFrame):
@@ -371,6 +387,9 @@ class _CommentCard(QFrame):
             footer.addWidget(self.like_button)
         else:
             self.like_button = None
+            like_count = _like_count_label(comment, self)
+            if like_count is not None:
+                footer.addWidget(like_count)
         self.toggle_reply_button = QPushButton(self._toggle_button_text())
         self.toggle_reply_button.setObjectName("bilibiliCommentRepliesButton")
         self.toggle_reply_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1039,6 +1058,10 @@ class BilibiliCommentsDialog(ThemedDialogBase, AsyncGuardMixin):
             }}
             QPushButton#bilibiliCommentRepliesButton:hover, QPushButton#bilibiliCommentMoreButton:hover {{
                 color: {tokens.accent_hover};
+            }}
+            QLabel#bilibiliCommentLikeCount {{
+                color: {tokens.text_secondary};
+                font-size: 12px;
             }}
             QPushButton#bilibiliCommentLikeButton {{
                 color: {tokens.text_secondary};
