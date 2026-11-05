@@ -281,6 +281,11 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.chapter_auto_skip_enabled_checkbox = QCheckBox(
             "按章节自动跳过片头/片尾（识别片头、片尾、End Credits 等章节）"
         )
+        self.media_disk_cache_enabled_checkbox = QCheckBox(
+            "网盘媒体磁盘缓存（按文件身份块缓存，回拖/二刷不再耗网盘流量）"
+        )
+        self.media_disk_cache_quota_edit = QLineEdit()
+        self.media_disk_cache_quota_edit.setPlaceholderText("256 - 32768")
         self.player_hide_controls_during_playback_checkbox = QCheckBox(
             "播放中隐藏底部控制栏（暂停/停止时恢复显示，空格键暂停可唤回）"
         )
@@ -519,6 +524,12 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         self.chapter_auto_skip_enabled_checkbox.setChecked(
             getattr(config, "chapter_auto_skip_enabled", True)
         )
+        self.media_disk_cache_enabled_checkbox.setChecked(
+            getattr(config, "media_disk_cache_enabled", True)
+        )
+        self.media_disk_cache_quota_edit.setText(
+            str(getattr(config, "media_disk_cache_quota_mb", 2048))
+        )
         self.player_hide_controls_during_playback_checkbox.setChecked(
             getattr(config, "player_hide_controls_during_playback", False)
         )
@@ -655,6 +666,8 @@ class AdvancedSettingsDialog(ThemedDialogBase):
         playback_layout.addRow(self.bilibili_grouped_playlist_tree_enabled_checkbox)
         playback_layout.addRow(self.next_episode_preload_enabled_checkbox)
         playback_layout.addRow(self.chapter_auto_skip_enabled_checkbox)
+        playback_layout.addRow(self.media_disk_cache_enabled_checkbox)
+        playback_layout.addRow("媒体磁盘缓存配额（MB）", self.media_disk_cache_quota_edit)
         playback_layout.addRow(self.player_hide_controls_during_playback_checkbox)
         playback_layout.addRow("播放缓存大小（MB）", self.mpv_cache_size_edit)
         playback_layout.addRow("渲染模式", self.mpv_hwdec_mode_combo)
@@ -844,6 +857,7 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self.youtube_category_source_edit,
             self.youtube_category_local_path_edit,
             self.mpv_cache_size_edit,
+            self.media_disk_cache_quota_edit,
             self.mpv_network_timeout_edit,
             self.mpv_default_readahead_edit,
             self.m3u_proxy_segment_prefetch_size_edit,
@@ -1362,6 +1376,12 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             minimum=16,
             maximum=4096,
         )
+        media_disk_cache_quota = parse_int(
+            self.media_disk_cache_quota_edit.text(),
+            label="媒体磁盘缓存配额（MB）",
+            minimum=256,
+            maximum=32768,
+        )
         timeout = parse_int(
             self.mpv_network_timeout_edit.text(),
             label="网络超时",
@@ -1418,6 +1438,8 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self.bilibili_grouped_playlist_tree_enabled_checkbox.isChecked(),
             self.next_episode_preload_enabled_checkbox.isChecked(),
             self.chapter_auto_skip_enabled_checkbox.isChecked(),
+            self.media_disk_cache_enabled_checkbox.isChecked(),
+            media_disk_cache_quota,
             self.player_hide_controls_during_playback_checkbox.isChecked(),
             cache_size,
             render_profile,
@@ -1623,6 +1645,8 @@ class AdvancedSettingsDialog(ThemedDialogBase):
             self._config.bilibili_grouped_playlist_tree_enabled,
             self._config.next_episode_preload_enabled,
             self._config.chapter_auto_skip_enabled,
+            self._config.media_disk_cache_enabled,
+            self._config.media_disk_cache_quota_mb,
             self._config.player_hide_controls_during_playback,
             self._config.mpv_cache_size_mb,
             self._config.mpv_render_profile,

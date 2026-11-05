@@ -99,6 +99,26 @@ def test_settings_repository_round_trips_chapter_auto_skip(tmp_path: Path) -> No
     assert loaded.chapter_auto_skip_enabled is False
 
 
+def test_settings_repository_round_trips_media_disk_cache(tmp_path: Path) -> None:
+    repo = SettingsRepository(tmp_path / "app.db")
+    config = repo.load_config()
+    assert config.media_disk_cache_enabled is True
+    assert config.media_disk_cache_quota_mb == 2048
+
+    config.media_disk_cache_enabled = False
+    config.media_disk_cache_quota_mb = 8192
+    repo.save_config(config)
+    loaded = repo.load_config()
+
+    assert loaded.media_disk_cache_enabled is False
+    assert loaded.media_disk_cache_quota_mb == 8192
+
+    # 越界值钳制回默认区间
+    loaded.media_disk_cache_quota_mb = 1
+    repo.save_config(loaded)
+    assert repo.load_config().media_disk_cache_quota_mb == 256
+
+
 def test_settings_repository_round_trips_hide_controls_during_playback(tmp_path: Path) -> None:
     repo = SettingsRepository(tmp_path / "app.db")
     config = repo.load_config()

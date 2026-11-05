@@ -13,6 +13,7 @@ import re
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlparse
 from xml.etree import ElementTree as ET
@@ -28,9 +29,11 @@ from atv_player.player.bluray_iso import (
 )
 from atv_player.proxy.ad_filter import MODE_MARKERS
 from atv_player.proxy.cenc import CencRangeReader
+from atv_player.proxy.block_cache import DEFAULT_QUOTA_BYTES, MediaBlockCache
 from atv_player.proxy.m3u8 import rewrite_playlist
 from atv_player.proxy.range_proxy import (
     ClientDisconnectError,
+    RangeProxyProbe,
     RangeProxyRegistry,
     RangeProxySource,
     RangeProxyTask,
@@ -598,6 +601,7 @@ class LocalHlsProxyServer:
         stream=_default_stream,
         segment_prefetch_size: int = 2,
         ad_filter_mode: str = MODE_MARKERS,
+        media_cache_root: Path | None = None,
     ) -> None:
         self.host = host
         self.port = port
@@ -609,8 +613,38 @@ class LocalHlsProxyServer:
         self._dash_audio_failover_lock = threading.Lock()
         self._ad_filter_mode = ad_filter_mode
         self._segment_proxy = SegmentProxy(self._registry, get=get, segment_prefetch_size=segment_prefetch_size)
+        self._media_cache_root = media_cache_root
+        self._media_cache: MediaBlockCache | None = None
+        self._media_cache_enabled = True
+        self._media_cache_quota_bytes = DEFAULT_QUOTA_BYTES
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
+
+    # ── 网盘媒体磁盘块缓存 ─────────────────────────────────────────────────
+
+    def set_media_cache_settings(self, enabled: bool, quota_bytes: int) -> None:
+        self._media_cache_enabled = bool(enabled)
+        self._media_cache_quota_bytes = max(0, int(quota_bytes))
+        if self._media_cache is not None:
+            self._media_cache.configure(self._media_cache_enabled, self._media_cache_quota_bytes)
+
+    def _media_block_cache(self) -> MediaBlockCache:
+        if self._media_cache is None:
+            root = self._media_cache_root
+            if root is None:
+                from atv_player.paths import app_cache_dir
+
+                root = app_cache_dir() / "media"
+            self._media_cache = MediaBlockCache(root)
+            self._media_cache.configure(
+                self._media_cache_enabled, self._media_cache_quota_bytes
+            )
+        return self._media_cache
+
+    def _range_media_cache(self, task: RangeProxyTask) -> MediaBlockCache | None:
+        if not task.cache_key:
+            return None
+        return self._media_block_cache()
 
     def start(self) -> None:
         if self._server is not None:
@@ -813,10 +847,12 @@ class LocalHlsProxyServer:
         task_id: str = "",
         file_name: str = "",
         content_type: str = "",
+        cache_key: str = "",
     ) -> str | None:
         """注册客户端多线程 Range 代理任务,返回本地代理 URL。
 
         返回 None 表示该盘类型未配置并发规则(或不支持并行),调用方应继续用原地址播放。
+        cache_key 为稳定文件身份(网盘资源 ID+路径等),供磁盘块缓存跨直链复用。
         """
         resolved_task_id = task_id or sha256(url.encode("utf-8")).hexdigest()[:16]
         task = RangeProxyTask(
@@ -829,6 +865,7 @@ class LocalHlsProxyServer:
             sources=sources,
             content_type=content_type,
             file_name=file_name,
+            cache_key=cache_key,
         )
         if not task.enabled:
             return None
@@ -898,6 +935,13 @@ class LocalHlsProxyServer:
                 extra={"log_category": "network", "log_source": "app"},
             )
             return 502, f"range proxy probe failed: {exc}".encode("utf-8"), []
+        if task.cache_key and probe.total_length > 0:
+            self._range_media_cache(task).write_meta(
+                task.cache_key,
+                probe.total_length,
+                probe.content_type,
+                probe.stream_offset,
+            )
         total = probe.total_length
         range_header = request_headers.get("Range") or request_headers.get("range") or ""
         parsed_range = parse_range_header(range_header, total) if range_header else None
@@ -933,6 +977,64 @@ class LocalHlsProxyServer:
             if not _is_client_disconnect_error(exc):
                 raise
 
+    def _try_serve_range_from_media_cache(
+        self,
+        handler: BaseHTTPRequestHandler,
+        task: RangeProxyTask,
+        request_headers: dict[str, str],
+    ) -> bool:
+        """磁盘块缓存命中时零上游直出;返回 False 表示未命中,走网络路径。
+
+        命中路径不依赖直链有效期(甚至不探测上游),直链过期后的二刷照常可播。
+        """
+        cache = self._range_media_cache(task)
+        if cache is None:
+            return False
+        meta = cache.lookup(task.cache_key)
+        if meta is None:
+            return False
+        total = meta.total_length
+        range_header = request_headers.get("Range") or request_headers.get("range") or ""
+        parsed_range = parse_range_header(range_header, total) if range_header else None
+        if range_header and parsed_range is None:
+            self._send_range_proxy_error(
+                handler, 416, b"invalid range", [("Content-Range", f"bytes */{total}")]
+            )
+            return True
+        if parsed_range is not None:
+            start, end = parsed_range
+            is_partial = True
+        else:
+            start, end, is_partial = 0, total - 1, False
+        if end < start:
+            handler.send_response(200)
+            handler.send_header("Content-Length", "0")
+            handler.end_headers()
+            return True
+        if not cache.blocks_complete(task.cache_key, start, end):
+            return False
+        probe = RangeProxyProbe(
+            supports_range=True,
+            total_length=total,
+            content_type=meta.content_type,
+            stream_offset=meta.stream_offset,
+        )
+        handler.send_response(206 if is_partial else 200)
+        for key, value in self._range_proxy_headers(task, probe, start, end, total, is_partial):
+            handler.send_header(key, value)
+        handler.end_headers()
+        try:
+            cache.serve_range(task.cache_key, start, end, handler.wfile.write)
+        except Exception as exc:  # noqa: BLE001 - 响应头已提交,断开即可
+            if not _is_client_disconnect_error(exc):
+                logger.warning(
+                    "Media block cache serve failed key=%s error=%s",
+                    task.cache_key[:12],
+                    exc,
+                    extra={"log_category": "network", "log_source": "app"},
+                )
+        return True
+
     def _stream_range_proxy_response(
         self,
         path: str,
@@ -950,6 +1052,8 @@ class LocalHlsProxyServer:
         task.refresh_access()
         task.active_sessions += 1
         try:
+            if self._try_serve_range_from_media_cache(handler, task, request_headers):
+                return True
             resolved = self._resolve_range_proxy_span(task, request_headers)
             if resolved[0] != "ok":
                 _status, payload, extra_headers = resolved
@@ -977,7 +1081,15 @@ class LocalHlsProxyServer:
 
         def produce() -> None:
             try:
-                serve_parallel_range(task, start, end, channel.put, get=self._get, stop_event=stop_event)
+                serve_parallel_range(
+                    task,
+                    start,
+                    end,
+                    channel.put,
+                    get=self._get,
+                    stop_event=stop_event,
+                    cache=self._range_media_cache(task),
+                )
                 channel.close()
             except ClientDisconnectError:
                 channel.abort()
@@ -1079,10 +1191,16 @@ class LocalHlsProxyServer:
             for key, value in local_headers.items():
                 handler.send_header(key, value)
             handler.end_headers()
+            cache = self._range_media_cache(task)
+            cache_total = probe.total_length if probe is not None else -1
+            cursor = start
             try:
                 for chunk in response.iter_bytes(chunk_size=_RANGE_PROXY_STREAM_CHUNK_SIZE):
                     if chunk:
                         handler.wfile.write(chunk)
+                        if cache is not None and cache_total > 0:
+                            cache.store_segment(task.cache_key, cursor, chunk, cache_total)
+                            cursor += len(chunk)
             except Exception as exc:
                 if not _is_client_disconnect_error(exc):
                     logger.warning(
@@ -1109,6 +1227,8 @@ class LocalHlsProxyServer:
             handler.end_headers()
             return True
         task.refresh_access()
+        if self._try_send_range_proxy_head_from_media_cache(handler, task, request_headers):
+            return True
         resolved = self._resolve_range_proxy_span(task, request_headers)
         if resolved[0] != "ok":
             _status, _payload, extra_headers = resolved
@@ -1119,6 +1239,47 @@ class LocalHlsProxyServer:
             handler.end_headers()
             return True
         _tag, probe, start, end, total, is_partial = resolved
+        handler.send_response(206 if is_partial else 200)
+        for key, value in self._range_proxy_headers(task, probe, start, end, total, is_partial):
+            handler.send_header(key, value)
+        if end < start:
+            handler.send_header("Content-Length", "0")
+        handler.end_headers()
+        return True
+
+    def _try_send_range_proxy_head_from_media_cache(
+        self,
+        handler: BaseHTTPRequestHandler,
+        task: RangeProxyTask,
+        request_headers: dict[str, str],
+    ) -> bool:
+        """HEAD 命中磁盘缓存 meta 时直接应答,跳过上游探测。"""
+        cache = self._range_media_cache(task)
+        if cache is None:
+            return False
+        meta = cache.lookup(task.cache_key)
+        if meta is None:
+            return False
+        total = meta.total_length
+        range_header = request_headers.get("Range") or request_headers.get("range") or ""
+        parsed_range = parse_range_header(range_header, total) if range_header else None
+        if range_header and parsed_range is None:
+            handler.send_response(416)
+            handler.send_header("Content-Range", f"bytes */{total}")
+            handler.send_header("Content-Length", "0")
+            handler.end_headers()
+            return True
+        if parsed_range is not None:
+            start, end = parsed_range
+            is_partial = True
+        else:
+            start, end, is_partial = 0, total - 1, False
+        probe = RangeProxyProbe(
+            supports_range=True,
+            total_length=total,
+            content_type=meta.content_type,
+            stream_offset=meta.stream_offset,
+        )
         handler.send_response(206 if is_partial else 200)
         for key, value in self._range_proxy_headers(task, probe, start, end, total, is_partial):
             handler.send_header(key, value)

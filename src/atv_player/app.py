@@ -483,6 +483,8 @@ class AppCoordinator(QObject):
             ),
             get=self._proxy_http_get(),
         )
+        # 磁盘块缓存开关/配额走统一推送通道:启动即按持久化配置生效。
+        self._apply_runtime_config(initial_config)
         self._playback_parser_service = BuiltInPlaybackParserService(
             get=self._proxy_http_get(),
             post=self._proxy_http_post(),
@@ -564,6 +566,12 @@ class AppCoordinator(QObject):
         update_ad_filter_mode = getattr(proxy_server, "set_ad_filter_mode", None)
         if callable(update_ad_filter_mode):
             update_ad_filter_mode(config.m3u8_ad_filter_mode)
+        update_media_cache = getattr(proxy_server, "set_media_cache_settings", None)
+        if callable(update_media_cache):
+            update_media_cache(
+                getattr(config, "media_disk_cache_enabled", True),
+                int(getattr(config, "media_disk_cache_quota_mb", 2048)) * 1024 * 1024,
+            )
 
     def _save_shared_config(self, config: AppConfig) -> None:
         self._apply_runtime_config(config)

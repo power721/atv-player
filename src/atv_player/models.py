@@ -65,6 +65,10 @@ class AppConfig:
     m3u_proxy_segment_prefetch_size: int = 2
     m3u8_ad_filter_mode: str = "smart"
     next_episode_preload_enabled: bool = True
+    # 网盘媒体磁盘块缓存(/driver/ 代理按文件身份落盘,回 seek/二刷零上游流量)
+    media_disk_cache_enabled: bool = True
+    # 磁盘块缓存配额(MB);累计写入 16MiB 触发按条目 LRU 淘汰至配额 90%
+    media_disk_cache_quota_mb: int = 2048
     # 按章节标题自动跳过片头/片尾(含"短正片广告+片头"复合结构)
     chapter_auto_skip_enabled: bool = True
     episode_title_enhancement_enabled: bool = True

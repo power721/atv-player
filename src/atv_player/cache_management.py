@@ -57,6 +57,12 @@ CACHE_CATEGORIES: tuple[CacheCategory, ...] = (
         ("playlists", "subtitles"),
         "M3U8 重写列表和插件字幕缓存",
     ),
+    CacheCategory(
+        "media",
+        "媒体缓存",
+        ("media",),
+        "网盘媒体磁盘块缓存（按文件身份复用,回拖/二刷不再耗流量）",
+    ),
     CacheCategory("other", "其他缓存", (), "未归入以上分类的缓存文件"),
 )
 

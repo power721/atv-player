@@ -18,6 +18,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from atv_player.proxy.block_cache import MediaBlockCache
+
 logger = logging.getLogger(__name__)
 
 TASK_TTL_SECONDS = 30 * 60
@@ -233,6 +235,7 @@ class RangeProxyTask:
         sources: list[RangeProxySource] | None = None,
         content_type: str = "",
         file_name: str = "",
+        cache_key: str = "",
     ) -> None:
         self.task_id = task_id
         self.url = url
@@ -257,6 +260,8 @@ class RangeProxyTask:
             )
         self.content_type = content_type
         self.file_name = file_name
+        # 稳定文件身份(网盘资源 ID+路径等):磁盘块缓存的键;直链会变,不能做键。
+        self.cache_key = cache_key
         self.probe: RangeProxyProbe | None = None
         self.state = "probing"
         self.last_access = time.monotonic()
@@ -404,6 +409,7 @@ def _fetch_segment(
     get=httpx.get,
     stop_event: threading.Event | None = None,
     retry_count: int = DEFAULT_SEGMENT_RETRY_COUNT,
+    cache: MediaBlockCache | None = None,
 ) -> bytes:
     """轮询多账号源拉取一个分片,要求上游 206;重试耗尽抛 UpstreamFetchError。"""
     offset = task.probe.stream_offset if task.probe else 0
@@ -432,6 +438,11 @@ def _fetch_segment(
             if len(payload) != expected_length:
                 raise UpstreamFetchError(
                     f"short segment body: {len(payload)} != {expected_length}"
+                )
+            if cache is not None and task.cache_key and task.probe is not None:
+                # 写穿磁盘块缓存:分片是流坐标连续覆盖,块文件按大小判定完整性。
+                cache.store_segment(
+                    task.cache_key, start, payload, task.probe.total_length
                 )
             return payload
         except (httpx.HTTPError, UpstreamFetchError) as exc:
@@ -477,6 +488,7 @@ def serve_parallel_range(
     *,
     get=httpx.get,
     stop_event: threading.Event | None = None,
+    cache: MediaBlockCache | None = None,
 ) -> None:
     """并行分片服务一个 Range 请求。
 
@@ -503,6 +515,7 @@ def serve_parallel_range(
             segment_end,
             get=get,
             stop_event=stop,
+            cache=cache,
         )
 
     executor = ThreadPoolExecutor(

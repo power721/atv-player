@@ -17,6 +17,7 @@ def test_build_cache_summary_counts_categories_and_total(tmp_path: Path) -> None
     _write_file(tmp_path / "danmaku" / "episode.ass", b"12345")
     _write_file(tmp_path / "playlists" / "clean.m3u8", b"123456")
     _write_file(tmp_path / "subtitles" / "inline.srt", b"1234567")
+    _write_file(tmp_path / "media" / "abc" / "b0", b"1234567890")
     _write_file(tmp_path / "scratch" / "unknown.bin", b"12345678")
     _write_file(tmp_path / "loose.tmp", b"1")
 
@@ -30,10 +31,12 @@ def test_build_cache_summary_counts_categories_and_total(tmp_path: Path) -> None
     assert by_id["danmaku"].size_bytes == 5
     assert by_id["playback"].size_bytes == 13
     assert by_id["playback"].file_count == 2
+    assert by_id["media"].size_bytes == 10
+    assert by_id["media"].file_count == 1
     assert by_id["other"].size_bytes == 9
     assert by_id["other"].file_count == 2
-    assert summary.total_size_bytes == 36
-    assert summary.total_file_count == 8
+    assert summary.total_size_bytes == 46
+    assert summary.total_file_count == 9
 
 
 def test_clear_cache_category_removes_only_that_category(tmp_path: Path) -> None:

@@ -409,6 +409,7 @@ def test_prepare_drive_parallel_url_registers_task() -> None:
         task_id="",
         file_name="",
         content_type="",
+        cache_key="",
     ):
         captured.update(
             url=url,
@@ -416,6 +417,7 @@ def test_prepare_drive_parallel_url_registers_task() -> None:
             drive_type=drive_type,
             sources=sources,
             file_name=file_name,
+            cache_key=cache_key,
         )
         return f"http://127.0.0.1:2323/driver/{task_id}"
 
@@ -451,6 +453,15 @@ def test_prepare_drive_parallel_url_registers_task() -> None:
     assert captured["drive_type"] == "quark"
     assert captured["file_name"] == "第1集.mkv"
     assert captured["sources"] is not None and len(captured["sources"]) == 2
+    # 磁盘块缓存键 = 稳定文件身份(资源 ID+路径+盘类型),与直链无关
+    assert captured["cache_key"] != ""
+    assert "dl.quark.example" not in captured["cache_key"]
+    import hashlib as _hashlib
+
+    expected = _hashlib.sha1(
+        "c2l0ZQ==|/temp/quark@share@code/第1集.mkv|quark|".encode("utf-8")
+    ).hexdigest()
+    assert captured["cache_key"] == expected
 
 
 def test_prepare_drive_parallel_url_fallbacks() -> None:
@@ -507,3 +518,162 @@ def test_prepare_drive_parallel_url_strips_markers() -> None:
 
     assert PlayerWindow._prepare_drive_parallel_url(stub, item, item.url)
     assert captured["url"] == "https://dl.example/file"
+
+
+def _deterministic_media(total: int) -> bytes:
+    return bytes((i * 31 + 7) & 0xFF for i in range(total))
+
+
+def test_local_proxy_media_block_cache_hit_across_direct_urls(tmp_path) -> None:
+    """同文件身份换直链(重解析)后:缓存命中零上游请求,HEAD 也免探测。"""
+    total = 700 * 1024
+    body = _deterministic_media(total)
+    upstream_ranges: list[str] = []
+    base_fake = _build_upstream(body)
+
+    def fake_get(url, *, headers=None, timeout=None, follow_redirects=True):
+        range_header = (headers or {}).get("Range", "")
+        if range_header != "bytes=0-2047":
+            upstream_ranges.append(range_header)
+        return base_fake(
+            url, headers=headers, timeout=timeout, follow_redirects=follow_redirects
+        )
+
+    server = LocalHlsProxyServer(port=0, get=fake_get, media_cache_root=tmp_path)
+    server.start()
+    try:
+        cache_key = "res-1|/剧/第01集.mkv|quark|"
+        first = server.create_range_proxy_url(
+            "https://up.example/file?sign=old",
+            {},
+            drive_type="quark",
+            chunk_size=128 * 1024,
+            cache_key=cache_key,
+        )
+        assert first is not None
+
+        with urlopen(
+            Request(first, headers={"Range": "bytes=0-524287"}), timeout=15
+        ) as response:
+            assert response.status == 206
+            assert response.read() == body[:524288]
+        assert upstream_ranges, "首次请求应打到上游"
+
+        # 同身份新直链:命中磁盘缓存,零上游(含探测)
+        upstream_ranges.clear()
+        second = server.create_range_proxy_url(
+            "https://up.example/file?sign=fresh",
+            {},
+            drive_type="quark",
+            chunk_size=128 * 1024,
+            task_id="freshlink",
+            cache_key=cache_key,
+        )
+        with urlopen(
+            Request(second, headers={"Range": "bytes=0-524287"}), timeout=15
+        ) as response:
+            assert response.status == 206
+            assert response.headers.get("Content-Range") == f"bytes 0-524287/{total}"
+            assert response.read() == body[:524288]
+        assert upstream_ranges == [], "缓存命中不应打上游"
+
+        # HEAD 命中 meta,同样零上游
+        with urlopen(
+            Request(second, method="HEAD", headers={"Range": "bytes=0-1023"}),
+            timeout=15,
+        ) as response:
+            assert response.status == 206
+            assert response.headers.get("Content-Length") == "1024"
+        assert upstream_ranges == []
+
+        # 未缓存的块(块2)走网络补拉,随后再取零上游
+        upstream_ranges.clear()
+        with urlopen(
+            Request(second, headers={"Range": "bytes=524288-589823"}), timeout=15
+        ) as response:
+            assert response.status == 206
+            assert response.read() == body[524288:589824]
+        assert upstream_ranges, "未缓存区间应打上游"
+        upstream_ranges.clear()
+        with urlopen(
+            Request(second, headers={"Range": "bytes=524288-589823"}), timeout=15
+        ) as response:
+            assert response.status == 206
+            assert response.read() == body[524288:589824]
+        assert upstream_ranges == [], "补拉后应命中缓存"
+    finally:
+        server.close()
+
+
+def test_local_proxy_media_block_cache_sequential_write_through(tmp_path) -> None:
+    """上游不支持 Range 的顺序降级路径同样写穿缓存。"""
+    total = 300 * 1024
+    body = _deterministic_media(total)
+    calls: list[str] = []
+
+    def fake_get(url, *, headers=None, timeout=None, follow_redirects=True):
+        range_header = (headers or {}).get("Range", "")
+        calls.append(range_header)
+        # 探测回 200 全量(忽略 Range) → ready_sequential,顺序流从 0 起合法
+        return FakeUpstreamResponse(
+            200, {"Content-Length": str(total), "Content-Type": "video/mp4"}, body
+        )
+
+    class FakeStreamResponse:
+        status_code = 200
+        headers = {"Content-Length": str(total), "Content-Type": "video/mp4"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+        def iter_bytes(self, chunk_size=None):
+            step = int(chunk_size or 65536)
+            for offset in range(0, total, step):
+                yield body[offset : offset + step]
+
+    def fake_stream(method, url, *, headers=None, timeout=None, follow_redirects=True):
+        return FakeStreamResponse()
+
+    server = LocalHlsProxyServer(
+        port=0, get=fake_get, stream=fake_stream, media_cache_root=tmp_path
+    )
+    server.start()
+    try:
+        local_url = server.create_range_proxy_url(
+            "https://up.example/no-range.bin",
+            {},
+            drive_type="quark",
+            chunk_size=128 * 1024,
+            cache_key="res-2|/no-range.bin|quark|",
+        )
+        assert local_url is not None
+        with urlopen(local_url, timeout=15) as response:
+            assert response.status == 200
+            assert response.read() == body
+
+        calls.clear()
+        again = server.create_range_proxy_url(
+            "https://up.example/no-range.bin?again=1",
+            {},
+            drive_type="quark",
+            chunk_size=128 * 1024,
+            task_id="again",
+            cache_key="res-2|/no-range.bin|quark|",
+        )
+        with urlopen(
+            Request(again, headers={"Range": "bytes=0-262143"}), timeout=15
+        ) as response:
+            assert response.status == 206
+            assert response.read() == body[:262144]
+        assert calls == [], "顺序写穿后应命中缓存"
+    finally:
+        server.close()

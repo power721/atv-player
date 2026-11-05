@@ -331,6 +331,14 @@ def _normalize_mpv_cache_size_mb(value: object) -> int:
     return max(16, min(normalized, 4096))
 
 
+def _normalize_media_disk_cache_quota_mb(value: object) -> int:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return 2048
+    return max(256, min(normalized, 32768))
+
+
 def _render_profile_from_legacy_hwdec(value: object) -> str:
     hwdec = _normalize_mpv_hwdec_mode(value)
     if hwdec == "no":
@@ -393,6 +401,10 @@ def _normalize_next_episode_preload_enabled(value: object) -> bool:
 
 
 def _normalize_chapter_auto_skip_enabled(value: object) -> bool:
+    return bool(value)
+
+
+def _normalize_media_disk_cache_enabled(value: object) -> bool:
     return bool(value)
 
 
@@ -524,6 +536,8 @@ class SettingsRepository:
                     youtube_category_cache_error TEXT NOT NULL DEFAULT '',
                     mpv_render_profile TEXT NOT NULL DEFAULT 'auto',
                     mpv_cache_size_mb INTEGER NOT NULL DEFAULT 512,
+                    media_disk_cache_enabled INTEGER NOT NULL DEFAULT 1,
+                    media_disk_cache_quota_mb INTEGER NOT NULL DEFAULT 2048,
                     mpv_hwdec_mode TEXT NOT NULL DEFAULT 'auto-safe',
                     mpv_network_timeout_seconds INTEGER NOT NULL DEFAULT 15,
                     mpv_default_readahead_secs INTEGER NOT NULL DEFAULT 20,
@@ -743,6 +757,14 @@ class SettingsRepository:
             if "mpv_cache_size_mb" not in columns:
                 conn.execute(
                     "ALTER TABLE app_config ADD COLUMN mpv_cache_size_mb INTEGER NOT NULL DEFAULT 512"
+                )
+            if "media_disk_cache_enabled" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN media_disk_cache_enabled INTEGER NOT NULL DEFAULT 1"
+                )
+            if "media_disk_cache_quota_mb" not in columns:
+                conn.execute(
+                    "ALTER TABLE app_config ADD COLUMN media_disk_cache_quota_mb INTEGER NOT NULL DEFAULT 2048"
                 )
             if "mpv_render_profile" not in columns:
                 legacy_hwdec = "auto-safe"
@@ -1059,6 +1081,8 @@ class SettingsRepository:
                     youtube_category_cache_error,
                     mpv_render_profile,
                     mpv_cache_size_mb,
+                    media_disk_cache_enabled,
+                    media_disk_cache_quota_mb,
                     mpv_hwdec_mode,
                     mpv_network_timeout_seconds,
                     mpv_default_readahead_secs,
@@ -1126,7 +1150,7 @@ class SettingsRepository:
                     home_mode
                 )
                     VALUES (
-                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', 0, 0, '[]', '', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 'auto', 512, 'auto-safe', 15, 20, '', '', 0, 1, 1, 0, 2, 'smart', 1, 1, '/', 'main', 'browse', '', '', '', '', '',
+                    1, 'http://127.0.0.1:4567', '', '', '', 'system', 1, 1, 1, '[]', '[]', 0, 0, '[]', '', '', '', '', 'direct', '', '["localhost","127.0.0.1","::1","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16",".local"]', '', 1080, 'vp9', '', '', '', '', 'builtin', '', '', 0, '', 'auto', 512, 1, 2048, 'auto-safe', 15, 20, '', '', 0, 1, 1, 0, 2, 'smart', 1, 1, '/', 'main', 'browse', '', '', '', '', '',
                     0, 100, 0, 0, 1, 0, 0, 1, NULL, '', 1, 1, 'static', 'source', '#FFFFFF', 'top', 1.0, 32, 85, 'strong',
                     NULL, NULL, NULL, NULL, 'douban', '', '', '', '[]', '360', 0, '', '', '', 30, 1, 1, 1, 1, 'poster', 1, 0, 0, 'browse'
                 )
@@ -1221,6 +1245,8 @@ class SettingsRepository:
                     youtube_category_cache_error,
                     mpv_render_profile,
                     mpv_cache_size_mb,
+                    media_disk_cache_enabled,
+                    media_disk_cache_quota_mb,
                     mpv_hwdec_mode,
                     mpv_network_timeout_seconds,
                     mpv_default_readahead_secs,
@@ -1334,6 +1360,8 @@ class SettingsRepository:
             youtube_category_cache_error,
             mpv_render_profile,
             mpv_cache_size_mb,
+            media_disk_cache_enabled,
+            media_disk_cache_quota_mb,
             mpv_hwdec_mode,
             mpv_network_timeout_seconds,
             mpv_default_readahead_secs,
@@ -1460,6 +1488,12 @@ class SettingsRepository:
                 mpv_hwdec_mode,
             ),
             mpv_cache_size_mb=_normalize_mpv_cache_size_mb(mpv_cache_size_mb),
+            media_disk_cache_enabled=_normalize_media_disk_cache_enabled(
+                media_disk_cache_enabled
+            ),
+            media_disk_cache_quota_mb=_normalize_media_disk_cache_quota_mb(
+                media_disk_cache_quota_mb
+            ),
             mpv_hwdec_mode=_normalize_mpv_hwdec_mode(mpv_hwdec_mode),
             mpv_network_timeout_seconds=_normalize_mpv_network_timeout_seconds(mpv_network_timeout_seconds),
             mpv_default_readahead_secs=_normalize_mpv_default_readahead_secs(mpv_default_readahead_secs),
@@ -1606,6 +1640,8 @@ class SettingsRepository:
                     youtube_category_cache_error = ?,
                     mpv_render_profile = ?,
                     mpv_cache_size_mb = ?,
+                    media_disk_cache_enabled = ?,
+                    media_disk_cache_quota_mb = ?,
                     mpv_hwdec_mode = ?,
                     mpv_network_timeout_seconds = ?,
                     mpv_default_readahead_secs = ?,
@@ -1738,6 +1774,8 @@ class SettingsRepository:
                         config.mpv_hwdec_mode,
                     ),
                     _normalize_mpv_cache_size_mb(config.mpv_cache_size_mb),
+                    int(config.media_disk_cache_enabled),
+                    _normalize_media_disk_cache_quota_mb(config.media_disk_cache_quota_mb),
                     _normalize_mpv_hwdec_mode(config.mpv_hwdec_mode),
                     _normalize_mpv_network_timeout_seconds(config.mpv_network_timeout_seconds),
                     _normalize_mpv_default_readahead_secs(config.mpv_default_readahead_secs),

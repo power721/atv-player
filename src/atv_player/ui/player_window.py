@@ -6776,6 +6776,14 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         proxy_server = getattr(self._m3u8_ad_filter, "proxy_server", None)
         if proxy_server is None:
             return ""
+        # 磁盘块缓存键用稳定文件身份:直链每次解析都变(带签名),不能做键;
+        # resource_id+path 唯一定位网盘文件,payload 带 size 时一并掺入防同名覆盖。
+        cache_key = ""
+        if resource_id or drive_path:
+            size_token = str(payload.get("size") or "")
+            cache_key = hashlib.sha1(
+                f"{resource_id}|{drive_path}|{drive_type}|{size_token}".encode("utf-8")
+            ).hexdigest()
         local_url = proxy_server.create_range_proxy_url(
             direct_url,
             normalized_headers,
@@ -6783,6 +6791,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             sources=sources,
             task_id=hashlib.sha1(direct_url.encode("utf-8")).hexdigest()[:16],
             file_name=str(payload.get("name") or current_item.original_title or current_item.title or ""),
+            cache_key=cache_key,
         )
         if local_url:
             logger.info(
