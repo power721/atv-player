@@ -3827,6 +3827,15 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         """爬虫本集评论 loader(插件支持 commentsContent 时由 build_request 注入)。"""
         return getattr(self.session, "spider_comments_loader", None) if self.session is not None else None
 
+    def _bilibili_comments_ready(self) -> bool:
+        """B站会话且当前条目为 BV 号视频(有评论 loader)——与详情字段「回复:N」入口同源。"""
+        session = self.session
+        if session is None or str(getattr(session, "source_kind", "") or "") != "bilibili":
+            return False
+        if getattr(session, "bilibili_comments_loader", None) is None:
+            return False
+        return bool(_BILIBILI_BVID_RE.match(str(getattr(session.vod, "vod_id", "") or "").strip()))
+
     def _metadata_comments_ready(self) -> bool:
         """评论入口可见性:爬虫源(插件 commentsContent)不依赖刮削;豆瓣/Bangumi 源
         需刮削成功——有外部 ID,或元数据被增强过(点击现搜兜底)。"""
@@ -3842,6 +3851,12 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         return bool(getattr(vod, "metadata_field_sources", None))
 
     def _refresh_metadata_comments_button(self) -> None:
+        # B站会话:评论图标与详情字段「回复:N」并存(同数据源);收藏/追更对
+        # B站让位的逻辑不影响评论按钮
+        if self._bilibili_comments_ready():
+            self.metadata_comments_button.setHidden(False)
+            self._set_metadata_comments_button_icon()
+            return
         visible = (
             (self._metadata_comments_provider is not None or self._session_spider_comments_loader() is not None)
             and self._metadata_comments_ready()
@@ -3864,6 +3879,10 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         )
 
     def _open_metadata_comments(self) -> None:
+        if self._bilibili_comments_ready():
+            # B站评论走完整功能对话框(点赞/回复/发表),与「回复:N」链接同入口
+            self._open_bilibili_comments(str(getattr(self.session.vod, "vod_id", "") or "").strip())
+            return
         provider = self._metadata_comments_provider
         vod = getattr(self.session, "vod", None)
         spider_loader = self._session_spider_comments_loader()

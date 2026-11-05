@@ -28435,3 +28435,49 @@ def test_player_window_spider_comments_opens_dialog_with_spider_source_first(qtb
     # 楼中楼:页码转数字偏移(页大小 20)+root+scope 透传(仍跟随当前集)
     created["loader"]({"kind": "replies", "root": "7698768176077374233", "page": 2})
     assert calls[-1] == (session.playlist[2], "20", "7698768176077374233", "episode")
+
+
+# --- B站评论挂统一图标(与「回复:N」并存) -------------------------------------
+
+
+def test_player_window_bilibili_comments_button_visible_and_opens_dialog(qtbot, monkeypatch) -> None:
+    created: dict[str, object] = {}
+
+    class StubCommentsDialog:
+        def __init__(self, bvid, loader, parent=None, **kwargs) -> None:
+            created["bvid"] = bvid
+            created["loader"] = loader
+            created["kwargs"] = kwargs
+            created["exec_called"] = False
+
+        def exec(self):
+            created["exec_called"] = True
+            return 0
+
+    monkeypatch.setattr(player_window_module, "BilibiliCommentsDialog", StubCommentsDialog)
+    window = PlayerWindow(FakePlayerController(), metadata_comments_provider=None)
+    qtbot.addWidget(window)
+    session = make_player_session()
+    session.source_kind = "bilibili"
+    session.vod = VodItem(vod_id="BV1xx411c7mD", vod_name="B站视频")
+    session.bilibili_comments_loader = lambda query: {"count": 0, "comments": []}
+    window.open_session(session)
+
+    assert window.metadata_comments_button.isHidden() is False
+    window._open_metadata_comments()
+    assert created["bvid"] == "BV1xx411c7mD"
+    assert created["exec_called"] is True
+    # 完整功能对话框(非只读),loader 为 session 注入的 B站管道
+    assert created["kwargs"] == {}
+
+
+def test_player_window_bilibili_ss_session_hides_comments_button(qtbot) -> None:
+    window = PlayerWindow(FakePlayerController(), metadata_comments_provider=None)
+    qtbot.addWidget(window)
+    session = make_player_session()
+    session.source_kind = "bilibili"
+    session.vod = VodItem(vod_id="ss12345", vod_name="番剧")
+    session.bilibili_comments_loader = lambda query: {"count": 0, "comments": []}
+    window.open_session(session)
+    # ss 番剧无评论入口(与详情字段行为一致),按钮隐藏
+    assert window.metadata_comments_button.isHidden() is True
