@@ -3391,6 +3391,141 @@ def test_controller_resolve_danmaku_sync_emits_final_failure_after_all_candidate
     ]
 
 
+def test_controller_resolve_danmaku_sync_caps_candidate_walk_after_consecutive_failures() -> None:
+    """错剧模糊匹配把整部剧几十集当候选时,连续失败到上限即停,不再串行试完。"""
+
+    class FailingDanmakuService:
+        def __init__(self) -> None:
+            self.resolve_calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="youku",
+                        provider_label="优酷",
+                        options=[
+                            DanmakuSourceOption(
+                                provider="youku",
+                                name=f"我才是继承人 第{episode}集",
+                                url=f"https://v.youku.com/v_show/id_ep{episode}.html",
+                            )
+                            for episode in range(1, 9)
+                        ],
+                    )
+                ],
+                default_option_url="https://v.youku.com/v_show/id_ep1.html",
+                default_provider="youku",
+            )
+
+        def resolve_danmu(self, page_url: str, option=None) -> str:
+            self.resolve_calls.append(page_url)
+            raise DanmakuEmptyResultError(f"未找到弹幕: {page_url}")
+
+    logs: list[str] = []
+    service = FailingDanmakuService()
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="我不是继承人",
+        search_enabled=True,
+        danmaku_service=service,
+    )
+    controller.set_danmaku_log_handler(logs.append)
+    item = PlayItem(
+        title="2160p.",
+        url="https://stream.example/movie.mkv",
+        media_title="我不是继承人",
+        vod_id="movie-1",
+    )
+
+    controller._resolve_danmaku_sync(item, item.url, [item])
+
+    failure_limit = controller_module._DANMAKU_AUTO_RESOLVE_MAX_CANDIDATE_FAILURES
+    assert service.resolve_calls == [
+        f"https://v.youku.com/v_show/id_ep{episode}.html" for episode in range(1, failure_limit + 1)
+    ]
+    assert sum(1 for message in logs if message.startswith("弹幕下载中")) == failure_limit
+    assert logs[-1] == f"弹幕下载失败: 未找到弹幕: https://v.youku.com/v_show/id_ep{failure_limit}.html"
+
+
+def test_controller_non_prefetch_resolve_cancels_after_playback_session_switch() -> None:
+    """换播放会话翻代后,仍在跑的非预取解析在下一个候选检查点退出并不再刷日志。"""
+
+    first_attempt = threading.Event()
+
+    class SessionSwitchingDanmakuService:
+        def __init__(self) -> None:
+            self.resolve_calls: list[str] = []
+
+        def search_danmu_sources(
+            self,
+            name: str,
+            reg_src: str = "",
+            preferred_provider: str = "",
+            preferred_page_url: str = "",
+            media_duration_seconds: int = 0,
+        ):
+            return DanmakuSourceSearchResult(
+                groups=[
+                    DanmakuSourceGroup(
+                        provider="youku",
+                        provider_label="优酷",
+                        options=[
+                            DanmakuSourceOption(
+                                provider="youku",
+                                name=f"我才是继承人 第{episode}集",
+                                url=f"https://v.youku.com/v_show/id_ep{episode}.html",
+                            )
+                            for episode in range(1, 4)
+                        ],
+                    )
+                ],
+                default_option_url="https://v.youku.com/v_show/id_ep1.html",
+                default_provider="youku",
+            )
+
+        def resolve_danmu(self, page_url: str, option=None) -> str:
+            self.resolve_calls.append(page_url)
+            if len(self.resolve_calls) == 1:
+                # 模拟首个候选下载期间用户切到新播放会话。
+                first_attempt.set()
+                controller.invalidate_running_danmaku_resolves()
+            raise DanmakuEmptyResultError(f"未找到弹幕: {page_url}")
+
+    logs: list[str] = []
+    service = SessionSwitchingDanmakuService()
+    controller = SpiderPluginController(
+        PluginLevelDanmakuSpider(),
+        plugin_name="我不是继承人",
+        search_enabled=True,
+        danmaku_service=service,
+    )
+    controller.set_danmaku_log_handler(logs.append)
+    item = PlayItem(
+        title="2160p.",
+        url="https://stream.example/movie.mkv",
+        media_title="我不是继承人",
+        vod_id="movie-1",
+    )
+
+    controller._maybe_resolve_danmaku(item, item.url, [item])
+    assert first_attempt.wait(timeout=1)
+    _wait_until(lambda: item.danmaku_pending is False)
+
+    assert service.resolve_calls == ["https://v.youku.com/v_show/id_ep1.html"]
+    assert item.danmaku_xml == ""
+    assert item.danmaku_error == "未找到弹幕: https://v.youku.com/v_show/id_ep1.html"
+    # 中途取消不算最终失败,不再补一条「弹幕下载失败」。
+    assert all("弹幕下载失败" not in message for message in logs)
+
+
 def test_controller_uses_cached_danmaku_source_search_result_without_network_lookup(monkeypatch) -> None:
     calls: list[str] = []
     cached_result = DanmakuSourceSearchResult(

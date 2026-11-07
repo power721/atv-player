@@ -4726,6 +4726,18 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         self._reset_auto_switched_failure_sources()
         self._ytdlp_full_resolve_recovery_item = None
         self._invalidate_play_item_resolution()
+        # 旧会话条目的弹幕解析线程可能仍在逐候选下载(错剧时长达分钟级),
+        # 不打断会把「弹幕下载中」刷进新会话日志;新条目解析在本次加载中
+        # 才启动,不受翻代影响。
+        previous_session = self.session
+        if previous_session is not None:
+            invalidate_resolves = getattr(
+                previous_session.danmaku_controller,
+                "invalidate_running_danmaku_resolves",
+                None,
+            )
+            if callable(invalidate_resolves):
+                invalidate_resolves()
         self._clear_next_episode_preload()
         self._pending_intro_skip = None
         self._hide_skip_banner()

@@ -352,6 +352,9 @@ def _count_danmaku_entries(xml_text: str) -> int:
 _SPIDER_DANMAKU_MAX_XML_BYTES = 8 * 1024 * 1024
 _SPIDER_DANMAKU_FETCH_TIMEOUT_SECONDS = 10.0
 _SPIDER_DANMAKU_HEADER_WHITELIST = {"referer", "user-agent", "cookie"}
+# 自动解析逐候选下载兜底:错剧/无弹幕的模糊匹配会把整部剧 60+ 集当候选串行试完
+# (每个 ~1s,两分钟级请求风暴)。连续失败到该上限即放弃,后续候选不再尝试。
+_DANMAKU_AUTO_RESOLVE_MAX_CANDIDATE_FAILURES = 5
 
 
 def _spider_danmaku_xml_valid(xml_text: str) -> bool:
@@ -854,6 +857,7 @@ class SpiderPluginController:
         self._warming_danmaku_source_cache_keys: set[str] = set()
         self._inflight_danmaku_source_searches: dict[str, _InflightDanmakuSourceSearch] = {}
         self._danmaku_prefetch_generation = 0
+        self._danmaku_resolve_generation = 0
         self._danmaku_log_handler: Callable[[str], None] | None = None
         self._home_loaded = False
         self._raw_home_categories: list[SpiderPluginRawCategory] = []
@@ -1560,6 +1564,7 @@ class SpiderPluginController:
         explicit_episode_requested, requested_episode = _query_requests_explicit_episode(search_name)
         provider_label_by_key = {group.provider: group.provider_label for group in item.danmaku_candidates}
         last_error = ""
+        candidate_failures = 0
         for candidate in candidates:
             if explicit_episode_requested and requested_episode is not None:
                 candidate_episode = extract_episode_number(candidate.name)
@@ -1621,6 +1626,17 @@ class SpiderPluginController:
                 )
                 last_error = str(exc)
                 item.danmaku_error = last_error
+                candidate_failures += 1
+                if candidate_failures >= _DANMAKU_AUTO_RESOLVE_MAX_CANDIDATE_FAILURES:
+                    logger.info(
+                        "Spider plugin danmaku candidate failures capped plugin=%s source=%s "
+                        "failures=%s total_candidates=%s",
+                        self._plugin_name,
+                        item.vod_id,
+                        candidate_failures,
+                        len(candidates),
+                    )
+                    break
         if not is_prefetch and last_error:
             self._log_danmaku_event("弹幕下载失败", detail=last_error)
 
@@ -2595,6 +2611,16 @@ class SpiderPluginController:
         with self._danmaku_lock:
             self._danmaku_prefetch_generation += 1
 
+    def invalidate_running_danmaku_resolves(self) -> None:
+        """放弃仍在跑的播放加载期弹幕解析(非预取)。
+
+        新播放会话开启时调用:旧条目的解析线程(候选逐个下载,可能跑几十秒)
+        借此在下一个候选检查点退出,不再请求网络、不再向新会话日志刷
+        「弹幕下载中」。新条目自身的解析在此之后启动,快照新代数不受影响。
+        """
+        with self._danmaku_lock:
+            self._danmaku_resolve_generation += 1
+
     def set_danmaku_log_handler(self, handler: Callable[[str], None] | None) -> None:
         self._danmaku_log_handler = handler
 
@@ -2630,11 +2656,16 @@ class SpiderPluginController:
                 return
             self._pending_danmaku_item_ids.add(item_id)
             prefetch_generation = self._danmaku_prefetch_generation
+            resolve_generation = self._danmaku_resolve_generation
         item.danmaku_pending = True
 
         def prefetch_still_valid() -> bool:
             if not is_prefetch:
-                return True
+                # 播放加载触发的解析也可能长跑(候选逐个下载);换播放会话时由
+                # invalidate_running_danmaku_resolves 翻代以便中途放弃,不再拖进
+                # 下一个视频的日志里。播放列表替换路径的 reset 只翻预取代,不影响这里。
+                with self._danmaku_lock:
+                    return resolve_generation == self._danmaku_resolve_generation
             with self._danmaku_lock:
                 return prefetch_generation == self._danmaku_prefetch_generation
 
