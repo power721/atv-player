@@ -9960,6 +9960,49 @@ def test_player_window_related_chip_click_opens_detail_via_runner(qtbot) -> None
     assert (action.type, action.value) == ("detail", "movie-2")
 
 
+def test_player_window_related_chip_click_keeps_player_window_open(qtbot, monkeypatch) -> None:
+    session = make_player_session(start_index=0)
+    session.vod.vod_related = [
+        VodRelatedEntry(vod_id="movie-1", vod_name="Movie 第一季"),
+        VodRelatedEntry(vod_id="movie-2", vod_name="Movie 第二季"),
+    ]
+    calls: list[tuple[PlayItem, PlaybackDetailFieldAction]] = []
+    session.detail_field_runner = lambda item, action: calls.append((item, action))
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    return_calls: list[bool] = []
+    monkeypatch.setattr(window, "_return_to_main", lambda: return_calls.append(True))
+    progress_calls: list[dict] = []
+    monkeypatch.setattr(window, "report_progress", lambda *args, **kwargs: progress_calls.append(kwargs))
+
+    window.open_session(session)
+    _related_chip_buttons(window)[1].click()
+
+    assert len(calls) == 1
+    assert (calls[0][1].type, calls[0][1].value) == ("detail", "movie-2")
+    assert return_calls == []
+    assert any(kwargs.get("force_remote_report") is True for kwargs in progress_calls)
+
+
+def test_player_window_detail_field_category_action_returns_to_main(qtbot, monkeypatch) -> None:
+    session = make_player_session(start_index=0)
+    calls: list[tuple[PlayItem, PlaybackDetailFieldAction]] = []
+    session.detail_field_runner = lambda item, action: calls.append((item, action))
+    window = PlayerWindow(FakePlayerController())
+    qtbot.addWidget(window)
+
+    return_calls: list[bool] = []
+    monkeypatch.setattr(window, "_return_to_main", lambda: return_calls.append(True))
+
+    window.open_session(session)
+    window._run_detail_field_action(PlaybackDetailFieldAction(type="category", value="movie"))
+
+    assert len(calls) == 1
+    assert (calls[0][1].type, calls[0][1].value) == ("category", "movie")
+    assert return_calls == [True]
+
+
 def test_player_window_related_chip_click_without_runner_is_noop(qtbot) -> None:
     session = make_player_session(start_index=0)
     session.vod.vod_related = [

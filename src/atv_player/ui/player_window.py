@@ -3616,6 +3616,7 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
         if self.session.detail_field_runner is None:
             self._append_log(f"相关推荐跳转失败: 当前来源不支持打开 {entry.vod_name}")
             return
+        self._append_log(f"正在打开: {entry.vod_name}")
         self._run_detail_field_action(
             PlaybackDetailFieldAction(type="detail", value=str(entry.vod_id))
         )
@@ -4296,8 +4297,13 @@ class PlayerWindow(ThemedWidgetWindowBase, AsyncGuardMixin):
             return
         current_item = self.session.playlist[self.current_index]
         runner = self.session.detail_field_runner
-        # 站内跳转(分类/搜索/详情)先退出播放回到主窗口,避免主窗口在播放器仍开着时弹出
-        self._return_to_main()
+        if action.type == "detail":
+            # detail 换剧仍在播放器内完成:不退出播放,后台解析完成后原地 open_session 换剧;
+            # 先强报一次旧剧进度,避免换剧丢失最后几秒播放记录
+            self.report_progress(force_remote_report=True)
+        else:
+            # 其余站内跳转(分类/搜索)目的地是主窗口:先退出播放,避免主窗口在播放器仍开着时弹出
+            self._return_to_main()
         try:
             runner(current_item, action)
         except Exception as exc:

@@ -7104,6 +7104,10 @@ class MainWindow(ThemedMainWindowBase, AsyncGuardMixin):
             self._discard_restore_placeholder_and_return_to_main()
             self.config.last_active_window = "main"
             self._save_config()
+        if self.player_window is not None and getattr(self.player_window, "session", None) is not None:
+            # 播放窗口开着(如相关推荐原地换剧失败):错误写进播放器日志,不弹主窗错误框
+            self._append_player_status_log(f"播放打开失败: {message}")
+            return
         self.show_error(message)
 
     def _show_main_again(self) -> None:
