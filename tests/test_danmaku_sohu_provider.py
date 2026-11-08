@@ -592,6 +592,57 @@ def test_sohu_resolve_uses_primed_context_and_maps_segment_comments() -> None:
     assert all(url != "https://tv.sohu.com/v/dXMvOTAwMi8=.html" for url, _ in calls)
 
 
+def test_sohu_resolve_parses_decimal_comment_colors() -> None:
+    # 搜狐接口实际返回十进制颜色字符串(danmu_api 05c6ed8),#RRGGBB/裸十六进制继续兼容
+    def fake_get(url: str, **kwargs):
+        if url == "https://api.danmu.tv.sohu.com/dmh5/dmListAll":
+            return httpx.Response(
+                200,
+                json={
+                    "info": {
+                        "comments": [
+                            {
+                                "i": "c1",
+                                "c": "红色十进制",
+                                "v": 1.0,
+                                "t": {"p": 1, "c": "16711680"},
+                            },
+                            {
+                                "i": "c2",
+                                "c": "裸十六进制",
+                                "v": 2.0,
+                                "t": {"p": 1, "c": "ff0000"},
+                            },
+                            {
+                                "i": "c3",
+                                "c": "非法值",
+                                "v": 3.0,
+                                "t": {"p": 1, "c": "#zzzzzz"},
+                            },
+                        ]
+                    }
+                },
+            )
+        if url == "https://pl.hd.sohu.com/videolist":
+            videos = [{"vid": "9002", "playLength": 120}]
+            return httpx.Response(200, json={"videos": videos})
+        raise AssertionError(url)
+
+    provider = SohuDanmakuProvider(get=fake_get)
+    provider.prime_resolve_context(
+        "https://tv.sohu.com/v/dXMvOTAwMi8=.html",
+        {"aid": "200001", "vid": "9002", "duration_seconds": 120},
+    )
+
+    records = provider.resolve("https://tv.sohu.com/v/dXMvOTAwMi8=.html")
+
+    assert [(record.color, record.content) for record in records] == [
+        ("16711680", "红色十进制"),
+        ("16711680", "裸十六进制"),
+        ("16777215", "非法值"),
+    ]
+
+
 def test_sohu_resolve_fetches_segments_concurrently() -> None:
     lock = threading.Lock()
     active_requests = 0

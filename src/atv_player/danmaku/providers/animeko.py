@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import re
+import threading
+import time
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 from math import isfinite
@@ -18,6 +21,99 @@ _HEADERS = {
     "User-Agent": "atv-player/0.1.0",
 }
 _MAX_SUBJECTS = 5
+
+# danmu_api fceedd1: 镜像域名迁至 bangumi.lat(发布页 bangumi.wiki 唯一推荐镜像),
+# .lol 已 404、.vip 仅 301 跳转;发布页接口用于静态节点全灭时动态发现新镜像。
+_MIRROR_PUBLISH_API = "https://bangumi.wiki/api/v1/mirrors"
+_MIRROR_HOSTS_TTL_SECONDS = 600.0
+_MAX_MIRROR_FALLBACK_HOSTS = 2
+_MIRROR_HOST_PATTERN = re.compile(
+    r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+)
+
+_mirror_hosts_lock = threading.Lock()
+_mirror_hosts_cache: tuple[str, ...] = ()
+_mirror_hosts_fetched_at = 0.0
+
+
+def _int_or_zero(value: object) -> int:
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _parse_mirror_api_hosts(payload: object) -> tuple[str, ...]:
+    """发布页响应 → API 域名列表:权重降序、同权重推荐优先、同域名去重。
+
+    仅接受多层级域名,剔除协议、路径、端口与 IP 字面量等非域名内容。
+    """
+    mirrors = payload.get("mirrors") if isinstance(payload, dict) else None
+    if not isinstance(mirrors, list):
+        return ()
+    ranked: list[tuple[int, int, int, str]] = []
+    seen: set[str] = set()
+    for mirror in mirrors:
+        services = mirror.get("services") if isinstance(mirror, dict) else None
+        if not isinstance(services, list):
+            continue
+        for service in services:
+            if not isinstance(service, dict) or service.get("id") != "api":
+                continue
+            hosts = service.get("hosts")
+            if not isinstance(hosts, list):
+                continue
+            for host in hosts:
+                text = str(host or "").strip().lower()
+                if not _MIRROR_HOST_PATTERN.match(text):
+                    continue
+                if text.rsplit(".", 1)[-1].isdigit():
+                    continue
+                if text in seen:
+                    continue
+                seen.add(text)
+                ranked.append(
+                    (
+                        -_int_or_zero(mirror.get("weight")),
+                        0 if mirror.get("recommended") is True else 1,
+                        len(ranked),
+                        text,
+                    )
+                )
+    return tuple(f"https://{host}" for _, _, _, host in sorted(ranked))
+
+
+def _reset_mirror_hosts_cache() -> None:
+    """重置发布页镜像缓存,供测试隔离模块级状态。"""
+    global _mirror_hosts_cache, _mirror_hosts_fetched_at
+    with _mirror_hosts_lock:
+        _mirror_hosts_cache = ()
+        _mirror_hosts_fetched_at = 0.0
+
+
+def _fallback_mirror_hosts(
+    get: Callable[..., httpx.Response],
+    exclude: Sequence[str],
+) -> tuple[str, ...]:
+    """静态搜索节点全部失败后,从发布页取兜底域名(10 分钟缓存,含空结果)。"""
+    global _mirror_hosts_cache, _mirror_hosts_fetched_at
+    with _mirror_hosts_lock:
+        if time.monotonic() - _mirror_hosts_fetched_at >= _MIRROR_HOSTS_TTL_SECONDS:
+            try:
+                response = get(
+                    _MIRROR_PUBLISH_API,
+                    timeout=5.0,
+                    follow_redirects=True,
+                )
+                payload = response.json() if response.status_code < 400 else None
+            except (httpx.HTTPError, TypeError, ValueError):
+                payload = None
+            _mirror_hosts_cache = _parse_mirror_api_hosts(payload)
+            _mirror_hosts_fetched_at = time.monotonic()
+    skipped = set(exclude)
+    return tuple(
+        host for host in _mirror_hosts_cache if host not in skipped
+    )[:_MAX_MIRROR_FALLBACK_HOSTS]
 
 
 def _default_nodes() -> tuple[str, ...]:
@@ -46,10 +142,9 @@ class AnimekoDanmakuProvider:
         post: Callable[..., httpx.Response] = httpx.post,
         nodes: Sequence[str] | None = None,
         search_nodes: Sequence[str] = (
-            "https://api.bangumi.lol",
+            # danmu_api fceedd1: 镜像迁至 bangumi.lat,官方 bgm.tv 兜底
+            "https://api.bangumi.lat",
             "https://api.bgm.tv",
-            # danmu_api f56b34f 迁移后的镜像域名,作为兜底节点
-            "https://api.bangumi.vip",
         ),
     ) -> None:
         self._get = get
@@ -165,24 +260,34 @@ class AnimekoDanmakuProvider:
 
     def _search_subjects(self, keyword: str) -> list[object]:
         for host in self._search_nodes:
-            try:
-                response = self._post(
-                    f"{host}/v0/search/subjects",
-                    json={"keyword": keyword, "filter": {"type": [2]}},
-                    headers=_HEADERS,
-                    params={"limit": 20, "offset": 0},
-                    timeout=5.0,
-                    follow_redirects=True,
-                )
-                if response.status_code >= 400:
-                    continue
-                payload = response.json()
-            except (httpx.HTTPError, TypeError, ValueError):
-                continue
-            data = payload.get("data") if isinstance(payload, dict) else None
-            if isinstance(data, list):
+            data = self._search_subjects_from(host, keyword)
+            if data is not None:
+                return data
+        for host in _fallback_mirror_hosts(self._get, self._search_nodes):
+            data = self._search_subjects_from(host, keyword)
+            if data is not None:
                 return data
         return []
+
+    def _search_subjects_from(self, host: str, keyword: str) -> list[object] | None:
+        try:
+            response = self._post(
+                f"{host}/v0/search/subjects",
+                json={"keyword": keyword, "filter": {"type": [2]}},
+                headers=_HEADERS,
+                params={"limit": 20, "offset": 0},
+                timeout=5.0,
+                follow_redirects=True,
+            )
+            if response.status_code >= 400:
+                return None
+            payload = response.json()
+        except (httpx.HTTPError, TypeError, ValueError):
+            return None
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if isinstance(data, list):
+            return data
+        return None
 
     def _subject(self, subject_id: str) -> object:
         for host in self._ordered_nodes(self._subject_host):

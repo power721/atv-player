@@ -5,7 +5,11 @@ import httpx
 import pytest
 
 from atv_player.danmaku.errors import DanmakuResolveError
-from atv_player.danmaku.providers.animeko import AnimekoDanmakuProvider
+from atv_player.danmaku.providers.animeko import (
+    AnimekoDanmakuProvider,
+    _parse_mirror_api_hosts,
+    _reset_mirror_hosts_cache,
+)
 
 
 def test_animeko_search_expands_main_episode_from_fallback_subject_node() -> None:
@@ -232,11 +236,123 @@ def test_animeko_all_nodes_fail_with_named_error() -> None:
         provider.resolve("animeko://episode/4201")
 
 
-def test_animeko_default_search_nodes_include_vip_mirror() -> None:
-    # danmu_api f56b34f 迁移后的 bangumi API 镜像作为兜底节点
+def test_animeko_default_search_nodes_use_lat_mirror_first() -> None:
+    # danmu_api fceedd1: .lol 已 404、.vip 仅 301 跳转,镜像迁至 bangumi.lat
     provider = AnimekoDanmakuProvider()
     assert provider._search_nodes == (
-        "https://api.bangumi.lol",
+        "https://api.bangumi.lat",
         "https://api.bgm.tv",
-        "https://api.bangumi.vip",
     )
+
+
+def test_animeko_search_falls_back_to_publish_page_mirror_hosts() -> None:
+    # 静态搜索节点全灭时,从 bangumi.wiki 发布页发现新镜像并重试
+    _reset_mirror_hosts_cache()
+    post_urls: list[str] = []
+    get_urls: list[str] = []
+
+    def fake_post(url: str, **kwargs):
+        post_urls.append(url)
+        if url == "https://api.bangumi.new/v0/search/subjects":
+            return httpx.Response(200, json={"data": [{"id": 42, "name_cn": "迷宫饭"}]})
+        raise httpx.HTTPError("mirror down")
+
+    def fake_get(url: str, **kwargs):
+        get_urls.append(url)
+        if url == "https://node.example/v2/subjects/42":
+            episodes = [{"episodeId": 4201, "sort": 1, "type": "MAIN"}]
+            return httpx.Response(200, json={"id": 42, "episodes": episodes})
+        assert url == "https://bangumi.wiki/api/v1/mirrors"
+        return httpx.Response(
+            200,
+            json={
+                "mirrors": [
+                    {
+                        "weight": 100,
+                        "recommended": False,
+                        "services": [{"id": "api", "hosts": ["api.bangumi.new"]}],
+                    },
+                ]
+            },
+        )
+
+    try:
+        provider = AnimekoDanmakuProvider(
+            get=fake_get,
+            post=fake_post,
+            nodes=("https://node.example",),
+            search_nodes=("https://mirror-a.example",),
+        )
+        items = provider.search("迷宫饭")
+    finally:
+        _reset_mirror_hosts_cache()
+
+    assert [item.url for item in items] == ["animeko://episode/4201"]
+    assert post_urls == [
+        "https://mirror-a.example/v0/search/subjects",
+        "https://api.bangumi.new/v0/search/subjects",
+    ]
+    # 发布页只应在静态节点全灭后被请求一次,之后才是正常的条目展开请求
+    assert get_urls[0] == "https://bangumi.wiki/api/v1/mirrors"
+
+
+def test_animeko_search_returns_empty_when_publish_page_unreachable() -> None:
+    _reset_mirror_hosts_cache()
+    post_urls: list[str] = []
+
+    def fake_post(url: str, **kwargs):
+        post_urls.append(url)
+        raise httpx.HTTPError("mirror down")
+
+    def fake_get(url: str, **kwargs):
+        raise httpx.HTTPError("publish page down")
+
+    try:
+        provider = AnimekoDanmakuProvider(
+            get=fake_get,
+            post=fake_post,
+            nodes=("https://node.example",),
+            search_nodes=("https://mirror-a.example", "https://mirror-b.example"),
+        )
+        assert provider.search("迷宫饭") == []
+    finally:
+        _reset_mirror_hosts_cache()
+
+    assert post_urls == [
+        "https://mirror-a.example/v0/search/subjects",
+        "https://mirror-b.example/v0/search/subjects",
+    ]
+
+
+def test_animeko_parse_mirror_api_hosts_orders_and_validates() -> None:
+    payload = {
+        "mirrors": [
+            {
+                "weight": 10,
+                "recommended": True,
+                "services": [
+                    {"id": "main", "hosts": ["bangumi.example"]},
+                    {
+                        "id": "api",
+                        "hosts": [
+                            "https://api-a.example",
+                            "api-a.example:8443",
+                            "api.a.example",
+                        ],
+                    },
+                ],
+            },
+            {"weight": 100, "services": [{"id": "api", "hosts": ["api-b.example"]}]},
+            {"weight": 10, "services": [{"id": "api", "hosts": ["api-c.example"]}]},
+            {"weight": 5, "services": [{"id": "api", "hosts": ["1.2.3.4"]}]},
+        ]
+    }
+
+    # 权重降序、同权重推荐优先;协议/端口/IP 字面量与非 api 服务剔除
+    assert _parse_mirror_api_hosts(payload) == (
+        "https://api-b.example",
+        "https://api.a.example",
+        "https://api-c.example",
+    )
+    assert _parse_mirror_api_hosts({"mirrors": "corrupt"}) == ()
+    assert _parse_mirror_api_hosts(None) == ()

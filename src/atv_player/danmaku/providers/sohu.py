@@ -437,9 +437,13 @@ class SohuDanmakuProvider:
         if not content:
             return None
         style = self._mapping_or_empty(comment.get("t"), context=f"comment style cid={comment.get('i') or ''}")
-        color_text = str(style.get("c") or "#ffffff").strip().lstrip("#")
+        # 搜狐接口颜色为十进制字符串,兼容 #RRGGBB 与裸十六进制(danmu_api 05c6ed8)
+        color_text = str(style.get("c") or "").strip()
         try:
-            color = str(int(color_text, 16))
+            if color_text.isdigit():
+                color = str(int(color_text))
+            else:
+                color = str(int(color_text.lstrip("#"), 16))
         except ValueError:
             color = "16777215"
         position = self._to_int(style.get("p"), default=1, context=f"comment position cid={comment.get('i') or ''}")
