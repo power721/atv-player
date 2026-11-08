@@ -928,6 +928,47 @@ def episode_matches_request(candidate: str, requested_episode: int, target: str)
     return episode_title_matches(target, candidate)
 
 
+def compact_danmaku_title(value: str) -> str:
+    return re.sub(r"[\W_《》【】()（）]+", "", normalize_name(value).casefold())
+
+
+def cached_danmaku_source_result_matches_query(query_name: str, result) -> bool:
+    """缓存的弹幕源搜索结果能否继续服务当前查询的集数锚点。
+
+    日更剧的候选列表每天都会出新集;昨天的缓存里没有今天的第 N 集时,
+    直接复用会把自动选集钉在旧集上(第5集自动下到第2集的弹幕)。判定:
+    相关候选里存在集级收录但无一集号匹配 → 缓存过期,弃用重搜;纯剧级
+    收录(整季条目按集 resolve,如 B站番剧)不受影响。集数锚点用
+    extract_episode_number 判定而非显式标记——自动组合查询("标题 5")
+    没有标记,但锚点同样可信。
+    """
+    normalized_query = normalize_name(query_name)
+    if not normalized_query:
+        return True
+    if not getattr(result, "groups", None):
+        return False
+    requested_episode = extract_episode_number(normalized_query)
+    if requested_episode is None:
+        return True
+    query_title_key = compact_danmaku_title(strip_episode_suffix(normalized_query))
+    has_episode_level_candidate = False
+    for group in result.groups:
+        for option in group.options:
+            candidate_title_key = compact_danmaku_title(strip_episode_suffix(option.name))
+            if query_title_key and (not candidate_title_key or query_title_key not in candidate_title_key):
+                continue
+            candidate_episode = extract_episode_number(option.name)
+            if candidate_episode is not None:
+                has_episode_level_candidate = True
+                if candidate_episode == requested_episode and episode_title_matches(
+                    normalized_query, option.name
+                ):
+                    return True
+    # 相关候选全是剧级(无集号)时不判过期:弹幕库按整季收录,重搜也拿不到
+    # 集级候选。存在集级收录却缺目标集,才是"列表可能落后于日更"的信号。
+    return not has_episode_level_candidate
+
+
 _PURE_SEASON_TOKEN_RE = re.compile(r"^s\d{1,2}$")
 
 

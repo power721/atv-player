@@ -30,6 +30,7 @@ from atv_player.danmaku.preferences import (
 )
 from atv_player.danmaku.utils import (
     _play_item_episode_number,
+    cached_danmaku_source_result_matches_query,
     extract_variety_episode_label,
     has_explicit_episode_marker,
     has_variety_issue_marker,
@@ -408,6 +409,10 @@ class GenericDanmakuController:
             return False
         cached = self._load_source_search_result(query_name, reg_src)
         if cached is None:
+            return False
+        if not cached_danmaku_source_result_matches_query(query_name, cached):
+            # 日更剧缓存过期:相关候选里已有集级收录却没有目标集(昨天搜第5
+            # 集时只出到第3集),复用会把自动选集钉在旧集上,弃缓存重搜。
             return False
         preference = self._source_preference(item)
         preferred_provider = preference.provider if preference is not None else ""

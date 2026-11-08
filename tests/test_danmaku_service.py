@@ -2162,3 +2162,202 @@ def test_rerank_episode_specific_preferred_page_does_not_outrank_episode_match()
 
     assert reranked.groups[0].options[0].url == "https://www.bilibili.com/bangumi/play/ep100"
     assert reranked.default_option_url == "https://www.bilibili.com/bangumi/play/ep100"
+
+
+def test_rerank_guards_stale_preference_without_explicit_episode_marker() -> None:
+    # 自动组合查询是"标题 数字"形态("今天是太阳雨 5"),没有显式集数标记。
+    # 偏好里存着上次预下载第2集的集级 URL;查询第5集时,候选里已有第5集,
+    # 偏好 URL 不得再把 default 钉在第2集上(线上:第5集自动下到第2集弹幕)。
+    service = DanmakuService({}, provider_order=[])
+
+    result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="mgtv",
+                provider_label="芒果",
+                options=[
+                    DanmakuSourceOption(
+                        provider="mgtv",
+                        name="今天是太阳雨 第2集 郑雨陈砚周全力备考实验室申请",
+                        url="https://www.mgtv.com/b/817372/24769784.html",
+                    ),
+                    DanmakuSourceOption(
+                        provider="mgtv",
+                        name="今天是太阳雨 第5集 陈砚周帮郑雨躲避债主追债",
+                        url="https://www.mgtv.com/b/817372/24773914.html",
+                    ),
+                ],
+            )
+        ],
+        default_option_url="https://www.mgtv.com/b/817372/24769784.html",
+        default_provider="mgtv",
+    )
+
+    reranked = service.rerank_danmaku_source_search_result(
+        result,
+        query_name="今天是太阳雨 5",
+        preferred_provider="mgtv",
+        preferred_page_url="https://www.mgtv.com/b/817372/24769784.html",
+        media_duration_seconds=0,
+    )
+
+    assert reranked.default_option_url == "https://www.mgtv.com/b/817372/24773914.html"
+
+
+def test_rerank_default_skips_unmatched_episode_level_group() -> None:
+    # 缓存过期:查询第5集但候选组只有第1-3集(昨天搜索时日更剧还没出第5集)。
+    # 偏好是第2集的集级 URL。default 不得回退 options[0](第2集),应跳过
+    # 该组落到别组的剧级候选;全无可用候选时宁可空 default 也不错集。
+    service = DanmakuService({}, provider_order=[])
+
+    result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="mgtv",
+                provider_label="芒果",
+                options=[
+                    DanmakuSourceOption(
+                        provider="mgtv",
+                        name="今天是太阳雨 第2集 郑雨陈砚周全力备考实验室申请",
+                        url="https://www.mgtv.com/b/817372/24769784.html",
+                    ),
+                    DanmakuSourceOption(
+                        provider="mgtv",
+                        name="今天是太阳雨 第1集 杨超越董思成对手变队友",
+                        url="https://www.mgtv.com/b/817372/24769759.html",
+                    ),
+                ],
+            ),
+            DanmakuSourceGroup(
+                provider="sohu",
+                provider_label="搜狐",
+                options=[
+                    DanmakuSourceOption(
+                        provider="sohu",
+                        name="今天是太阳雨_0",
+                        url="https://tv.sohu.com/item/696959393.html",
+                    )
+                ],
+            ),
+        ],
+        default_option_url="https://www.mgtv.com/b/817372/24769784.html",
+        default_provider="mgtv",
+    )
+
+    reranked = service.rerank_danmaku_source_search_result(
+        result,
+        query_name="今天是太阳雨 5",
+        preferred_provider="mgtv",
+        preferred_page_url="https://www.mgtv.com/b/817372/24769784.html",
+        media_duration_seconds=0,
+    )
+
+    assert reranked.default_option_url == "https://tv.sohu.com/item/696959393.html"
+
+
+def test_rerank_default_returns_none_when_only_unmatched_episode_candidates() -> None:
+    # 全部候选都是集级且无一匹配请求集号:下错集的弹幕比"未找到"更糟,
+    # default 应为空(自动解析失败,留给手动选择),而不是 options[0]。
+    service = DanmakuService({}, provider_order=[])
+
+    result = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="mgtv",
+                provider_label="芒果",
+                options=[
+                    DanmakuSourceOption(
+                        provider="mgtv",
+                        name="今天是太阳雨 第2集 郑雨陈砚周全力备考实验室申请",
+                        url="https://www.mgtv.com/b/817372/24769784.html",
+                    ),
+                    DanmakuSourceOption(
+                        provider="mgtv",
+                        name="今天是太阳雨 第1集 杨超越董思成对手变队友",
+                        url="https://www.mgtv.com/b/817372/24769759.html",
+                    ),
+                ],
+            )
+        ],
+        default_option_url="https://www.mgtv.com/b/817372/24769784.html",
+        default_provider="mgtv",
+    )
+
+    reranked = service.rerank_danmaku_source_search_result(
+        result,
+        query_name="今天是太阳雨 5",
+        preferred_provider="mgtv",
+        preferred_page_url="https://www.mgtv.com/b/817372/24769784.html",
+        media_duration_seconds=0,
+    )
+
+    assert reranked.default_option_url == ""
+    assert reranked.default_provider == ""
+
+
+def test_cached_danmaku_source_result_matches_query_guards_daily_updated_show() -> None:
+    # 昨天的缓存:日更剧只出到第3集。今天查询第5集时,相关候选里已有集级
+    # 收录却缺第5集 → 缓存过期,弃用重搜(芒果今天已上线第5集)。
+    from atv_player.danmaku.utils import cached_danmaku_source_result_matches_query
+
+    stale = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="mgtv",
+                provider_label="芒果",
+                options=[
+                    DanmakuSourceOption(
+                        provider="mgtv",
+                        name="今天是太阳雨 第2集 郑雨陈砚周全力备考实验室申请",
+                        url="https://www.mgtv.com/b/817372/24769784.html",
+                    ),
+                    DanmakuSourceOption(
+                        provider="mgtv",
+                        name="今天是太阳雨 第3集 陈砚周郑雨二人达成互助约定",
+                        url="https://www.mgtv.com/b/817372/24769809.html",
+                    ),
+                ],
+            )
+        ]
+    )
+    assert cached_danmaku_source_result_matches_query("今天是太阳雨 5", stale) is False
+    assert cached_danmaku_source_result_matches_query("今天是太阳雨 2", stale) is True
+
+    # 缓存含第5集(标题带集号、名称与查询同剧)→ 有效
+    fresh = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="mgtv",
+                provider_label="芒果",
+                options=[
+                    DanmakuSourceOption(
+                        provider="mgtv",
+                        name="今天是太阳雨 第5集 陈砚周帮郑雨躲避债主追债",
+                        url="https://www.mgtv.com/b/817372/24773914.html",
+                    )
+                ],
+            )
+        ]
+    )
+    assert cached_danmaku_source_result_matches_query("今天是太阳雨 5", fresh) is True
+
+    # 纯剧级收录(B站整季条目按集 resolve)→ 不判过期,避免每次重搜
+    series_level = DanmakuSourceSearchResult(
+        groups=[
+            DanmakuSourceGroup(
+                provider="bilibili",
+                provider_label="B站",
+                options=[
+                    DanmakuSourceOption(
+                        provider="bilibili",
+                        name="牧神记",
+                        url="https://www.bilibili.com/bangumi/media/md000",
+                    )
+                ],
+            )
+        ]
+    )
+    assert cached_danmaku_source_result_matches_query("牧神记 5", series_level) is True
+
+    # 查询无集数锚点(电影/整季)→ 不校验
+    assert cached_danmaku_source_result_matches_query("流浪地球2", stale) is True

@@ -374,6 +374,55 @@ def test_generic_danmaku_controller_cached_restore_reranks_with_series_preferenc
     ]
 
 
+def test_generic_danmaku_controller_rejects_stale_cache_missing_requested_episode(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # 日更剧昨天搜索"今天是太阳雨 5"时芒果只出到第3集,缓存被污染。今天
+    # 第5集自动解析命中该缓存时必须弃用重搜,而不是把第2集的弹幕当作第5集
+    # 下载(线上:第5集自动下到 12831 条第2集弹幕,手动搜索才正确)。
+
+    class NoopService:
+        def rerank_danmaku_source_search_result(self, result, **kwargs):
+            return result
+
+    _use_tmp_danmaku_cache(monkeypatch, tmp_path)
+    danmaku_cache_module.save_cached_danmaku_source_search_result(
+        "今天是太阳雨 5",
+        "driver-item-5",
+        DanmakuSourceSearchResult(
+            groups=[
+                DanmakuSourceGroup(
+                    provider="mgtv",
+                    provider_label="芒果",
+                    options=[
+                        DanmakuSourceOption(
+                            provider="mgtv",
+                            name="今天是太阳雨 第2集 郑雨陈砚周全力备考实验室申请",
+                            url="https://www.mgtv.com/b/817372/24769784.html",
+                        ),
+                        DanmakuSourceOption(
+                            provider="mgtv",
+                            name="今天是太阳雨 第1集 杨超越董思成对手变队友",
+                            url="https://www.mgtv.com/b/817372/24769759.html",
+                        ),
+                    ],
+                )
+            ],
+            default_option_url="https://www.mgtv.com/b/817372/24769784.html",
+            default_provider="mgtv",
+        ),
+    )
+    controller = GenericDanmakuController(NoopService())
+    item = PlayItem(
+        title="05",
+        url="http://127.0.0.1:44399/driver/abc05",
+        vod_id="driver-item-5",
+        media_title="今天是太阳雨",
+    )
+
+    assert controller.load_cached_danmaku_sources(item, playlist=[item]) is False
+
+
 def test_generic_danmaku_controller_switch_saves_series_source_preference(monkeypatch, tmp_path: Path) -> None:
     # generic 路径的下载结果要落库为系列偏好，后续同系列搜索/缓存恢复才能
     # 钉住用户实际使用的源。

@@ -35,6 +35,8 @@ from atv_player.danmaku.preferences import (
 )
 from atv_player.danmaku.service import build_danmaku_series_key
 from atv_player.danmaku.utils import (
+    cached_danmaku_source_result_matches_query,
+    compact_danmaku_title,
     episode_title_matches,
     extract_episode_number,
     extract_official_link_url,
@@ -451,35 +453,11 @@ def _prioritize_requested_episode_in_source_search_result(query_name: str, resul
     )
 
 
+_cached_danmaku_source_result_matches_query = cached_danmaku_source_result_matches_query
+
+
 def _compact_danmaku_title(value: str) -> str:
-    return re.sub(r"[\W_《》【】()（）]+", "", normalize_name(value).casefold())
-
-
-def _cached_danmaku_source_result_matches_query(query_name: str, result) -> bool:
-    normalized_query = normalize_name(query_name)
-    if not normalized_query:
-        return True
-    if not getattr(result, "groups", None):
-        return False
-    if not has_explicit_episode_marker(normalized_query):
-        return True
-    requested_episode = extract_episode_number(normalized_query)
-    if requested_episode is None:
-        return True
-    query_title_key = _compact_danmaku_title(strip_episode_suffix(normalized_query))
-    has_related_candidate = False
-    for group in result.groups:
-        for option in group.options:
-            candidate_title_key = _compact_danmaku_title(strip_episode_suffix(option.name))
-            if query_title_key and (not candidate_title_key or query_title_key not in candidate_title_key):
-                continue
-            has_related_candidate = True
-            if (
-                extract_episode_number(option.name) == requested_episode
-                and episode_title_matches(normalized_query, option.name)
-            ):
-                return True
-    return not has_related_candidate
+    return compact_danmaku_title(value)
 
 
 def _cached_danmaku_title_matches_query(query_name: str, candidate_title: str) -> bool:
