@@ -37,6 +37,16 @@ class SpiderPluginDefinition:
     sort_order: int = 0
 
 
+def _source_file_identity(path: Path) -> tuple[int, int] | None:
+    try:
+        if not path.is_file():
+            return None
+        stat = path.stat()
+    except OSError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size)
+
+
 def _default_plugin_name(source_type: str, source_value: str) -> str:
     if source_type == "remote":
         parsed = urlparse(source_value)
@@ -177,6 +187,11 @@ class SpiderPluginManager:
         self._metadata_hydrator_factory = None
         self._metadata_scrape_service_factory = None
         self._episode_title_enhancer_factory = None
+        # 刷新加载出的实例暂存:refresh_plugin 加载一次后,随后的 tab 重建
+        # (load_plugins/iter_enabled_plugins) 校验源未变即复用,免去二次 exec+init。
+        self._refreshed_loads: dict[int, tuple[LoadedSpiderPlugin, tuple[int, int]]] = (
+            {}
+        )
 
     def list_plugins(self) -> list[SpiderPluginConfig]:
         return self._repository.list_plugins()
@@ -316,6 +331,7 @@ class SpiderPluginManager:
         try:
             loaded = self._loader.load(plugin, force_refresh=True)
         except Exception as exc:
+            self._refreshed_loads.pop(plugin_id, None)
             self._repository.update_plugin(
                 plugin_id,
                 display_name=plugin.display_name,
@@ -341,8 +357,45 @@ class SpiderPluginManager:
             category_overrides_json=plugin.category_overrides_json,
             manifest_id=loaded.config.manifest_id,
         )
+        identity = _source_file_identity(self._plugin_source_path(plugin, loaded))
+        if identity is None:
+            self._refreshed_loads.pop(plugin_id, None)
+        else:
+            self._refreshed_loads[plugin_id] = (loaded, identity)
+
+    @staticmethod
+    def _plugin_source_path(
+        plugin: SpiderPluginConfig,
+        loaded: LoadedSpiderPlugin,
+    ) -> Path:
+        if plugin.source_type == "local":
+            return Path(plugin.source_value)
+        return Path(loaded.config.cached_file_path or plugin.cached_file_path or "")
+
+    def _load_plugin_for_definition(
+        self,
+        plugin: SpiderPluginConfig,
+        *,
+        initialize: bool,
+    ) -> LoadedSpiderPlugin:
+        stashed = self._refreshed_loads.pop(plugin.id, None)
+        if stashed is not None:
+            loaded, identity = stashed
+            # 任一条件变化即作废:源文件被改(mtime/size)、来源或配置变了
+            # (initialize_spider 闭包捕获的是旧 config_text,不能复用)。
+            if (
+                plugin.source_type == loaded.config.source_type
+                and plugin.source_value == loaded.config.source_value
+                and plugin.config_text == loaded.config.config_text
+                and _source_file_identity(
+                    self._plugin_source_path(plugin, loaded)
+                ) == identity
+            ):
+                return loaded
+        return self._loader.load(plugin, initialize=initialize)
 
     def delete_plugin(self, plugin_id: int) -> None:
+        self._refreshed_loads.pop(plugin_id, None)
         self._repository.delete_plugin(plugin_id)
 
     def list_logs(self, plugin_id: int):
@@ -690,7 +743,7 @@ class SpiderPluginManager:
         )
         for plugin in plugins:
             try:
-                loaded = self._loader.load(plugin, initialize=initialize_plugins)
+                loaded = self._load_plugin_for_definition(plugin, initialize=initialize_plugins)
             except Exception as exc:
                 self._repository.update_plugin(
                     plugin.id,
@@ -743,7 +796,7 @@ class SpiderPluginManager:
         plugins.sort(key=lambda plugin: plugin.sort_order)
         for plugin in plugins:
             try:
-                loaded = self._loader.load(plugin)
+                loaded = self._load_plugin_for_definition(plugin, initialize=True)
             except Exception as exc:
                 self._repository.update_plugin(
                     plugin.id,

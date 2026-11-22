@@ -1140,6 +1140,93 @@ def test_manager_refresh_plugin_records_error_and_log_instead_of_raising(tmp_pat
     assert logs[0].message == "network down"
 
 
+class CountingLoader(FakeLoader):
+    def __init__(self) -> None:
+        self.load_count = 0
+        self.spiders: list[object] = []
+
+    def load(
+        self,
+        config: SpiderPluginConfig,
+        force_refresh: bool = False,
+        initialize: bool = True,
+    ) -> LoadedSpiderPlugin:
+        self.load_count += 1
+        loaded = super().load(config, force_refresh=force_refresh, initialize=initialize)
+        spider = FakeSpider()
+        self.spiders.append(spider)
+        return LoadedSpiderPlugin(
+            config=loaded.config,
+            spider=spider,
+            plugin_name="红果短剧",
+            search_enabled=False,
+        )
+
+
+def test_manager_refresh_plugin_reuses_loaded_spider_for_tab_reload(tmp_path: Path) -> None:
+    source = tmp_path / "demo.py"
+    source.write_text("# demo v1\n", encoding="utf-8")
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    plugin = repository.add_plugin("local", str(source), "演示插件", enabled=True)
+    loader = CountingLoader()
+    manager = SpiderPluginManager(repository, loader)
+
+    manager.refresh_plugin(plugin.id)
+    definitions = manager.load_plugins([str(plugin.id)])
+
+    assert loader.load_count == 1
+    assert definitions[0].controller._spider is loader.spiders[0]
+
+
+def test_manager_refresh_plugin_stale_config_not_reused_for_tab_reload(tmp_path: Path) -> None:
+    source = tmp_path / "demo.py"
+    source.write_text("# demo v1\n", encoding="utf-8")
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    plugin = repository.add_plugin("local", str(source), "演示插件", enabled=True)
+    loader = CountingLoader()
+    manager = SpiderPluginManager(repository, loader)
+
+    manager.refresh_plugin(plugin.id)
+    manager.set_plugin_config(plugin.id, "token=abc\n")
+    definitions = manager.load_plugins([str(plugin.id)])
+
+    assert loader.load_count == 2
+    assert definitions[0].controller._spider is loader.spiders[1]
+
+
+def test_manager_refresh_plugin_changed_source_file_not_reused_for_tab_reload(tmp_path: Path) -> None:
+    source = tmp_path / "demo.py"
+    source.write_text("# demo v1\n", encoding="utf-8")
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    plugin = repository.add_plugin("local", str(source), "演示插件", enabled=True)
+    loader = CountingLoader()
+    manager = SpiderPluginManager(repository, loader)
+
+    manager.refresh_plugin(plugin.id)
+    source.write_text("# demo v2 with different size\n", encoding="utf-8")
+    definitions = manager.load_plugins([str(plugin.id)])
+
+    assert loader.load_count == 2
+    assert definitions[0].controller._spider is loader.spiders[1]
+
+
+def test_manager_refresh_plugin_stale_stash_falls_back_to_fresh_load(tmp_path: Path) -> None:
+    source = tmp_path / "demo.py"
+    source.write_text("# demo v1\n", encoding="utf-8")
+    repository = SpiderPluginRepository(tmp_path / "app.db")
+    plugin = repository.add_plugin("local", str(source), "演示插件", enabled=True)
+    loader = CountingLoader()
+    manager = SpiderPluginManager(repository, loader)
+
+    manager.refresh_plugin(plugin.id)
+    manager.load_plugins([str(plugin.id)])
+    definitions = manager.load_plugins([str(plugin.id)])
+
+    # 暂存是一次性的:第二次 load_plugins 不再复用,重新加载
+    assert loader.load_count == 2
+    assert definitions[0].controller._spider is loader.spiders[1]
+
+
 def test_manager_load_enabled_plugins_wires_local_repository_playback_history_callbacks(tmp_path: Path) -> None:
     plugin_repository = SpiderPluginRepository(tmp_path / "app.db")
     local_history_repository = LocalPlaybackHistoryRepository(tmp_path / "app.db")
