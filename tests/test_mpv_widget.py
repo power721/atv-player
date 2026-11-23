@@ -207,6 +207,111 @@ def test_mpv_widget_runtime_property_observer_writes_cache(qtbot) -> None:
     track_list_handler("track-list", [{"id": 1, "type": "audio", "external": True, "selected": True}])
     assert widget._observed_properties["track-list"][0]["type"] == "audio"
 
+    sid_handler = handlers.get("sid")
+    assert callable(sid_handler)
+    sid_handler("sid", 3)
+    assert widget._observed_properties["sid"] == 3
+
+    chapter_list_handler = handlers.get("chapter-list")
+    assert callable(chapter_list_handler)
+    chapter_list_handler("chapter-list", [{"title": "A", "time": 1.0}])
+    assert widget._observed_properties["chapter-list"][0]["title"] == "A"
+
+
+def test_mpv_widget_player_property_prefers_observed_cache(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    widget._player = types.SimpleNamespace(sid=999)
+
+    widget._observed_properties["sid"] = 3
+    assert widget._player_property("sid") == 3
+
+    widget._observed_properties.clear()
+    assert widget._player_property("sid") == 999
+
+
+def test_mpv_widget_subtitle_tracks_reads_cache_without_live_get(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class BlockingTrackListPlayer:
+        core_shutdown = False
+
+        @property
+        def track_list(self):
+            raise RuntimeError("live track-list read must not happen")
+
+    widget._player = BlockingTrackListPlayer()
+    widget._observed_properties["track-list"] = [
+        {"id": 1, "type": "sub", "lang": "zh-hans", "title": "", "default": True, "forced": False, "external": False},
+        {"id": 2, "type": "audio", "lang": "ja", "title": "", "default": False, "forced": False, "external": False},
+    ]
+
+    assert [track.id for track in widget.subtitle_tracks()] == [1]
+
+    widget._observed_properties["track-list"] = []
+    assert widget.subtitle_tracks() == []
+
+
+def test_mpv_widget_audio_tracks_and_ids_read_cache_without_live_get(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+
+    class BlockingTrackListPlayer:
+        core_shutdown = False
+
+        @property
+        def track_list(self):
+            raise RuntimeError("live track-list read must not happen")
+
+    widget._player = BlockingTrackListPlayer()
+    widget._observed_properties["track-list"] = [
+        {"id": 1, "type": "audio", "lang": "cmn", "title": "", "default": True, "forced": False, "external": False},
+        {"id": 2, "type": "sub", "lang": "zh", "title": "", "default": False, "forced": False, "external": False},
+    ]
+
+    assert [track.id for track in widget.audio_tracks()] == [1]
+    assert widget._subtitle_track_ids() == {2}
+
+
+def test_mpv_widget_chapters_read_observed_cache(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    widget._player = types.SimpleNamespace()
+    widget._observed_properties["chapter-list"] = [{"title": "正片", "time": 5.0}]
+
+    assert widget.chapters() == [Chapter(index=0, title="正片", start_seconds=5.0, label="正片")]
+
+
+def test_mpv_widget_set_player_property_write_through_observed_cache(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    widget._player = FakeAlivePlayer()
+
+    widget._set_player_property("sub-pos", 30)
+    assert widget._player_property("sub-pos") == 30
+    assert widget._observed_properties["sub-pos"] == 30
+    assert widget._player.options["sub-pos"] == 30
+
+    widget._set_player_property("sid", 7)
+    assert widget._player_property("sid") == 7
+
+
+def test_mpv_widget_toggle_mute_uses_observed_cache(qtbot) -> None:
+    widget = MpvWidget()
+    qtbot.addWidget(widget)
+    player = FakeAlivePlayer()
+    widget._player = player
+
+    widget._observed_properties["mute"] = True
+    widget.toggle_mute()
+    assert player.options["mute"] is False
+    assert widget._observed_properties["mute"] is False
+
+    widget.set_muted(True)
+    assert player.options["mute"] is True
+    assert widget._observed_properties["mute"] is True
+
 
 def test_mpv_widget_create_player_passes_explicit_ytdlp_hook_path(qtbot, monkeypatch) -> None:
     widget = MpvWidget()

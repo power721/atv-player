@@ -118,6 +118,9 @@ _MPV_TERMINATE_TIMEOUT_SECONDS = 10.0
 
 # 播放期间持续变化的运行时属性,observe_property 推送到 _observed_properties 缓存,
 # 周期性读取(进度条/进度上报/遥测/断粮看门狗)一律走缓存,不在 GUI 线程同步 get。
+# 字幕/音频设置项(sid/sub-pos/sub-scale/mute 等)由界面刷新路径在 GUI 线程反复读,
+# core 楔死/繁忙时同步 get 会永久挂起,同样纳入 observe;写路径经 _set_player_property
+# 穿透缓存,保证读己之写不取回旧值。
 _RUNTIME_OBSERVED_PROPERTIES = (
     "time-pos",
     "duration",
@@ -131,7 +134,24 @@ _RUNTIME_OBSERVED_PROPERTIES = (
     "audio-codec",
     "audio-params",
     "demuxer-cache-state",
+    "sid",
+    "secondary-sid",
+    "sub-pos",
+    "secondary-sub-pos",
+    "sub-scale",
+    "secondary-sub-scale",
+    "sub-delay",
+    "secondary-sub-delay",
+    "mute",
 )
+# 自定义 observe handler 维护(track-list/chapter-list/pause)的读缓存键,
+# _set_player_property 写穿透时同样要同步刷新。
+_OBSERVED_READ_PROPERTIES = _RUNTIME_OBSERVED_PROPERTIES + (
+    "track-list",
+    "chapter-list",
+    "pause",
+)
+_PROPERTY_CACHE_MISS = object()
 _NVIDIA_VERSION_RE = re.compile(r"(\d+\.\d+(?:\.\d+)*)")
 _LINUX_NVIDIA_DRIVER_MISMATCH: tuple[str, str] | bool | None = None
 _WINDOWS_MPV_DIAGNOSTIC_STAGES_LOGGED: set[str] = set()
@@ -845,6 +865,7 @@ class MpvWidget(QWidget):
         self._track_list_handler = handle_track_list
 
         def handle_chapter_list(_property_name, _chapters) -> None:
+            self._observed_properties["chapter-list"] = _chapters or []
             self.chapters_changed.emit()
 
         observe_property("chapter-list", handle_chapter_list)
@@ -1089,6 +1110,12 @@ class MpvWidget(QWidget):
         player.loadfile(url, mode, **normalized_options)
 
     def _player_property(self, name: str, default: object | None = None) -> object | None:
+        # observe 缓存优先:core 楔死/繁忙时同步 get 会永久挂起 GUI 线程
+        # (2026-11-23 全进程冻死根因即 track-list 活读)。缓存未推值才回落活读,
+        # 假播放器(无 observe_property)仍走活读路径。
+        cached = self._observed_properties.get(name, _PROPERTY_CACHE_MISS)
+        if cached is not _PROPERTY_CACHE_MISS:
+            return cached
         if self._player is None:
             return default
         try:
@@ -1107,6 +1134,9 @@ class MpvWidget(QWidget):
             else:
                 setattr(self._player, name.replace("-", "_"), value)
             self._player_property_cache[name] = value
+            if name in _OBSERVED_READ_PROPERTIES:
+                # 写穿透:mpv 的 property-change 推送是异步的,读己之写须立即生效
+                self._observed_properties[name] = value
         except Exception:
             if getattr(self._player, "core_shutdown", False):
                 return
@@ -1723,7 +1753,7 @@ class MpvWidget(QWidget):
         if self._player is None:
             return
         try:
-            self._player.mute = not bool(getattr(self._player, "mute", False))
+            self._set_player_property("mute", not bool(self._player_property("mute", False)))
         except Exception:
             if getattr(self._player, "core_shutdown", False):
                 return
@@ -1736,7 +1766,7 @@ class MpvWidget(QWidget):
         if self._player is None:
             return
         try:
-            self._player.mute = muted
+            self._set_player_property("mute", muted)
         except Exception:
             if getattr(self._player, "core_shutdown", False):
                 return
@@ -2062,7 +2092,7 @@ class MpvWidget(QWidget):
         if self._player is None:
             return []
         try:
-            raw_tracks = getattr(self._player, "track_list", None) or []
+            raw_tracks = self._player_property("track-list") or []
         except Exception:
             return []
 
@@ -2108,10 +2138,10 @@ class MpvWidget(QWidget):
             return None
         try:
             if mode == "off":
-                self._player.sid = "no"
+                self._set_player_property("sid", "no")
                 return None
             if mode == "track" and track_id is not None:
-                self._player.sid = track_id
+                self._set_player_property("sid", track_id)
                 return track_id
             tracks = self.subtitle_tracks()
             chinese_tracks = [track for track in tracks if self._is_chinese_subtitle_track(track)]
@@ -2122,9 +2152,9 @@ class MpvWidget(QWidget):
             elif english_tracks:
                 preferred_track = max(english_tracks, key=self._preferred_subtitle_sort_key)
             if preferred_track is not None:
-                self._player.sid = preferred_track.id
+                self._set_player_property("sid", preferred_track.id)
                 return preferred_track.id
-            self._player.sid = "auto"
+            self._set_player_property("sid", "auto")
             return None
         except Exception:
             if getattr(self._player, "core_shutdown", False):
@@ -2169,7 +2199,7 @@ class MpvWidget(QWidget):
     def _subtitle_track_ids(self) -> set[int]:
         if self._player is None:
             return set()
-        raw_tracks = getattr(self._player, "track_list", [])
+        raw_tracks = self._player_property("track-list") or []
         track_ids: set[int] = set()
         for raw_track in raw_tracks:
             if raw_track.get("type") != "sub":
@@ -2592,7 +2622,7 @@ class MpvWidget(QWidget):
         if self._player is None:
             return []
         try:
-            raw_tracks = getattr(self._player, "track_list", None) or []
+            raw_tracks = self._player_property("track-list") or []
         except Exception:
             return []
 
